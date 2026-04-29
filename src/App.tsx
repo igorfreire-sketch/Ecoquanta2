@@ -358,7 +358,13 @@ export default function App() {
         eapPayload = await fetchEapPublicData<PublicEapPayload>().catch(() => null);
       }
 
-      if (eapPayload?.data) fullData = applyUnifiedEapData(fullData, eapPayload.data);
+      if (eapPayload?.data) {
+        fullData = applyUnifiedEapData(fullData, {
+          ...eapPayload.data,
+          publishedAt: eapPayload.data.publishedAt || eapPayload.publishedAt,
+          latestEapPublishedAt: eapPayload.data.latestEapPublishedAt || eapPayload.publishedAt,
+        });
+      }
         
         // Converte o índice por e-mail do JSON público de volta para o array esperado pelo app
         if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);

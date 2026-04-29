@@ -27,6 +27,12 @@ interface CoordenacaoEngenhariaProps {
 function formatLatestEapDate(value?: string) {
   const raw = String(value || '').trim();
   if (!raw) return 'Nao publicada';
+  if (/^(atual|eap|reajustado)$/i.test(raw)) return 'Nao publicada';
+
+  const parsedDate = new Date(raw);
+  if (raw.includes('T') && !Number.isNaN(parsedDate.getTime())) {
+    return parsedDate.toLocaleDateString('pt-BR');
+  }
 
   const br = raw.match(/^(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})$/);
   if (br) return `${br[1]}/${br[2]}/${br[3]}`;
@@ -37,6 +43,22 @@ function formatLatestEapDate(value?: string) {
   return raw;
 }
 
+function getLatestEapDisplayDate(eap?: any) {
+  const candidates = [
+    eap?.latestEapDate,
+    eap?.latestEapPublishedAt,
+    eap?.publishedAt,
+    eap?.latestEapSheet,
+  ];
+
+  for (const candidate of candidates) {
+    const formatted = formatLatestEapDate(candidate);
+    if (formatted !== 'Nao publicada') return formatted;
+  }
+
+  return 'Nao publicada';
+}
+
 export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, subTab }: CoordenacaoEngenhariaProps) {
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
@@ -44,7 +66,7 @@ export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, su
     { id: 'curva-s', label: 'Curva S' },
     { id: 'matrix', label: 'Matriz' },
   ];
-  const latestEapDate = formatLatestEapDate(preloadedData?.eap?.latestEapSheet);
+  const latestEapDate = getLatestEapDisplayDate(preloadedData?.eap);
 
   return (
     <div className="w-full flex flex-col font-['Montserrat']">

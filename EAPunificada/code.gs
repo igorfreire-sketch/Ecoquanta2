@@ -1,11 +1,13 @@
 // --- CONFIGURACOES DE PUBLICACAO JSON ---
 var PUBLIC_JSON_FOLDER = "Publica";
 var EAP_PUBLIC_JSON_FILE = "eap-unificada.json";
+var DEFAULT_REGISTRO_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec";
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
+    .addItem('Atualizar todos os JSONs', 'scheduleFullPublicJsonRefresh')
     .addItem('Publicar Curva S em JSON', 'publishCompressedDataToPublicJson')
     .addItem('Configurar Triggers', 'setupProjectTriggers')
     .addToUi();
@@ -36,17 +38,53 @@ function getAppVersion_() {
 
 function handleSpreadsheetEdit(e) {
   updateVersion_();
+  scheduleCompressedDataPublicJson_(30 * 1000);
+}
 
+function scheduleCompressedDataPublicJson() {
+  scheduleCompressedDataPublicJson_(5 * 1000);
+  return "Publicacao da EAP agendada.";
+}
+
+function scheduleCompressedDataPublicJson_(delayMs) {
   var cache = CacheService.getScriptCache();
+  var waitMs = delayMs || 30 * 1000;
+  var lockTtlSeconds = Math.max(30, Math.ceil(waitMs / 1000) + 30);
 
   // Evita varias publicacoes em sequencia quando houver muitas edicoes.
   if (!cache.get("isPublishingPublicJson")) {
-    cache.put("isPublishingPublicJson", "true", 30);
+    cache.put("isPublishingPublicJson", "true", lockTtlSeconds);
+    cleanupCompressedDataPublishTriggers_();
 
     ScriptApp.newTrigger("publishCompressedDataToPublicJsonByTrigger")
       .timeBased()
-      .after(30 * 1000)
+      .after(waitMs)
       .create();
+  }
+}
+
+function scheduleFullPublicJsonRefresh() {
+  var cache = CacheService.getScriptCache();
+  if (!cache.get("isFullPublicJsonRefreshQueued")) {
+    cache.put("isFullPublicJsonRefreshQueued", "true", 120);
+    cleanupFullPublicJsonRefreshTriggers_();
+    ScriptApp.newTrigger("runFullPublicJsonRefreshByTrigger")
+      .timeBased()
+      .after(1000)
+      .create();
+  }
+
+  return "Atualizacao completa agendada. A EAP sera publicada primeiro; em seguida o Registro sera agendado.";
+}
+
+function runFullPublicJsonRefreshByTrigger() {
+  try {
+    cleanupCompressedDataPublishTriggers_();
+    var version = publishCompressedDataToPublicJson();
+    var registroResult = scheduleRegistroPublicJsonPublish_();
+    return "EAP publicada (" + version + "). " + registroResult;
+  } finally {
+    cleanupFullPublicJsonRefreshTriggers_();
   }
 }
 
@@ -100,6 +138,43 @@ function cleanupCompressedDataPublishTriggers_() {
   }
 }
 
+function cleanupFullPublicJsonRefreshTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "runFullPublicJsonRefreshByTrigger") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+}
+
+function scheduleRegistroPublicJsonPublish_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var url = String(props.getProperty("registro_apps_script_url") || DEFAULT_REGISTRO_APPS_SCRIPT_URL || "").trim();
+
+    if (!url) {
+      return "Registro nao agendado: URL do Apps Script nao configurada.";
+    }
+
+    var response = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      payload: JSON.stringify({ action: "schedulePublicJsonPublish" })
+    });
+
+    var status = response.getResponseCode();
+    if (status < 200 || status >= 300) {
+      return "Registro nao agendado (" + status + "): " + response.getContentText().slice(0, 200);
+    }
+
+    return "Publicacao do Registro agendada.";
+  } catch (err) {
+    return "Registro nao agendado: " + String(err);
+  }
+}
+
 // --- PUBLICACAO ---
 
 function publishCompressedDataToPublicJson() {
@@ -113,13 +188,15 @@ function publishCompressedDataToPublicJson() {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var data = getCompressedData_(ss);
     var version = updateVersion_();
+    var publishedAt = new Date().toISOString();
+    data.latestEapPublishedAt = publishedAt;
 
     publishEncryptedJsonToGithub_(
       EAP_PUBLIC_JSON_FILE,
       {
         source: "EAPunificada",
         version: version,
-        publishedAt: new Date().toISOString(),
+        publishedAt: publishedAt,
         data: data
       }
     );
@@ -187,6 +264,14 @@ function doPost(e) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var payload = JSON.parse(e.postData.contents);
 
+    if (payload.action === 'scheduleCompressedDataPublicJson') {
+      scheduleCompressedDataPublicJson();
+      return json_({
+        success: true,
+        message: 'Publicacao da EAP agendada.'
+      });
+    }
+
     if (payload.action === 'salvarReajuste') {
       var sheet = ss.getSheetByName('Reajustado');
 
@@ -242,6 +327,8 @@ function getCompressedData_(ss) {
     timeline: {},
     reajustado: [],
     latestEapSheet: '',
+    latestEapDate: '',
+    latestEapPublishedAt: '',
     registro: {
       contracts: [],
       osOptions: [],
@@ -305,6 +392,7 @@ function getCompressedData_(ss) {
   if (latestEapSheet) {
     var latestEapRows = getRawEapRows_(latestEapSheet);
     out.latestEapSheet = latestEapSheet.getName();
+    out.latestEapDate = normalizeSheetNameDate_(latestEapSheet.getName());
     out.registro = getEapStructuredDataFromRows_(latestEapRows);
     out.cronograma = latestEapRows;
   }
@@ -619,6 +707,22 @@ function formatDateYmdSafe_(date) {
   var m = ('0' + (date.getMonth() + 1)).slice(-2);
   var d = ('0' + date.getDate()).slice(-2);
   return y + '-' + m + '-' + d;
+}
+
+function normalizeSheetNameDate_(name) {
+  var str = String(name || '').trim();
+
+  var ptMatch = str.match(/^(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})$/);
+  if (ptMatch) {
+    return ptMatch[3] + '-' + ptMatch[2] + '-' + ptMatch[1];
+  }
+
+  var isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    return isoMatch[1] + '-' + isoMatch[2] + '-' + isoMatch[3];
+  }
+
+  return '';
 }
 
 function parseSimpleDate_(name) {

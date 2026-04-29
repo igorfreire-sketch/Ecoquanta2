@@ -4,16 +4,39 @@
  * ============================================================================
  */
 
+var DEFAULT_EAP_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec";
+
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+
+  ui.createMenu('QUANTA Sync')
+    .addItem('Atualizar todos os JSONs', 'scheduleFullPublicJsonRefresh')
+    .addItem('Atualizar JSON do Registro', 'schedulePublicJsonPublish')
+    .addItem('Configurar Triggers', 'setupPublicJsonAutoPublishTriggers')
+    .addToUi();
+}
+
 function doPost(e) {
   try {
     var data = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var action = String(data.action || '').trim();
+
+    if (action === 'schedulePublicJsonPublish') {
+      schedulePublicJsonPublish_();
+      return json_({ success: true, message: 'Publicacao do Registro agendada.' });
+    }
+
+    if (action === 'scheduleFullPublicJsonRefresh') {
+      var fullRefreshMessage = scheduleFullPublicJsonRefresh();
+      return json_({ success: true, message: fullRefreshMessage });
+    }
+
     var loginSheet = getOrCreateLoginSheet_(ss);
     var header = getHeaderMapSafe_(loginSheet);
     var values = loginSheet.getDataRange().getValues();
 
     logAuth_(ss, 'INFO', 'doPost recebido', safeJson_(data));
-    var action = String(data.action || '').trim();
 
     if (action === 'registerUser') {
       var email = normalizeEmail_(data.email);
@@ -86,7 +109,7 @@ function doPost(e) {
       var user = normalizeUserResponse_(row2, header);
 
       logAuth_(ss, 'INFO', 'authUser ok', email2);
-      schedulePublicJsonPublish_(); return json_({ success: true, user: user });
+      return json_({ success: true, user: user });
     }
 
     if (action === 'heartbeat') {
@@ -1395,17 +1418,77 @@ var REGISTRO_PUBLIC_JSON_FILE = "registro-atividades.json";
 var REGISTRO_ATIVIDADES_JSON_FILE = "registrodeatividades.json";
 var REGISTRO_ATIVIDADES_IMPORT_SHEET = "registrodeatividades_limpo";
 
-function schedulePublicJsonPublish_() {
+function schedulePublicJsonPublish() {
+  schedulePublicJsonPublish_(5 * 1000);
+  return "Publicacao do Registro agendada.";
+}
+
+function schedulePublicJsonPublish_(delayMs) {
   try {
     var cache = CacheService.getScriptCache();
+    var waitMs = delayMs || 10 * 1000;
+    var lockTtlSeconds = Math.max(30, Math.ceil(waitMs / 1000) + 30);
+
     if (!cache.get("isPublishingPublicDatabaseJson")) {
-      cache.put("isPublishingPublicDatabaseJson", "true", 30);
+      cache.put("isPublishingPublicDatabaseJson", "true", lockTtlSeconds);
+      cleanupPublicJsonPublishTriggers_();
       ScriptApp.newTrigger("publishFullDatabaseToPublicJsonByTrigger")
         .timeBased()
-        .after(10 * 1000)
+        .after(waitMs)
         .create();
     }
   } catch (e) {}
+}
+
+function scheduleFullPublicJsonRefresh() {
+  var cache = CacheService.getScriptCache();
+  if (!cache.get("isFullPublicJsonRefreshQueued")) {
+    cache.put("isFullPublicJsonRefreshQueued", "true", 120);
+    cleanupFullPublicJsonRefreshTriggers_();
+    ScriptApp.newTrigger("runFullPublicJsonRefreshByTrigger")
+      .timeBased()
+      .after(1000)
+      .create();
+  }
+
+  return "Atualizacao completa agendada. A EAP sera agendada primeiro; o Registro sera publicado depois.";
+}
+
+function runFullPublicJsonRefreshByTrigger() {
+  try {
+    var eapResult = scheduleEapPublicJsonPublish_();
+    schedulePublicJsonPublish_(90 * 1000);
+    return eapResult + " Publicacao do Registro agendada para depois da EAP.";
+  } finally {
+    cleanupFullPublicJsonRefreshTriggers_();
+  }
+}
+
+function scheduleEapPublicJsonPublish_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var url = String(props.getProperty("eap_apps_script_url") || DEFAULT_EAP_APPS_SCRIPT_URL || "").trim();
+
+    if (!url) {
+      return "EAP nao agendada: URL do Apps Script nao configurada.";
+    }
+
+    var response = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      payload: JSON.stringify({ action: "scheduleCompressedDataPublicJson" })
+    });
+
+    var status = response.getResponseCode();
+    if (status < 200 || status >= 300) {
+      return "EAP nao agendada (" + status + "): " + response.getContentText().slice(0, 200);
+    }
+
+    return "Publicacao da EAP agendada.";
+  } catch (err) {
+    return "EAP nao agendada: " + String(err);
+  }
 }
 
 function handlePublicJsonSpreadsheetEdit(e) {
@@ -1447,6 +1530,16 @@ function cleanupPublicJsonPublishTriggers_() {
 
   for (var i = 0; i < triggers.length; i++) {
     if (triggers[i].getHandlerFunction() === "publishFullDatabaseToPublicJsonByTrigger") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+}
+
+function cleanupFullPublicJsonRefreshTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "runFullPublicJsonRefreshByTrigger") {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }

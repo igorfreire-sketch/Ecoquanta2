@@ -174,7 +174,13 @@ async function postToAppsScript<T>(payload: Record<string, unknown>): Promise<T>
 }
 
 async function fetchInitialDataFromAppsScript(user: AuthUser): Promise<GlobalData> {
-  const tabs = ADMIN_APP_TABS.map((tab) => tab.key).join(',');
+  const userTabs = Array.isArray(user.abas)
+    ? user.abas.map((tab) => String(tab || '').trim()).filter(Boolean)
+    : [];
+  const requestedTabs = Boolean(user.isAdmin)
+    ? ADMIN_APP_TABS.map((tab) => tab.key)
+    : userTabs.filter((tab) => tab !== 'administracao');
+  const tabs = Array.from(new Set(requestedTabs)).join(',');
   const params = new URLSearchParams({
     action: 'getInitialData',
     email: user.email || '',
@@ -223,6 +229,9 @@ function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleT
   if (tab === 'administracao') return Boolean(user.isAdmin);
   const userTabs = Array.isArray(user.abas) ? user.abas : [];
   const roleTabs = roleTabPermissions[String(user.role || '').trim()] || [];
+  if (tab === 'controle') {
+    return userTabs.includes('controle') || roleTabs.includes('controle') || userTabs.includes('alocacoes') || roleTabs.includes('alocacoes');
+  }
   return userTabs.includes(tab) || roleTabs.includes(tab as AppTabKey);
 }
 
@@ -647,11 +656,11 @@ export default function App() {
         </header>
 
         <main className={`flex-1 overflow-y-auto p-8 ${activeTab === 'registro' ? 'bg-white' : 'bg-[#F8F9FA]'}`}>
-          {activeTab === 'registro' && currentUser && <RegistroDeAtividade currentUser={currentUser} preloadedData={globalData.registro} />}
-          {activeTab === 'controle' && <ControleEngenharia filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={globalData} />}
-          {activeTab === 'contratos' && <ContratosSudeste preloadedData={globalData} />}
-          {activeTab === 'nc' && <NaoConformidades />}
-          {activeTab === 'cronograma' && <Cronograma />}
+          {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && <RegistroDeAtividade currentUser={currentUser} preloadedData={globalData.registro} />}
+          {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={globalData} />}
+          {activeTab === 'contratos' && currentUser && userHasTabAccess(currentUser, 'contratos', roleTabPermissions) && <ContratosSudeste preloadedData={globalData} />}
+          {activeTab === 'nc' && currentUser && userHasTabAccess(currentUser, 'nc', roleTabPermissions) && <NaoConformidades />}
+          {activeTab === 'cronograma' && currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && <Cronograma preloadedData={globalData} />}
           {activeTab === 'administracao' && currentUser?.isAdmin && (
             <Administracao
               usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}

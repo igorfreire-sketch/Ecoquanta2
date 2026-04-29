@@ -322,6 +322,12 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       ]);
       const registro = applyUnifiedEapToRegistro(payload.data?.registro, eapPayload);
       if (!registro) throw new Error('Dados de registro ausentes no JSON publico.');
+      if (!Array.isArray(registro.contracts) || !Array.isArray(registro.osOptions) || !Array.isArray(registro.itemOptions)) {
+        throw new Error('Estrutura da EAP ausente no JSON publico.');
+      }
+      if (registro.contracts.length === 0 || registro.osOptions.length === 0 || registro.itemOptions.length === 0) {
+        throw new Error('EAP sem contratos, OS ou atividades no JSON publico.');
+      }
 
       const disciplinaKey = String(currentUser.disciplina || '').trim() || 'Sem disciplina';
       const allActivities = Array.isArray(registro.activitiesList) ? registro.activitiesList : [];
@@ -373,6 +379,12 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       } catch {}
     }
   };
+
+  useEffect(() => {
+    if (!preloadedData || Object.keys(preloadedData).length === 0) return;
+    if (contracts.length > 0 && osOptions.length > 0 && itemOptions.length > 0) return;
+    void fetchFreshData();
+  }, [preloadedData, currentUser.email, currentUser.role, currentUser.disciplina]);
 
   const refreshFromPublishedJsonAfterSheetUpdate = async () => {
     setSyncingPublishedJson(true);

@@ -18,6 +18,10 @@ interface CompressedPayload {
   dates: string[];
   timeline: Record<string, any[][]>; // osCode: [ [startIdx, endIdx, real, ideal] ]
   reajustado?: any[][];
+  registro?: {
+    contracts?: Array<{ codigo: string; nome: string }>;
+    osOptions?: Array<{ codigo: string; nome: string; contratoCodigo: string }>;
+  };
 }
 
 interface CurvasProps {
@@ -373,6 +377,19 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing }: Cur
   // 2. DESCOMPACTAÇÃO RÁPIDA DA MATRIZ (Lógica do React RLE)
   const hierarchy = useMemo(() => {
     if (!rawData || !rawData.atual) return [];
+    const registroContracts = Array.isArray(rawData.registro?.contracts) ? rawData.registro.contracts : [];
+    const registroOsOptions = Array.isArray(rawData.registro?.osOptions) ? rawData.registro.osOptions : [];
+
+    if (registroContracts.length > 0 && registroOsOptions.length > 0) {
+      return registroContracts.map((contract) => ({
+        code: normalizeKey(contract.codigo),
+        name: normalizeKey(contract.nome || contract.codigo),
+        osList: registroOsOptions
+          .filter((os) => normalizeKey(os.contratoCodigo) === normalizeKey(contract.codigo))
+          .map((os) => ({ code: normalizeKey(os.codigo), name: normalizeKey(os.nome || os.codigo) }))
+      })).filter((contract) => contract.osList.length > 0);
+    }
+
     const contratosMap = new Map<string, { nome: string; osList: { code: string; name: string }[] }>();
     const rows = getAllOsRows(rawData);
     const hasHierarchicalCodes = rows.some((r) => (normalizeKey(r[0]).match(/\./g) || []).length > 0);

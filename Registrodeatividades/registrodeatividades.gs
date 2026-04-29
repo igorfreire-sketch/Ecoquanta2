@@ -97,7 +97,7 @@ function doPost(e) {
       if (idxHb < 0) return json_({ success: false, error: 'Usuário não encontrado.' });
 
       loginSheet.getRange(idxHb + 1, header.lastseen + 1).setValue(Date.now());
-      schedulePublicJsonPublish_(); return json_({ success: true });
+      return json_({ success: true });
     }
 
     if (action === 'forgotPassword') {
@@ -109,7 +109,7 @@ function doPost(e) {
 
       if (idx2 < 0) {
         logRecovery_(ss, email3, 'ignorado', 'email não encontrado');
-        schedulePublicJsonPublish_(); return json_({ success: true });
+        return json_({ success: true });
       }
 
       var code = randomCode_(6);
@@ -129,7 +129,7 @@ function doPost(e) {
         return json_({ success: false, error: 'Falha ao enviar e-mail. Verifique permissões do Apps Script.' });
       }
 
-      schedulePublicJsonPublish_(); return json_({ success: true });
+      return json_({ success: true });
     }
 
     if (action === 'resetPassword' || action === 'resetSenha' || action === 'confirmReset') {
@@ -161,7 +161,7 @@ function doPost(e) {
       logRecovery_(ss, email4, 'concluido', 'senha redefinida');
       logAuth_(ss, 'INFO', 'resetPassword ok', email4);
 
-      schedulePublicJsonPublish_(); return json_({ success: true });
+      return json_({ success: true });
     }
 
     if (action === 'approveUser') {
@@ -237,7 +237,7 @@ function doPost(e) {
       }
 
       logAuth_(ss, 'INFO', 'adminResetPassword ok', emailR);
-      schedulePublicJsonPublish_(); return json_({ success: true, message: 'Senha temporária enviada por e-mail.' });
+      return json_({ success: true, message: 'Senha temporária enviada por e-mail.' });
     }
 
     if (action === 'saveConfigOptions') {
@@ -368,7 +368,7 @@ function doGet(e) {
       responseData.cronograma = getRawCronogramaData_(ss).rawRows;
     }
 
-    if (isAdmin || tabs.indexOf('administracao') !== -1) {
+    if (isAdmin) {
       var loginSheet = getOrCreateLoginSheet_(ss);
       var header = getHeaderMapSafe_(loginSheet);
       var values = loginSheet.getDataRange().getValues();
@@ -391,7 +391,7 @@ function doGet(e) {
       };
     }
 
-    schedulePublicJsonPublish_(); return json_({ success: true, data: responseData });
+    return json_({ success: true, data: responseData });
   }
 
   if (action === 'getAdminData') {
@@ -602,8 +602,9 @@ function updateActivitiesBatch_(ss, data) {
   var eapRowMap = {};
   if (shEap) {
     var eapValues = shEap.getDataRange().getValues();
+    var eapDisplayValues = shEap.getDataRange().getDisplayValues();
     for (var e = 1; e < eapValues.length; e++) {
-      var codEap = String(eapValues[e][3] || '').trim(); // Coluna D (índice 3) é o código
+      var codEap = String(eapDisplayValues[e][3] || eapValues[e][3] || '').trim(); // Coluna D (índice 3) é o código
       if (codEap) {
         eapRowMap[codEap] = e + 1; 
       }
@@ -653,9 +654,9 @@ function updateActivitiesBatch_(ss, data) {
       var avancoNormalizado = Math.max(0, Math.min(100, avancoAtualU));
       shUpd.getRange(rowFound, 18).setValue(avancoNormalizado);
 
-      // === Salvar % na coluna Z da EAP ===
+      // === Salvar % na coluna C da EAP (% Atual) ===
       if (shEap && eapRowMap[itemCodigoU]) {
-        shEap.getRange(eapRowMap[itemCodigoU], 26).setValue(avancoNormalizado / 100);
+        shEap.getRange(eapRowMap[itemCodigoU], 3).setValue(avancoNormalizado / 100);
       }
       // ===================================
 
@@ -663,7 +664,7 @@ function updateActivitiesBatch_(ss, data) {
         Utilities.getUuid(), activityIdU, new Date().toLocaleString('pt-BR'), userEmailU, userNameU, 'avanco', String(oldAvanco), String(avancoNormalizado)
       ]);
 
-      if (avancoNormalizado === 100) {
+      if (avancoNormalizado === 100 && currentStatus !== 'aguardando_conclusao') {
         var now100 = new Date();
         shUpd.getRange(rowFound, 21).setValue('aguardando_conclusao');
         shUpd.getRange(rowFound, 22).setValue(now100.toLocaleString('pt-BR'));
@@ -1102,6 +1103,7 @@ function updateDelayedCompletedActivities_(ss) {
   var sh = getOrCreateActivitiesSheet_(ss);
   var values = sh.getDataRange().getValues();
   var now = new Date();
+  var changed = false;
 
   for (var i = 1; i < values.length; i++) {
     var status = String(values[i][20] || '').trim().toLowerCase();
@@ -1123,8 +1125,11 @@ function updateDelayedCompletedActivities_(ss) {
       sh.getRange(i + 1, 23).setValue(now.toLocaleString('pt-BR'));
       sh.getRange(i + 1, 24).setValue('false');
       sh.getRange(i + 1, 25).setValue(now.toLocaleString('pt-BR'));
+      changed = true;
     }
   }
+
+  if (changed) schedulePublicJsonPublish_();
 }
 
 function parsePtBrDateTime_(text) {
@@ -1455,7 +1460,18 @@ function publishFullDatabaseToPublicJsonByTrigger() {
   }
 }
 
+function pushFullDatabaseToFirebase() {
+  schedulePublicJsonPublish_();
+  return "Publicacao JSON agendada. Funcao Firebase legada redirecionada para o publicador atual.";
+}
+
 function publishFullDatabaseToPublicJson() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    Logger.log("Public JSON push skipped: another publication is already running.");
+    return "Publicacao ignorada: outra publicacao ja esta em andamento.";
+  }
+
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var loginSheet = getOrCreateLoginSheet_(ss);
@@ -1509,6 +1525,8 @@ function publishFullDatabaseToPublicJson() {
   } catch(err) {
     Logger.log("Public JSON push failed: " + err);
     throw err;
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -1593,6 +1611,7 @@ function getAllActivitiesForPublicJson_(ss) {
   var acts = [];
   for(var i=1; i<values.length; i++){
     var r = values[i];
+    if (!String(r[0] || '').trim()) continue;
     acts.push({
       activityId: r[0], dataRegistro: r[1], criadoPorNome: r[2], criadoPorEmail: r[3],
       criadoPorRole: r[4], criadoPorDisciplina: r[5],

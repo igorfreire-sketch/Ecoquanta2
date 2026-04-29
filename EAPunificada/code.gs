@@ -103,10 +103,15 @@ function cleanupCompressedDataPublishTriggers_() {
 // --- PUBLICACAO ---
 
 function publishCompressedDataToPublicJson() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var data = getCompressedData_(ss);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    Logger.log("Publicacao EAP ignorada: outra publicacao ja esta em andamento.");
+    return getAppVersion_();
+  }
 
   try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var data = getCompressedData_(ss);
     var version = updateVersion_();
 
     publishEncryptedJsonToGithub_(
@@ -124,6 +129,8 @@ function publishCompressedDataToPublicJson() {
   } catch (err) {
     Logger.log("Erro ao publicar JSON da curva S: " + String(err));
     throw err;
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -255,20 +262,20 @@ function getCompressedData_(ss) {
 
     else if (name === 'Atual') {
       var values = sh.getDataRange().getValues();
+      var displayValues = sh.getDataRange().getDisplayValues();
 
       for (var r = 1; r < values.length; r++) {
-        var itemName = String(values[r][4] || '').trim(); // Coluna E
+        var itemCode = String(displayValues[r][3] || values[r][3] || '').trim(); // Coluna D
+        var itemName = String(displayValues[r][4] || values[r][4] || '').trim(); // Coluna E
 
-        if (!isOsItemName_(itemName)) {
+        if (!itemCode || !isOsItemName_(itemName)) {
           continue;
         }
 
         // Estrutura compacta mantida para o app:
         // [code, name, progress, duration, pStart, pEnd, idealProg, lDate, mDate]
-        //
-        // Como a coluna D foi ignorada, usamos a propria coluna E como codigo e nome.
         out.atual.push([
-          itemName,
+          itemCode,
           itemName,
           values[r][2],                 // Coluna C - Real / Progresso atual
           values[r][5],                 // Coluna F - Duracao
@@ -306,16 +313,18 @@ function getCompressedData_(ss) {
   // como base para montar a lista principal da Curva S.
   if (out.atual.length === 0 && snapshotSheets.length > 0) {
     var latestValues = snapshotSheets[snapshotSheets.length - 1].sheet.getDataRange().getValues();
+    var latestDisplayValues = snapshotSheets[snapshotSheets.length - 1].sheet.getDataRange().getDisplayValues();
 
     for (var ar = 1; ar < latestValues.length; ar++) {
-      var latestItemName = String(latestValues[ar][4] || '').trim(); // Coluna E
+      var latestItemCode = String(latestDisplayValues[ar][3] || latestValues[ar][3] || '').trim(); // Coluna D
+      var latestItemName = String(latestDisplayValues[ar][4] || latestValues[ar][4] || '').trim(); // Coluna E
 
-      if (!isOsItemName_(latestItemName)) {
+      if (!latestItemCode || !isOsItemName_(latestItemName)) {
         continue;
       }
 
       out.atual.push([
-        latestItemName,
+        latestItemCode,
         latestItemName,
         latestValues[ar][2],                 // Coluna C - Real / Progresso atual
         latestValues[ar][5],                 // Coluna F - Duracao
@@ -336,19 +345,21 @@ function getCompressedData_(ss) {
     dates.push(snapshotSheets[s].name);
 
     var sValues = snapshotSheets[s].sheet.getDataRange().getValues();
+    var sDisplayValues = snapshotSheets[s].sheet.getDataRange().getDisplayValues();
 
     for (var rs = 1; rs < sValues.length; rs++) {
-      var osName = String(sValues[rs][4] || '').trim(); // Coluna E
+      var osCode = String(sDisplayValues[rs][3] || sValues[rs][3] || '').trim(); // Coluna D
+      var osName = String(sDisplayValues[rs][4] || sValues[rs][4] || '').trim(); // Coluna E
 
-      if (!isOsItemName_(osName)) {
+      if (!osCode || !isOsItemName_(osName)) {
         continue;
       }
 
-      if (!tempMap[osName]) {
-        tempMap[osName] = [];
+      if (!tempMap[osCode]) {
+        tempMap[osCode] = [];
       }
 
-      tempMap[osName][s] = {
+      tempMap[osCode][s] = {
         r: sValues[rs][2], // Coluna C - Real
         i: sValues[rs][9]  // Coluna J - Ideal
       };

@@ -28,6 +28,7 @@ import Administracao, {
   AppTabKey,
   UserAccessRecord,
   DatabaseLinkRecord,
+  RoleTabPermissions,
 } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
 import { fetchEapPublicData, fetchRegistroPublicData } from './lib/publicJson';
@@ -80,6 +81,7 @@ interface PublicGlobalRegistroPayload {
       cargos?: string[];
       disciplinas?: string[];
       databaseLinks?: DatabaseLinkRecord[];
+      roleTabPermissions?: RoleTabPermissions;
     };
   };
 }
@@ -89,6 +91,30 @@ interface PublicEapPayload {
   version?: string;
   publishedAt?: string;
   data?: any;
+}
+
+function applyUnifiedEapData(data: GlobalData, eapData: any): GlobalData {
+  if (!eapData || typeof eapData !== 'object') return data;
+
+  const next: GlobalData = {
+    ...data,
+    eap: eapData,
+  };
+
+  if (eapData.registro && typeof eapData.registro === 'object') {
+    next.registro = {
+      ...(next.registro || {}),
+      contracts: Array.isArray(eapData.registro.contracts) ? eapData.registro.contracts : next.registro?.contracts,
+      osOptions: Array.isArray(eapData.registro.osOptions) ? eapData.registro.osOptions : next.registro?.osOptions,
+      itemOptions: Array.isArray(eapData.registro.itemOptions) ? eapData.registro.itemOptions : next.registro?.itemOptions,
+    };
+  }
+
+  if (Array.isArray(eapData.cronograma)) {
+    next.cronograma = eapData.cronograma;
+  }
+
+  return next;
 }
 
 // Session Storage
@@ -193,9 +219,11 @@ function getUserInitials(nome: string) {
   return nome.split(' ').filter(Boolean).slice(0, 2).map((parte) => parte[0]?.toUpperCase() || '').join('');
 }
 
-function userHasTabAccess(user: AuthUser, tab: AppTab) {
+function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleTabPermissions = {}) {
   if (tab === 'administracao') return Boolean(user.isAdmin);
-  return Array.isArray(user.abas) && user.abas.includes(tab);
+  const userTabs = Array.isArray(user.abas) ? user.abas : [];
+  const roleTabs = roleTabPermissions[String(user.role || '').trim()] || [];
+  return userTabs.includes(tab) || roleTabs.includes(tab as AppTabKey);
 }
 
 function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
@@ -232,6 +260,7 @@ function getAdminState(data: GlobalData) {
     disciplinas: Array.isArray(admin.disciplinas) ? admin.disciplinas : [],
     cargos: Array.isArray(admin.cargos) ? admin.cargos : [],
     databaseLinks: Array.isArray(admin.databaseLinks) ? admin.databaseLinks : [],
+    roleTabPermissions: admin.roleTabPermissions && typeof admin.roleTabPermissions === 'object' ? admin.roleTabPermissions as RoleTabPermissions : {},
   };
 }
 
@@ -255,6 +284,7 @@ export default function App() {
   const [usuarios, setUsuarios] = useState<UserAccessRecord[]>([]);
   const [disciplinas, setDisciplinas] = useState<string[]>([]);
   const [cargos, setCargos] = useState<string[]>([]);
+  const [roleTabPermissions, setRoleTabPermissions] = useState<RoleTabPermissions>({});
   const [databaseLinks, setDatabaseLinks] = useState<DatabaseLinkRecord[]>([]);
 
   // Filter States (Dashboard/Tech Mock)
@@ -278,6 +308,7 @@ export default function App() {
           setUsuarios(adminState.usuarios);
           setDisciplinas(adminState.disciplinas);
           setCargos(adminState.cargos);
+          setRoleTabPermissions(adminState.roleTabPermissions);
           setDatabaseLinks(adminState.databaseLinks);
         }
         setPreloading(false); setBooting(false);
@@ -318,7 +349,7 @@ export default function App() {
         eapPayload = await fetchEapPublicData<PublicEapPayload>().catch(() => null);
       }
 
-      if (eapPayload?.data) fullData.eap = eapPayload.data;
+      if (eapPayload?.data) fullData = applyUnifiedEapData(fullData, eapPayload.data);
         
         // Converte o índice por e-mail do JSON público de volta para o array esperado pelo app
         if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
@@ -330,6 +361,7 @@ export default function App() {
           setUsuarios(adminState.usuarios);
           setDisciplinas(adminState.disciplinas);
           setCargos(adminState.cargos);
+          setRoleTabPermissions(adminState.roleTabPermissions);
           setDatabaseLinks(adminState.databaseLinks);
         }
       if (!isBackgroundSync && progressInterval) {
@@ -354,15 +386,15 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return;
-    if (!userHasTabAccess(currentUser, activeTab)) {
-      if (userHasTabAccess(currentUser, 'registro')) setActiveTab('registro');
-      else if (userHasTabAccess(currentUser, 'controle')) setActiveTab('controle');
-      else if (userHasTabAccess(currentUser, 'contratos')) setActiveTab('contratos');
-      else if (userHasTabAccess(currentUser, 'nc')) setActiveTab('nc');
-      else if (userHasTabAccess(currentUser, 'cronograma')) setActiveTab('cronograma');
-      else if (userHasTabAccess(currentUser, 'administracao')) setActiveTab('administracao');
+    if (!userHasTabAccess(currentUser, activeTab, roleTabPermissions)) {
+      if (userHasTabAccess(currentUser, 'registro', roleTabPermissions)) setActiveTab('registro');
+      else if (userHasTabAccess(currentUser, 'controle', roleTabPermissions)) setActiveTab('controle');
+      else if (userHasTabAccess(currentUser, 'contratos', roleTabPermissions)) setActiveTab('contratos');
+      else if (userHasTabAccess(currentUser, 'nc', roleTabPermissions)) setActiveTab('nc');
+      else if (userHasTabAccess(currentUser, 'cronograma', roleTabPermissions)) setActiveTab('cronograma');
+      else if (userHasTabAccess(currentUser, 'administracao', roleTabPermissions)) setActiveTab('administracao');
     }
-  }, [currentUser, activeTab]);
+  }, [currentUser, activeTab, roleTabPermissions]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -389,7 +421,7 @@ export default function App() {
     else if (user.abas.includes('contratos')) setActiveTab('contratos');
   };
 
-  const handleLogout = () => { clearSession(); setCurrentUser(null); setGlobalData({}); };
+  const handleLogout = () => { clearSession(); setCurrentUser(null); setGlobalData({}); setRoleTabPermissions({}); };
 
   const handleRegister = async (name: string, email: string, password: string) => {
     // Apps Script registra o usuário e envia e-mail de confirmação
@@ -426,6 +458,12 @@ export default function App() {
     await loadAdminData();
   }, [loadAdminData]);
 
+  const saveRoleTabPermissions = useCallback(async (nextPermissions: RoleTabPermissions) => {
+    await postToAppsScript<GenericResponse>({ action: 'saveRoleTabPermissions', roleTabPermissions: nextPermissions });
+    await wait(PUBLIC_JSON_SYNC_DELAY_MS);
+    await loadAdminData();
+  }, [loadAdminData]);
+
   const addDisciplina = useCallback(async (value: string) => {
     const item = value.trim();
     if (!item) return;
@@ -443,8 +481,29 @@ export default function App() {
   }, [cargos, disciplinas, saveConfigOptions]);
 
   const removeCargo = useCallback(async (value: string) => {
-    await saveConfigOptions(cargos.filter((item) => item !== value), disciplinas);
-  }, [cargos, disciplinas, saveConfigOptions]);
+    const nextPermissions = { ...roleTabPermissions };
+    delete nextPermissions[value];
+    await postToAppsScript<GenericResponse>({
+      action: 'saveConfigOptions',
+      cargos: cargos.filter((item) => item !== value),
+      disciplinas,
+    });
+    await postToAppsScript<GenericResponse>({ action: 'saveRoleTabPermissions', roleTabPermissions: nextPermissions });
+    await wait(PUBLIC_JSON_SYNC_DELAY_MS);
+    await loadAdminData();
+  }, [cargos, disciplinas, loadAdminData, roleTabPermissions]);
+
+  const toggleRoleTabPermission = useCallback(async (cargo: string, tab: AppTabKey) => {
+    const currentTabs = roleTabPermissions[cargo] || [];
+    const nextTabs = currentTabs.includes(tab)
+      ? currentTabs.filter((item) => item !== tab)
+      : [...currentTabs, tab];
+
+    await saveRoleTabPermissions({
+      ...roleTabPermissions,
+      [cargo]: nextTabs,
+    });
+  }, [roleTabPermissions, saveRoleTabPermissions]);
 
   const saveDatabaseLink = useCallback(async (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => {
     await postToAppsScript<GenericResponse>({ action: 'saveDatabaseLink', ...payload });
@@ -517,11 +576,11 @@ export default function App() {
             </div>
             <div className="px-6 mt-4"><span className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">MENU</span></div>
             <nav className="px-4 mt-2 flex-1 space-y-1 overflow-y-auto">
-              {currentUser && userHasTabAccess(currentUser, 'registro') && <NavItem icon={<ClipboardList size={20} />} label="Registro de Atividade" active={activeTab === 'registro'} onClick={() => setActiveTab('registro')} />}
-              {currentUser && userHasTabAccess(currentUser, 'controle') && <NavItem icon={<Settings size={20} />} label="Coordenação de Engenharia" active={activeTab === 'controle'} onClick={() => setActiveTab('controle')} />}
-              {currentUser && userHasTabAccess(currentUser, 'contratos') && <NavItem icon={<Briefcase size={20} />} label="Contratos Sudeste" active={activeTab === 'contratos'} onClick={() => setActiveTab('contratos')} />}
-              {currentUser && userHasTabAccess(currentUser, 'nc') && <NavItem icon={<AlertTriangle size={20} />} label="Não Conformidades" active={activeTab === 'nc'} onClick={() => setActiveTab('nc')} />}
-              {currentUser && userHasTabAccess(currentUser, 'cronograma') && <NavItem icon={<Calendar size={20} />} label="Cronograma" active={activeTab === 'cronograma'} onClick={() => setActiveTab('cronograma')} />}
+              {currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && <NavItem icon={<ClipboardList size={20} />} label="Registro de Atividade" active={activeTab === 'registro'} onClick={() => setActiveTab('registro')} />}
+              {currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <NavItem icon={<Settings size={20} />} label="Coordenação de Engenharia" active={activeTab === 'controle'} onClick={() => setActiveTab('controle')} />}
+              {currentUser && userHasTabAccess(currentUser, 'contratos', roleTabPermissions) && <NavItem icon={<Briefcase size={20} />} label="Contratos Sudeste" active={activeTab === 'contratos'} onClick={() => setActiveTab('contratos')} />}
+              {currentUser && userHasTabAccess(currentUser, 'nc', roleTabPermissions) && <NavItem icon={<AlertTriangle size={20} />} label="Não Conformidades" active={activeTab === 'nc'} onClick={() => setActiveTab('nc')} />}
+              {currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && <NavItem icon={<Calendar size={20} />} label="Cronograma" active={activeTab === 'cronograma'} onClick={() => setActiveTab('cronograma')} />}
               {currentUser && currentUser.isAdmin && <NavItem icon={<ShieldCheck size={20} />} label="Administração" active={activeTab === 'administracao'} onClick={() => setActiveTab('administracao')} />}
             </nav>
             <div className="p-6 border-t border-[#E5E7EB] space-y-4">
@@ -595,11 +654,11 @@ export default function App() {
           {activeTab === 'cronograma' && <Cronograma />}
           {activeTab === 'administracao' && currentUser?.isAdmin && (
             <Administracao
-              usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
+              usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
               onUpdateUsuario={async (id, patch) => { const u = usuarios.find(x => x.id === id); if (u) await persistUser({ ...u, ...patch }); }}
               onToggleAdmin={async (id, checked) => { const u = usuarios.find(x => x.id === id); if (u) await persistUser({ ...u, isAdmin: checked }); }}
               onToggleTabPermission={async (id, tab) => { const u = usuarios.find(x => x.id === id); if (u) { const tabs = u.allowedTabs.includes(tab) ? u.allowedTabs.filter(t => t !== tab) : [...u.allowedTabs, tab]; await persistUser({ ...u, allowedTabs: tabs }); } }}
-              onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onAddCargo={addCargo} onRemoveCargo={removeCargo} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
+              onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onAddCargo={addCargo} onRemoveCargo={removeCargo} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
             />
           )}
         </main>

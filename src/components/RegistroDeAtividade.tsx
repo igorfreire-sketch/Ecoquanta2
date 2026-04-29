@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { AuthUser } from './LoginScreen';
-import { fetchRegistroPublicData } from '../lib/publicJson';
+import { fetchEapPublicData, fetchRegistroPublicData } from '../lib/publicJson';
 
 const APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
@@ -53,6 +53,20 @@ interface PublicRegistroEnvelope {
       professionalsByDisciplina?: Record<string, ProfessionalOption[]>;
       activitiesList?: any[];
     };
+  };
+}
+
+interface PublicEapEnvelope {
+  source?: string;
+  version?: string;
+  publishedAt?: string;
+  data?: {
+    registro?: {
+      contracts?: EapContractOption[];
+      osOptions?: EapOsOption[];
+      itemOptions?: EapItemOption[];
+    };
+    cronograma?: any[];
   };
 }
 
@@ -142,6 +156,18 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser) {
     professionals: preloadedData.professionalsByDisciplina?.[disciplinaKey] || [],
     activeActivities: mappedActivities.filter((item) => item.status !== 'concluida'),
     completedActivities: mappedActivities.filter((item) => item.status === 'concluida'),
+  };
+}
+
+function applyUnifiedEapToRegistro(registro: any, eapPayload: PublicEapEnvelope | null) {
+  const eapRegistro = eapPayload?.data?.registro;
+  if (!eapRegistro) return registro;
+
+  return {
+    ...(registro || {}),
+    contracts: Array.isArray(eapRegistro.contracts) ? eapRegistro.contracts : registro?.contracts,
+    osOptions: Array.isArray(eapRegistro.osOptions) ? eapRegistro.osOptions : registro?.osOptions,
+    itemOptions: Array.isArray(eapRegistro.itemOptions) ? eapRegistro.itemOptions : registro?.itemOptions,
   };
 }
 
@@ -290,8 +316,11 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
 
   const fetchFreshData = async () => {
     try {
-      const payload = await fetchRegistroPublicData<PublicRegistroEnvelope>();
-      const registro = payload.data?.registro;
+      const [payload, eapPayload] = await Promise.all([
+        fetchRegistroPublicData<PublicRegistroEnvelope>(),
+        fetchEapPublicData<PublicEapEnvelope>().catch(() => null),
+      ]);
+      const registro = applyUnifiedEapToRegistro(payload.data?.registro, eapPayload);
       if (!registro) throw new Error('Dados de registro ausentes no JSON publico.');
 
       const disciplinaKey = String(currentUser.disciplina || '').trim() || 'Sem disciplina';

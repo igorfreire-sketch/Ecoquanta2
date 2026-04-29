@@ -233,7 +233,14 @@ function getCompressedData_(ss) {
     atual: [],
     dates: [],
     timeline: {},
-    reajustado: []
+    reajustado: [],
+    latestEapSheet: '',
+    registro: {
+      contracts: [],
+      osOptions: [],
+      itemOptions: []
+    },
+    cronograma: []
   };
 
   var snapshotSheets = [];
@@ -286,6 +293,14 @@ function getCompressedData_(ss) {
   snapshotSheets.sort(function(a, b) {
     return parseSimpleDate_(a.name) - parseSimpleDate_(b.name);
   });
+
+  var latestEapSheet = getLatestEapSheet_(ss, snapshotSheets);
+  if (latestEapSheet) {
+    var latestEapRows = getRawEapRows_(latestEapSheet);
+    out.latestEapSheet = latestEapSheet.getName();
+    out.registro = getEapStructuredDataFromRows_(latestEapRows);
+    out.cronograma = latestEapRows;
+  }
 
   // Se a aba "Atual" nao existir ou nao tiver OS validas, usa o snapshot mais recente
   // como base para montar a lista principal da Curva S.
@@ -384,6 +399,108 @@ function getCompressedData_(ss) {
   return out;
 }
 
+function getLatestEapSheet_(ss, snapshotSheets) {
+  if (snapshotSheets.length > 0) {
+    return snapshotSheets[snapshotSheets.length - 1].sheet;
+  }
+
+  return ss.getSheetByName('Atual') || ss.getSheetByName('EAP') || null;
+}
+
+function getRawEapRows_(sheet) {
+  var values = sheet.getDataRange().getValues();
+  var displayValues = sheet.getDataRange().getDisplayValues();
+  var rows = [];
+
+  for (var i = 1; i < values.length; i++) {
+    var codigo = String(displayValues[i][3] || values[i][3] || '').trim();
+    var nome = String(displayValues[i][4] || values[i][4] || '').trim();
+    if (!codigo || !nome) continue;
+
+    rows.push({
+      progress: toNumberSafe_(values[i][2]),
+      code: codigo,
+      name: nome,
+      duration: toNumberSafe_(values[i][5]),
+      plannedStart: normalizeSheetDate_(values[i][6]),
+      plannedEnd: normalizeSheetDate_(values[i][7]),
+      predecessor: String(displayValues[i][8] || values[i][8] || '').trim(),
+      idealProgress: toNumberSafe_(values[i][9]),
+      realStart: normalizeSheetDate_(values[i][11]),
+      realEnd: normalizeSheetDate_(values[i][12]),
+      baselineIdealProgress: toNumberSafe_(values[i][13])
+    });
+  }
+
+  return rows;
+}
+
+function getEapStructuredDataFromRows_(rows) {
+  var contracts = [];
+  var osOptions = [];
+  var itemOptions = [];
+
+  for (var i = 0; i < rows.length; i++) {
+    var item = rows[i];
+    var codigo = String(item.code || '').trim();
+    var nome = String(item.name || '').trim();
+    var dotCount = (codigo.match(/\./g) || []).length;
+
+    if (!codigo || !nome) continue;
+
+    if (dotCount === 0) {
+      contracts.push({ codigo: codigo, nome: nome });
+    }
+  }
+
+  for (var os = 0; os < rows.length; os++) {
+    var osRow = rows[os];
+    var osCodigo = String(osRow.code || '').trim();
+    var osNome = String(osRow.name || '').trim();
+    var contratoParent = findContractParentCode_(osCodigo, contracts);
+
+    if (contratoParent && isOsItemName_(osNome)) {
+      osOptions.push({ codigo: osCodigo, nome: osNome, contratoCodigo: contratoParent });
+    }
+  }
+
+  for (var j = 0; j < rows.length; j++) {
+    var itemRow = rows[j];
+    var itemCodigo = String(itemRow.code || '').trim();
+    var itemNome = String(itemRow.name || '').trim();
+    if (!itemCodigo || !itemNome) continue;
+
+    var osParent = findOsParentCode_(itemCodigo, osOptions);
+    if (osParent && itemCodigo !== osParent) {
+      itemOptions.push({ codigo: itemCodigo, nome: itemNome, osCodigo: osParent });
+    }
+  }
+
+  return { contracts: contracts, osOptions: osOptions, itemOptions: itemOptions };
+}
+
+function findContractParentCode_(codigo, contracts) {
+  var best = '';
+  for (var i = 0; i < contracts.length; i++) {
+    var contractCode = String(contracts[i].codigo || '');
+    if (codigo.indexOf(contractCode + '.') === 0 || codigo === contractCode) {
+      if (contractCode.length > best.length) best = contractCode;
+    }
+  }
+  return best;
+}
+
+function findOsParentCode_(codigo, osOptions) {
+  var best = '';
+  for (var i = 0; i < osOptions.length; i++) {
+    var osCode = String(osOptions[i].codigo || '');
+    if (codigo.indexOf(osCode + '.') === 0 || codigo === osCode) {
+      if (osCode.length > best.length) best = osCode;
+    }
+  }
+  return best;
+}
+
 // --- FILTROS E FORMATADORES ---
 
 function isOsItemName_(value) {
@@ -426,6 +543,71 @@ function formatIfDate_(val) {
   }
 
   return val;
+}
+
+function toNumberSafe_(value) {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value === 'number') return value;
+  var str = String(value).trim().replace(/\./g, '').replace(',', '.');
+  var num = Number(str);
+  return isNaN(num) ? 0 : num;
+}
+
+function normalizeSheetDate_(value) {
+  if (!value) return '';
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return formatDateYmdSafe_(value);
+  }
+
+  var str = String(value).trim();
+  if (!str) return '';
+
+  if (str.indexOf('/') !== -1) {
+    var parsedBr = parsePtBrDateOnlySafe_(str);
+    if (parsedBr) return formatDateYmdSafe_(parsedBr);
+  }
+
+  if (str.indexOf('-') !== -1) {
+    var parsedYmd = parseYmdDateSafe_(str);
+    if (parsedYmd) return formatDateYmdSafe_(parsedYmd);
+  }
+
+  return '';
+}
+
+function parsePtBrDateOnlySafe_(text) {
+  var str = String(text || '').trim();
+  if (!str) return null;
+  var parts = str.split('/');
+  if (parts.length !== 3) return null;
+  var day = Number(parts[0]);
+  var month = Number(parts[1]) - 1;
+  var year = Number(parts[2]);
+  if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
+  var date = new Date(year, month, day);
+  date.setHours(0, 0, 0, 0);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+function parseYmdDateSafe_(text) {
+  var str = String(text || '').trim();
+  if (!str) return null;
+  var parts = str.split('-');
+  if (parts.length !== 3) return null;
+  var year = Number(parts[0]);
+  var month = Number(parts[1]) - 1;
+  var day = Number(parts[2]);
+  if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
+  var date = new Date(year, month, day);
+  date.setHours(0, 0, 0, 0);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateYmdSafe_(date) {
+  var y = date.getFullYear();
+  var m = ('0' + (date.getMonth() + 1)).slice(-2);
+  var d = ('0' + date.getDate()).slice(-2);
+  return y + '-' + m + '-' + d;
 }
 
 function parseSimpleDate_(name) {

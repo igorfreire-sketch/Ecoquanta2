@@ -28,6 +28,7 @@ export type AppTabKey =
 export type UserStatus = 'pending' | 'approved' | 'blocked';
 export type DisciplinaOption = string;
 export type CargoOption = string;
+export type RoleTabPermissions = Record<string, AppTabKey[]>;
 
 export interface UserAccessRecord {
   id: string;
@@ -53,6 +54,7 @@ interface AdministracaoProps {
   usuarios: UserAccessRecord[];
   disciplinas: DisciplinaOption[];
   cargos: CargoOption[];
+  roleTabPermissions: RoleTabPermissions;
   databaseLinks: DatabaseLinkRecord[];
   appTabs: Array<{ key: AppTabKey; label: string }>;
   onRefresh: () => Promise<void>;
@@ -66,6 +68,7 @@ interface AdministracaoProps {
   onRemoveDisciplina: (value: string) => Promise<void>;
   onAddCargo: (value: string) => Promise<void>;
   onRemoveCargo: (value: string) => Promise<void>;
+  onToggleRoleTabPermission: (cargo: string, tabKey: AppTabKey) => Promise<void>;
   onSaveDatabaseLink: (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => Promise<void>;
   onDeleteDatabaseLink: (id: string) => Promise<void>;
 }
@@ -243,6 +246,75 @@ function InlineListManager({
   );
 }
 
+function RoleTabPermissionsManager({
+  cargos,
+  appTabs,
+  roleTabPermissions,
+  onToggle,
+}: {
+  cargos: string[];
+  appTabs: Array<{ key: AppTabKey; label: string }>;
+  roleTabPermissions: RoleTabPermissions;
+  onToggle: (cargo: string, tabKey: AppTabKey) => Promise<void>;
+}) {
+  const visibleTabs = appTabs.filter((tab) => tab.key !== 'administracao');
+
+  return (
+    <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
+      <div className="px-8 py-6 border-b border-[#E5E7EB]">
+        <h2 className="text-[18px] font-bold text-[#2D2D2D]">Abas por Cargo</h2>
+        <p className="text-[13px] text-[#757575] mt-1">
+          Defina quais janelas cada cargo pode visualizar. Permissoes individuais continuam valendo.
+        </p>
+      </div>
+
+      <div className="p-6 space-y-4">
+        {cargos.length === 0 && (
+          <div className="text-[13px] text-[#757575]">Cadastre cargos para liberar esta matriz.</div>
+        )}
+
+        {cargos.map((cargo) => {
+          const allowed = roleTabPermissions[cargo] || [];
+
+          return (
+            <div key={cargo} className="border border-[#E5E7EB] bg-[#F9FAFB] rounded-2xl p-5">
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(180px,240px)_1fr] gap-4">
+                <div className="min-w-0">
+                  <p className="text-[14px] font-bold text-[#2D2D2D] truncate">{cargo}</p>
+                  <p className="text-[12px] text-[#757575] mt-1">
+                    {allowed.length} aba(s) liberada(s)
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                  {visibleTabs.map((tab) => {
+                    const checked = allowed.includes(tab.key);
+
+                    return (
+                      <label
+                        key={`${cargo}-${tab.key}`}
+                        className="min-h-11 px-3 py-2 rounded-xl border border-[#E5E7EB] bg-white flex items-center justify-between gap-3 cursor-pointer hover:border-[#F05D28] transition-colors"
+                      >
+                        <span className="text-[12px] font-medium text-[#2D2D2D] leading-tight">{tab.label}</span>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => void onToggle(cargo, tab.key)}
+                          className="w-4 h-4 accent-[#F05D28] cursor-pointer shrink-0"
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function DatabaseForm({
   onSave,
 }: {
@@ -332,6 +404,7 @@ export default function Administracao({
   usuarios,
   disciplinas,
   cargos,
+  roleTabPermissions,
   databaseLinks,
   appTabs,
   onRefresh,
@@ -345,6 +418,7 @@ export default function Administracao({
   onRemoveDisciplina,
   onAddCargo,
   onRemoveCargo,
+  onToggleRoleTabPermission,
   onSaveDatabaseLink,
   onDeleteDatabaseLink,
 }: AdministracaoProps) {
@@ -379,7 +453,7 @@ export default function Administracao({
   return (
     <div className="space-y-8">
       <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-8">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+        <div className="space-y-6">
           <div>
             <p className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">
               Gestão de acesso
@@ -391,7 +465,7 @@ export default function Administracao({
             </p>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <MetricCard icon={<Users size={18} className="text-[#F05D28]" />} label="Usuários" value={String(totalUsuarios)} />
             <MetricCard icon={<UserCheck size={18} className="text-[#10B981]" />} label="Online" value={String(usuariosOnline)} />
             <MetricCard icon={<ShieldCheck size={18} className="text-[#C2410C]" />} label="Pendentes" value={String(pendentes)} />
@@ -469,7 +543,7 @@ export default function Administracao({
         <div className="p-6 space-y-4">
           {usuariosFiltrados.map((user) => (
             <div key={user.id} className="border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] p-5">
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(220px,1.2fr)_110px_180px_180px_120px_1.1fr_280px] gap-4 items-start">
+              <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-[minmax(260px,1.2fr)_110px_minmax(160px,180px)_minmax(160px,180px)_130px_minmax(240px,1fr)_220px] gap-4 items-start">
                 <div className="min-w-0">
                   <div className="flex items-center gap-3">
                     <div className="w-11 h-11 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm shrink-0">
@@ -626,6 +700,13 @@ export default function Administracao({
         />
       </section>
 
+      <RoleTabPermissionsManager
+        cargos={cargos}
+        appTabs={appTabs}
+        roleTabPermissions={roleTabPermissions}
+        onToggle={onToggleRoleTabPermission}
+      />
+
       <DatabaseForm onSave={onSaveDatabaseLink} />
 
       <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
@@ -692,15 +773,15 @@ function MetricCard({
   value: string;
 }) {
   return (
-    <div className="min-w-[120px] bg-[#F9FAFB] border border-[#E5E7EB] rounded-2xl px-4 py-4">
+    <div className="min-w-0 bg-[#F9FAFB] border border-[#E5E7EB] rounded-2xl px-4 py-4">
       <div className="flex items-center justify-between gap-3">
-        <span className="w-9 h-9 rounded-xl bg-white border border-[#E5E7EB] flex items-center justify-center">
+        <span className="w-9 h-9 rounded-xl bg-white border border-[#E5E7EB] flex items-center justify-center shrink-0">
           {icon}
         </span>
-        <span className="text-[20px] font-bold text-[#2D2D2D]">{value}</span>
+        <span className="text-[20px] font-bold text-[#2D2D2D] truncate">{value}</span>
       </div>
 
-      <p className="text-[12px] text-[#757575] mt-3">{label}</p>
+      <p className="text-[12px] text-[#757575] mt-3 truncate">{label}</p>
     </div>
   );
 }

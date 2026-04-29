@@ -1,9 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
-  LayoutDashboard,
-  Users,
-  TrendingUp,
-  LayoutGrid,
+  CalendarClock,
   ChevronRight
 } from 'lucide-react';
 import DashboardEngenharia from './CoordenacaoEngenharia/DashboardEngenharia';
@@ -27,24 +24,44 @@ interface CoordenacaoEngenhariaProps {
   onSubTabChange: (tab: 'dashboard' | 'alocacoes' | 'curva-s' | 'matrix') => void;
 }
 
+function formatLatestEapDate(value?: string) {
+  const raw = String(value || '').trim();
+  if (!raw) return 'Nao publicada';
+
+  const br = raw.match(/^(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})$/);
+  if (br) return `${br[1]}/${br[2]}/${br[3]}`;
+
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+
+  return raw;
+}
+
 export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, subTab }: CoordenacaoEngenhariaProps) {
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
-    { id: 'alocacoes', label: 'Alocações' },
+    { id: 'alocacoes', label: 'Alocacoes' },
     { id: 'curva-s', label: 'Curva S' },
     { id: 'matrix', label: 'Matriz' },
   ];
+  const latestEapDate = formatLatestEapDate(preloadedData?.eap?.latestEapSheet);
 
   return (
     <div className="w-full flex flex-col font-['Montserrat']">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-[11px] font-bold text-[#757575] uppercase tracking-widest mb-6">
-        <span>Coordenação de Engenharia</span>
-        <ChevronRight size={12} />
-        <span className="text-[#F05D28]">{tabs.find(t => t.id === subTab)?.label}</span>
+      <div className="flex flex-col gap-3 mb-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-2 text-[11px] font-bold text-[#757575] uppercase tracking-widest">
+          <span>Coordenacao de Engenharia</span>
+          <ChevronRight size={12} />
+          <span className="text-[#F05D28]">{tabs.find(t => t.id === subTab)?.label}</span>
+        </div>
+
+        <div className="inline-flex w-fit items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
+          <CalendarClock size={14} className="text-[#F05D28]" />
+          <span>EAP atualizada em</span>
+          <span className="text-[#2D2D2D]">{latestEapDate}</span>
+        </div>
       </div>
 
-      {/* Tab Content */}
       <div className="pb-10">
         {subTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} />}
         {subTab === 'alocacoes' && <Alocacoes preloadedData={preloadedData} />}
@@ -54,4 +71,3 @@ export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, su
     </div>
   );
 }
-

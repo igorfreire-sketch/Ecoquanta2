@@ -249,6 +249,14 @@ function doPost(e) {
       schedulePublicJsonPublish_(); return json_({ success: true });
     }
 
+    if (action === 'saveRoleTabPermissions') {
+      var roleTabPermissions = data.roleTabPermissions || {};
+
+      saveRoleTabPermissions_(ss, roleTabPermissions);
+      logAuth_(ss, 'INFO', 'saveRoleTabPermissions ok', safeJson_(roleTabPermissions));
+      schedulePublicJsonPublish_(); return json_({ success: true });
+    }
+
     if (action === 'saveDatabaseLink') {
       var idDb = String(data.id || '').trim();
       var nomeDb = String(data.nome || '').trim();
@@ -366,6 +374,7 @@ function doGet(e) {
       var values = loginSheet.getDataRange().getValues();
       var config = getConfigOptions_(ss);
       var databaseLinks = getDatabaseLinks_(ss);
+      var roleTabPermissions = getRoleTabPermissions_(ss);
 
       var users = [];
       for (var i = 1; i < values.length; i++) {
@@ -377,7 +386,8 @@ function doGet(e) {
         users: users,
         cargos: config.cargos,
         disciplinas: config.disciplinas,
-        databaseLinks: databaseLinks
+        databaseLinks: databaseLinks,
+        roleTabPermissions: roleTabPermissions
       };
     }
 
@@ -390,9 +400,10 @@ function doGet(e) {
     var values = loginSheet.getDataRange().getValues();
     var config = getConfigOptions_(ss);
     var databaseLinks = getDatabaseLinks_(ss);
+    var roleTabPermissionsAdmin = getRoleTabPermissions_(ss);
 
     var responseDataAdmin = {
-      users: [], cargos: config.cargos, disciplinas: config.disciplinas, databaseLinks: databaseLinks
+      users: [], cargos: config.cargos, disciplinas: config.disciplinas, databaseLinks: databaseLinks, roleTabPermissions: roleTabPermissionsAdmin
     };
 
     for (var iA = 1; iA < values.length; iA++) {
@@ -744,6 +755,18 @@ function getOrCreateConfigSheet_(ss) {
   return sh;
 }
 
+function getOrCreateRoleTabPermissionsSheet_(ss) {
+  var sh = ss.getSheetByName('permissoes_cargos');
+  if (!sh) {
+    sh = ss.insertSheet('permissoes_cargos');
+    sh.getRange(1, 1, 1, 2).setValues([['Cargo', 'Abas']]);
+  } else if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
+    sh.clear();
+    sh.getRange(1, 1, 1, 2).setValues([['Cargo', 'Abas']]);
+  }
+  return sh;
+}
+
 function getOrCreateDatabaseLinksSheet_(ss) {
   var sh = ss.getSheetByName('bancos_dados');
   if (!sh) {
@@ -833,6 +856,38 @@ function getConfigOptions_(ss) {
   };
 }
 
+function saveRoleTabPermissions_(ss, permissions) {
+  var sh = getOrCreateRoleTabPermissionsSheet_(ss);
+  sh.clear();
+  sh.getRange(1, 1, 1, 2).setValues([['Cargo', 'Abas']]);
+
+  var rows = [];
+  var map = permissions && typeof permissions === 'object' ? permissions : {};
+  for (var cargo in map) {
+    if (!Object.prototype.hasOwnProperty.call(map, cargo)) continue;
+    var cargoName = String(cargo || '').trim();
+    if (!cargoName) continue;
+    rows.push([cargoName, normalizeAllowedTabs_(map[cargo])]);
+  }
+
+  rows.sort(function (a, b) { return String(a[0]).localeCompare(String(b[0]), 'pt-BR'); });
+  if (rows.length) sh.getRange(2, 1, rows.length, 2).setValues(rows);
+}
+
+function getRoleTabPermissions_(ss) {
+  var sh = getOrCreateRoleTabPermissionsSheet_(ss);
+  var values = sh.getDataRange().getValues();
+  var out = {};
+
+  for (var i = 1; i < values.length; i++) {
+    var cargo = String(values[i][0] || '').trim();
+    if (!cargo) continue;
+    out[cargo] = parseAllowedTabs_(values[i][1]);
+  }
+
+  return out;
+}
+
 function getDatabaseLinks_(ss) {
   var sh = getOrCreateDatabaseLinksSheet_(ss);
   var values = sh.getDataRange().getValues();
@@ -852,16 +907,56 @@ function getDatabaseLinks_(ss) {
   return out;
 }
 
+function getUnifiedEapPublicDataSafe_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var url = String(
+      props.getProperty("git_eap_unificada") ||
+      props.getProperty("git_eap") ||
+      props.getProperty("git_eap_public") ||
+      ""
+    ).trim();
+
+    if (!url) return null;
+
+    var response = UrlFetchApp.fetch(url, {
+      method: "get",
+      muteHttpExceptions: true,
+      headers: { Accept: "application/json" }
+    });
+
+    var status = response.getResponseCode();
+    if (status < 200 || status >= 300) return null;
+
+    var envelope = JSON.parse(response.getContentText() || "{}");
+    var payload = decryptPayloadEnvelope_(envelope, getJsonCryptoKey_());
+
+    return payload && payload.data ? payload.data : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function getEapStructuredData_(ss) {
+  var unifiedEap = getUnifiedEapPublicDataSafe_();
+  if (unifiedEap && unifiedEap.registro) {
+    return {
+      contracts: Array.isArray(unifiedEap.registro.contracts) ? unifiedEap.registro.contracts : [],
+      osOptions: Array.isArray(unifiedEap.registro.osOptions) ? unifiedEap.registro.osOptions : [],
+      itemOptions: Array.isArray(unifiedEap.registro.itemOptions) ? unifiedEap.registro.itemOptions : []
+    };
+  }
+
   var sh = ss.getSheetByName('EAP');
   if (!sh) return { contracts: [], osOptions: [], itemOptions: [] };
 
   var values = sh.getDataRange().getValues();
+  var displayValues = sh.getDataRange().getDisplayValues();
   var rows = [];
 
   for (var i = 1; i < values.length; i++) {
-    var codigo = String(values[i][3] || '').trim();
-    var nome = String(values[i][4] || '').trim();
+    var codigo = String(displayValues[i][3] || values[i][3] || '').trim();
+    var nome = String(displayValues[i][4] || values[i][4] || '').trim();
     if (!codigo || !nome) continue;
     rows.push({ codigo: codigo, nome: nome });
   }
@@ -877,23 +972,37 @@ function getEapStructuredData_(ss) {
     if (dotCount === 0) {
       contracts.push({ codigo: item.codigo, nome: item.nome });
     }
+  }
 
-    if (dotCount === 1) {
-      osOptions.push({ codigo: item.codigo, nome: item.nome, contratoCodigo: item.codigo.split('.')[0] });
+  for (var os = 0; os < rows.length; os++) {
+    var osRow = rows[os];
+    var osParentContrato = findContractParentCode_(osRow.codigo, contracts);
+
+    if (osParentContrato && isOsItemName_(osRow.nome)) {
+      osOptions.push({ codigo: osRow.codigo, nome: osRow.nome, contratoCodigo: osParentContrato });
     }
   }
 
   for (var k = 0; k < rows.length; k++) {
     var itemK = rows[k];
-    var itemDotCount = (itemK.codigo.match(/\./g) || []).length;
-    if (itemDotCount <= 1) continue;
     var osParent = findOsParentCode_(itemK.codigo, osOptions);
-    if (osParent) {
+    if (osParent && itemK.codigo !== osParent) {
       itemOptions.push({ codigo: itemK.codigo, nome: itemK.nome, osCodigo: osParent });
     }
   }
 
   return { contracts: contracts, osOptions: osOptions, itemOptions: itemOptions };
+}
+
+function findContractParentCode_(codigo, contracts) {
+  var best = '';
+  for (var i = 0; i < contracts.length; i++) {
+    var contractCode = String(contracts[i].codigo || '');
+    if (codigo.indexOf(contractCode + '.') === 0 || codigo === contractCode) {
+      if (contractCode.length > best.length) best = contractCode;
+    }
+  }
+  return best;
 }
 
 function findOsParentCode_(codigo, osOptions) {
@@ -905,6 +1014,12 @@ function findOsParentCode_(codigo, osOptions) {
     }
   }
   return best;
+}
+
+function isOsItemName_(value) {
+  var text = String(value || '').trim();
+  if (!text) return false;
+  return /(^|[^A-Za-z0-9À-ÿ])_?OS(?=[A-Za-z0-9À-ÿ_\-\.\s]|$)/i.test(text);
 }
 
 function getProfessionalsByDisciplina_(ss, disciplina) {
@@ -1173,15 +1288,21 @@ function safeJson_(x) { try { return JSON.stringify(x); } catch (e) { return Str
 // ============================================================================
 
 function getRawCronogramaData_(ss) {
+  var unifiedEap = getUnifiedEapPublicDataSafe_();
+  if (unifiedEap && Array.isArray(unifiedEap.cronograma)) {
+    return { success: true, rawRows: unifiedEap.cronograma };
+  }
+
   var sh = ss.getSheetByName('EAP');
   if (!sh) return { success: true, rawRows: [] };
 
   var values = sh.getDataRange().getValues();
+  var displayValues = sh.getDataRange().getDisplayValues();
   var rows = [];
 
   for (var i = 1; i < values.length; i++) {
-    var codigo = String(values[i][3] || '').trim();
-    var nome = String(values[i][4] || '').trim();
+    var codigo = String(displayValues[i][3] || values[i][3] || '').trim();
+    var nome = String(displayValues[i][4] || values[i][4] || '').trim();
     if (!codigo || !nome) continue;
 
     rows.push({
@@ -1191,10 +1312,11 @@ function getRawCronogramaData_(ss) {
       duration: toNumberSafe_(values[i][5]),
       plannedStart: normalizeSheetDate_(values[i][6]),
       plannedEnd: normalizeSheetDate_(values[i][7]),
-      predecessor: String(values[i][8] || '').trim(),
+      predecessor: String(displayValues[i][8] || values[i][8] || '').trim(),
       idealProgress: toNumberSafe_(values[i][9]),
       realStart: normalizeSheetDate_(values[i][11]),
-      realEnd: normalizeSheetDate_(values[i][12])
+      realEnd: normalizeSheetDate_(values[i][12]),
+      baselineIdealProgress: toNumberSafe_(values[i][13])
     });
   }
 
@@ -1341,6 +1463,7 @@ function publishFullDatabaseToPublicJson() {
     var values = loginSheet.getDataRange().getValues();
     var config = getConfigOptions_(ss);
     var databaseLinks = getDatabaseLinks_(ss);
+    var roleTabPermissions = getRoleTabPermissions_(ss);
 
     var users = {};
     for (var i = 1; i < values.length; i++) {
@@ -1359,7 +1482,8 @@ function publishFullDatabaseToPublicJson() {
             usersByEmail: users,
             cargos: config.cargos,
             disciplinas: config.disciplinas,
-            databaseLinks: databaseLinks
+            databaseLinks: databaseLinks,
+            roleTabPermissions: roleTabPermissions
         },
         registro: {
             contracts: eapDataR.contracts,

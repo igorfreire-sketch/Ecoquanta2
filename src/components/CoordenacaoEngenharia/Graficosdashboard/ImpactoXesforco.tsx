@@ -25,6 +25,8 @@ const CORES_AVALIACAO: Record<string, string> = {
   'Melhor que o esperado': '#10B981'
 };
 
+const ChartReferenceArea = ReferenceArea as unknown as React.ComponentType<any>;
+
 const ChipResumo = ({ label, valor, color }: { label: string; valor: any; color: string }) => (
   <div className="px-3 py-1.5 rounded-full bg-[#F8F9FA] border border-[#E5E7EB] flex items-center gap-2 shrink-0">
     <span className="text-[10px] font-bold text-[#2D2D2D] uppercase">{label}:</span>
@@ -115,10 +117,10 @@ const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos }) => {
 
               <RechartsTooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
 
-              <ReferenceArea x1={0} x2={medianaX} y1={medianaY} y2={115} fill="#f0fdf4" fillOpacity={0.5} />
-              <ReferenceArea x1={medianaX} x2={100} y1={medianaY} y2={115} fill="#fff7ed" fillOpacity={0.5} />
-              <ReferenceArea x1={0} x2={medianaX} y1={0} y2={medianaY} fill="#f8fafc" fillOpacity={0.5} />
-              <ReferenceArea x1={medianaX} x2={100} y1={0} y2={medianaY} fill="#fef2f2" fillOpacity={0.5} />
+              <ChartReferenceArea x1={0} x2={medianaX} y1={medianaY} y2={115} fill="#f0fdf4" fillOpacity={0.5} />
+              <ChartReferenceArea x1={medianaX} x2={100} y1={medianaY} y2={115} fill="#fff7ed" fillOpacity={0.5} />
+              <ChartReferenceArea x1={0} x2={medianaX} y1={0} y2={medianaY} fill="#f8fafc" fillOpacity={0.5} />
+              <ChartReferenceArea x1={medianaX} x2={100} y1={0} y2={medianaY} fill="#fef2f2" fillOpacity={0.5} />
 
               <ReferenceLine x={medianaX} stroke="#cbd5e1" strokeDasharray="5 5" />
               <ReferenceLine y={medianaY} stroke="#cbd5e1" strokeDasharray="5 5" />

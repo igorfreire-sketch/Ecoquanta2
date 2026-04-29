@@ -1281,7 +1281,7 @@ function schedulePublicJsonPublish_() {
   } catch (e) {}
 }
 
-function onEdit(e) {
+function handlePublicJsonSpreadsheetEdit(e) {
   schedulePublicJsonPublish_();
 }
 
@@ -1289,7 +1289,7 @@ function setupPublicJsonAutoPublishTriggers() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   deleteAllProjectTriggers_();
 
-  ScriptApp.newTrigger("onEdit")
+  ScriptApp.newTrigger("handlePublicJsonSpreadsheetEdit")
     .forSpreadsheet(ss)
     .onEdit()
     .create();

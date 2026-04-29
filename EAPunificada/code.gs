@@ -34,10 +34,6 @@ function getAppVersion_() {
 
 // --- TRIGGERS ---
 
-function onEdit(e) {
-  handleSpreadsheetEdit(e);
-}
-
 function handleSpreadsheetEdit(e) {
   updateVersion_();
 
@@ -55,24 +51,16 @@ function handleSpreadsheetEdit(e) {
 }
 
 function publishCompressedDataToPublicJsonByTrigger() {
-  return publishCompressedDataToPublicJson();
+  try {
+    return publishCompressedDataToPublicJson();
+  } finally {
+    cleanupCompressedDataPublishTriggers_();
+  }
 }
 
 function setupProjectTriggers() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var triggers = ScriptApp.getProjectTriggers();
-
-  for (var i = 0; i < triggers.length; i++) {
-    var fn = triggers[i].getHandlerFunction();
-
-    if (
-      fn === "handleSpreadsheetEdit" ||
-      fn === "publishCompressedDataToPublicJson" ||
-      fn === "publishCompressedDataToPublicJsonByTrigger"
-    ) {
-      ScriptApp.deleteTrigger(triggers[i]);
-    }
-  }
+  deleteAllProjectTriggers_();
 
   // Trigger instalavel: publica quando a planilha for editada.
   ScriptApp.newTrigger("handleSpreadsheetEdit")
@@ -87,6 +75,29 @@ function setupProjectTriggers() {
     .create();
 
   return "Triggers configurados com sucesso.";
+}
+
+function deleteAllProjectTriggers() {
+  deleteAllProjectTriggers_();
+  return "Todos os gatilhos deste projeto foram removidos.";
+}
+
+function deleteAllProjectTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+
+  for (var i = 0; i < triggers.length; i++) {
+    ScriptApp.deleteTrigger(triggers[i]);
+  }
+}
+
+function cleanupCompressedDataPublishTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "publishCompressedDataToPublicJsonByTrigger") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
 }
 
 // --- PUBLICACAO ---

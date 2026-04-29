@@ -1,4 +1,5 @@
 const DEFAULT_PUBLIC_JSON_BASE_URL = '';
+const DEFAULT_RAW_PUBLIC_JSON_BASE_URL = 'https://raw.githubusercontent.com/igorfreire-sketch/Ecoquanta2/main/Publica';
 
 interface EncryptedJsonEnvelope {
   version: number;
@@ -21,8 +22,29 @@ function getPublicJsonBaseUrl() {
   return String(import.meta.env.VITE_PUBLIC_JSON_BASE_URL || DEFAULT_PUBLIC_JSON_BASE_URL).replace(/\/+$/, '');
 }
 
-function getPublicJsonUrl(fileName: string) {
-  return `${getPublicJsonBaseUrl()}/${fileName}`;
+function getRawPublicJsonBaseUrl() {
+  return String(import.meta.env.VITE_RAW_PUBLIC_JSON_BASE_URL || DEFAULT_RAW_PUBLIC_JSON_BASE_URL).replace(/\/+$/, '');
+}
+
+function joinJsonUrl(baseUrl: string, fileName: string) {
+  const cleanFile = fileName.replace(/^\/+/, '');
+  if (!baseUrl) return `/${cleanFile}`;
+  return `${baseUrl.replace(/\/+$/, '')}/${cleanFile}`;
+}
+
+function getPublicJsonUrls(fileName: string) {
+  const baseUrl = getPublicJsonBaseUrl();
+  const viteBaseUrl = String(import.meta.env.BASE_URL || '/').replace(/\/+$/, '');
+  const candidates = [
+    baseUrl ? joinJsonUrl(baseUrl, fileName) : '',
+    joinJsonUrl(viteBaseUrl, fileName),
+    joinJsonUrl(viteBaseUrl, `Publica/${fileName}`),
+    joinJsonUrl('', fileName),
+    joinJsonUrl('/Publica', fileName),
+    joinJsonUrl(getRawPublicJsonBaseUrl(), fileName),
+  ].filter(Boolean);
+
+  return Array.from(new Set(candidates));
 }
 
 function decodeBase64Url(input: string) {
@@ -82,13 +104,24 @@ async function decryptEnvelope<T>(envelope: EncryptedJsonEnvelope): Promise<T> {
 }
 
 export async function fetchPublicJson<T>(fileName: string): Promise<T> {
-  const response = await fetch(getPublicJsonUrl(fileName), { cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error(`Falha ao carregar ${fileName}: ${response.status}`);
+  const errors: string[] = [];
+
+  for (const url of getPublicJsonUrls(fileName)) {
+    try {
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) {
+        errors.push(`${url}: ${response.status}`);
+        continue;
+      }
+
+      const envelope = await response.json() as EncryptedJsonEnvelope;
+      return await decryptEnvelope<T>(envelope);
+    } catch (error) {
+      errors.push(`${url}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
-  const envelope = await response.json() as EncryptedJsonEnvelope;
-  return decryptEnvelope<T>(envelope);
+  throw new Error(`Falha ao carregar ${fileName}. Tentativas: ${errors.join(' | ')}`);
 }
 
 export async function fetchRegistroPublicData<T>() {

@@ -33,6 +33,17 @@ interface PublicEapEnvelope {
   data?: CompressedPayload;
 }
 
+async function fetchCurvaSDataFromAppsScript(): Promise<CompressedPayload> {
+  const response = await fetch(CURVAS_SCRIPT_URL, { cache: 'no-store' });
+  const payload = await response.json();
+
+  if (!payload?.success || !payload?.data) {
+    throw new Error(payload?.error || 'Falha ao carregar Curva S pelo Apps Script.');
+  }
+
+  return payload.data as CompressedPayload;
+}
+
 function round2(value: number) { return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100; }
 function toNumberSafe(val: any): number {
   if (val === null || val === undefined || val === '') return 0;
@@ -323,10 +334,19 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing }: Cur
     }
 
     try {
-      const payload = await fetchEapPublicData<PublicEapEnvelope>();
-      if (payload.data) {
-        localStorage.setItem('curvasAppData', JSON.stringify(payload.data));
-        setRawData(payload.data as CompressedPayload);
+      let nextData: CompressedPayload | null = null;
+
+      try {
+        const payload = await fetchEapPublicData<PublicEapEnvelope>();
+        if (!payload.data) throw new Error('Nenhum dado encontrado no JSON publico da Curva S.');
+        nextData = payload.data;
+      } catch {
+        nextData = await fetchCurvaSDataFromAppsScript();
+      }
+
+      if (nextData) {
+        localStorage.setItem('curvasAppData', JSON.stringify(nextData));
+        setRawData(nextData);
         if (forceRefresh) {
           setSelectedContract('TODOS');
           setSelectedOsList([]);

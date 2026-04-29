@@ -147,6 +147,27 @@ async function postToAppsScript<T>(payload: Record<string, unknown>): Promise<T>
   }
 }
 
+async function fetchInitialDataFromAppsScript(user: AuthUser): Promise<GlobalData> {
+  const tabs = ADMIN_APP_TABS.map((tab) => tab.key).join(',');
+  const params = new URLSearchParams({
+    action: 'getInitialData',
+    email: user.email || '',
+    role: user.role || '',
+    disciplina: user.disciplina || '',
+    isAdmin: String(Boolean(user.isAdmin)),
+    tabs,
+  });
+
+  const response = await fetch(`${APPS_SCRIPT_URL}?${params.toString()}`, { cache: 'no-store' });
+  const payload = await response.json();
+
+  if (!payload?.success) {
+    throw new Error(payload?.error || 'Falha ao carregar dados do Apps Script.');
+  }
+
+  return payload.data || {};
+}
+
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -282,11 +303,21 @@ export default function App() {
     }
 
     try {
-      const [publicPayload, eapPayload] = await Promise.all([
-        fetchRegistroPublicData<PublicGlobalRegistroPayload>(),
-        fetchEapPublicData<PublicEapPayload>().catch(() => null)
-      ]);
-      const fullData = publicPayload.data || {};
+      let fullData: GlobalData = {};
+      let eapPayload: PublicEapPayload | null = null;
+
+      try {
+        const [publicPayload, publicEapPayload] = await Promise.all([
+          fetchRegistroPublicData<PublicGlobalRegistroPayload>(),
+          fetchEapPublicData<PublicEapPayload>().catch(() => null)
+        ]);
+        fullData = publicPayload.data || {};
+        eapPayload = publicEapPayload;
+      } catch {
+        fullData = await fetchInitialDataFromAppsScript(user);
+        eapPayload = await fetchEapPublicData<PublicEapPayload>().catch(() => null);
+      }
+
       if (eapPayload?.data) fullData.eap = eapPayload.data;
         
         // Converte o índice por e-mail do JSON público de volta para o array esperado pelo app

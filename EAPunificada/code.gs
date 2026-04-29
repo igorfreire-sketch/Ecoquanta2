@@ -287,6 +287,32 @@ function getCompressedData_(ss) {
     return parseSimpleDate_(a.name) - parseSimpleDate_(b.name);
   });
 
+  // Se a aba "Atual" nao existir ou nao tiver OS validas, usa o snapshot mais recente
+  // como base para montar a lista principal da Curva S.
+  if (out.atual.length === 0 && snapshotSheets.length > 0) {
+    var latestValues = snapshotSheets[snapshotSheets.length - 1].sheet.getDataRange().getValues();
+
+    for (var ar = 1; ar < latestValues.length; ar++) {
+      var latestItemName = String(latestValues[ar][4] || '').trim(); // Coluna E
+
+      if (!isOsItemName_(latestItemName)) {
+        continue;
+      }
+
+      out.atual.push([
+        latestItemName,
+        latestItemName,
+        latestValues[ar][2],                 // Coluna C - Real / Progresso atual
+        latestValues[ar][5],                 // Coluna F - Duracao
+        formatIfDate_(latestValues[ar][6]),  // Coluna G - Inicio planejado
+        formatIfDate_(latestValues[ar][7]),  // Coluna H - Fim planejado
+        latestValues[ar][9],                 // Coluna J - Ideal
+        formatIfDate_(latestValues[ar][11]), // Coluna L
+        formatIfDate_(latestValues[ar][12])  // Coluna M
+      ]);
+    }
+  }
+
   var dates = [];
   var tempMap = {};
 

@@ -180,6 +180,24 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+async function fetchRegistroDataFromAppsScript(currentUser: AuthUser): Promise<RegistroDataResponse> {
+  const params = new URLSearchParams({
+    action: 'getRegistroAtividadesData',
+    userEmail: currentUser.email || '',
+    userRole: currentUser.role || '',
+    userDisciplina: currentUser.disciplina || '',
+  });
+
+  const response = await fetch(`${APPS_SCRIPT_URL}?${params.toString()}`, { cache: 'no-store' });
+  const payload = await response.json() as RegistroDataResponse;
+
+  if (!payload?.success) {
+    throw new Error(payload?.error || 'Falha ao carregar Registro de Atividades pelo Apps Script.');
+  }
+
+  return payload;
+}
+
 function MultiProfessionalSelector({ value, options, onChange }: { value: string[]; options: ProfessionalOption[]; onChange: (next: string[]) => void; }) {
   const [open, setOpen] = useState(false);
   const toggleItem = (email: string) => onChange(value.includes(email) ? value.filter((item) => item !== email) : [...value, email]);
@@ -274,7 +292,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
     try {
       const payload = await fetchRegistroPublicData<PublicRegistroEnvelope>();
       const registro = payload.data?.registro;
-      if (!registro) return;
+      if (!registro) throw new Error('Dados de registro ausentes no JSON publico.');
 
       const disciplinaKey = String(currentUser.disciplina || '').trim() || 'Sem disciplina';
       const allActivities = Array.isArray(registro.activitiesList) ? registro.activitiesList : [];
@@ -314,7 +332,17 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       setProfessionals(registro.professionalsByDisciplina?.[disciplinaKey] || []);
       setActiveActivities(mappedActivities.filter((item) => item.status !== 'concluida'));
       setCompletedActivities(mappedActivities.filter((item) => item.status === 'concluida'));
-    } catch (error) {}
+    } catch {
+      try {
+        const fallback = await fetchRegistroDataFromAppsScript(currentUser);
+        setContracts(fallback.contracts || []);
+        setOsOptions(fallback.osOptions || []);
+        setItemOptions(fallback.itemOptions || []);
+        setProfessionals(fallback.professionals || []);
+        setActiveActivities(fallback.activeActivities || []);
+        setCompletedActivities(fallback.completedActivities || []);
+      } catch {}
+    }
   };
 
   const refreshFromPublishedJsonAfterSheetUpdate = async () => {

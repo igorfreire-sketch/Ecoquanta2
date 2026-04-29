@@ -4,14 +4,6 @@
  * ============================================================================
  */
 
-function onOpen() {
-  var ui = SpreadsheetApp.getUi();
-  ui.createMenu('🔄 QUANTA Sync')
-      .addItem('Publicar Banco Oficial em JSON', 'publishFullDatabaseToPublicJson')
-      .addItem('Importar Registro de Atividades do JSON', 'importRegistroAtividadesFromGitJson')
-      .addToUi();
-}
-
 function doPost(e) {
   try {
     var data = JSON.parse((e && e.postData && e.postData.contents) || '{}');
@@ -1293,8 +1285,52 @@ function onEdit(e) {
   schedulePublicJsonPublish_();
 }
 
+function setupPublicJsonAutoPublishTriggers() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  deleteAllProjectTriggers_();
+
+  ScriptApp.newTrigger("onEdit")
+    .forSpreadsheet(ss)
+    .onEdit()
+    .create();
+
+  ScriptApp.newTrigger("publishFullDatabaseToPublicJson")
+    .timeBased()
+    .everyMinutes(30)
+    .create();
+
+  return "Publicacao automatica configurada.";
+}
+
+function deleteAllProjectTriggers() {
+  deleteAllProjectTriggers_();
+  return "Todos os gatilhos deste projeto foram removidos.";
+}
+
+function deleteAllProjectTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+
+  for (var i = 0; i < triggers.length; i++) {
+    ScriptApp.deleteTrigger(triggers[i]);
+  }
+}
+
+function cleanupPublicJsonPublishTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "publishFullDatabaseToPublicJsonByTrigger") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+}
+
 function publishFullDatabaseToPublicJsonByTrigger() {
-  return publishFullDatabaseToPublicJson();
+  try {
+    return publishFullDatabaseToPublicJson();
+  } finally {
+    cleanupPublicJsonPublishTriggers_();
+  }
 }
 
 function publishFullDatabaseToPublicJson() {

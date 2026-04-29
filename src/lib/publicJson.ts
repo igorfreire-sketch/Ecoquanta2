@@ -1,4 +1,4 @@
-const DEFAULT_PUBLIC_JSON_BASE_URL = '/Publica';
+const DEFAULT_PUBLIC_JSON_BASE_URL = '';
 
 interface EncryptedJsonEnvelope {
   version: number;

@@ -41,6 +41,14 @@ const CORPORATE_DOMAIN = '@quantaconsultoria.com';
 const isCorporateEmail = (email: string) => email.toLowerCase().trim().endsWith(CORPORATE_DOMAIN);
 
 type AppTab = 'registro' | 'controle' | 'contratos' | 'nc' | 'cronograma' | 'administracao';
+const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
+  { key: 'registro', label: 'Registro de Atividade' },
+  { key: 'controle', label: 'Coordenação de Engenharia' },
+  { key: 'contratos', label: 'Contratos Sudeste' },
+  { key: 'nc', label: 'Não Conformidades' },
+  { key: 'cronograma', label: 'Cronograma' },
+  { key: 'administracao', label: 'Administração' },
+];
 
 interface AuthResponse {
   success: boolean;
@@ -169,6 +177,43 @@ function userHasTabAccess(user: AuthUser, tab: AppTab) {
   return Array.isArray(user.abas) && user.abas.includes(tab);
 }
 
+function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
+  const admin = data.admin || {};
+  const usersSource = Array.isArray(admin.users)
+    ? admin.users
+    : admin.usersByEmail && typeof admin.usersByEmail === 'object'
+      ? Object.values(admin.usersByEmail)
+      : Array.isArray(data.registro?.usersSummary)
+        ? data.registro.usersSummary
+        : [];
+
+  return usersSource
+    .filter((u: any) => u && (u.email || u.id))
+    .map((u: any) => ({
+      id: String(u.id || u.email || ''),
+      nome: String(u.nome || u.name || ''),
+      email: String(u.email || u.id || ''),
+      online: Boolean(u.online),
+      disciplina: String(u.disciplina || u.discipline || ''),
+      cargo: String(u.cargo || u.role || ''),
+      isAdmin: Boolean(u.isAdmin),
+      status: String(u.status || 'pending') as UserAccessRecord['status'],
+      allowedTabs: (Array.isArray(u.allowedTabs) ? u.allowedTabs : Array.isArray(u.abas) ? u.abas : [])
+        .map((tab: any) => String(tab).trim())
+        .filter(Boolean) as AppTabKey[],
+    }));
+}
+
+function getAdminState(data: GlobalData) {
+  const admin = data.admin || {};
+  return {
+    usuarios: normalizeAdminUsers(data),
+    disciplinas: Array.isArray(admin.disciplinas) ? admin.disciplinas : [],
+    cargos: Array.isArray(admin.cargos) ? admin.cargos : [],
+    databaseLinks: Array.isArray(admin.databaseLinks) ? admin.databaseLinks : [],
+  };
+}
+
 export default function App() {
   const [booting, setBooting] = useState(true);
   const [preloading, setPreloading] = useState(false);
@@ -208,14 +253,11 @@ export default function App() {
       if (cachedData && Object.keys(cachedData).length > 0) {
         setGlobalData(cachedData);
         if (cachedData.admin) {
-          // Admin updates
-          const ad = cachedData.admin;
-          setUsuarios((ad.users || []).map((u: any) => ({
-            id: u.id || u.email, nome: u.nome, email: u.email, online: Boolean(u.online), disciplina: u.disciplina || '',
-            cargo: u.cargo || u.role || '', isAdmin: Boolean(u.isAdmin), status: u.status || 'pending',
-            allowedTabs: ((u.allowedTabs || u.abas || []) as AppTabKey[]).filter(Boolean),
-          })));
-          setDisciplinas(ad.disciplinas || []); setCargos(ad.cargos || []); setDatabaseLinks(ad.databaseLinks || []);
+          const adminState = getAdminState(cachedData);
+          setUsuarios(adminState.usuarios);
+          setDisciplinas(adminState.disciplinas);
+          setCargos(adminState.cargos);
+          setDatabaseLinks(adminState.databaseLinks);
         }
         setPreloading(false); setBooting(false);
         void loadGlobalEnvironment(user, true);
@@ -248,20 +290,16 @@ export default function App() {
       if (eapPayload?.data) fullData.eap = eapPayload.data;
         
         // Converte o índice por e-mail do JSON público de volta para o array esperado pelo app
-        if (fullData.admin && fullData.admin.usersByEmail && !fullData.admin.users) {
-            fullData.admin.users = Object.values(fullData.admin.usersByEmail);
-        }
+        if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
 
         setGlobalData(fullData); 
         saveGlobalDataCache(fullData);
         if (fullData.admin) {
-          const ad = fullData.admin;
-          setUsuarios((ad.users || []).map((u: any) => ({
-            id: u.id || u.email, nome: u.nome, email: u.email, online: Boolean(u.online), disciplina: u.disciplina || '',
-            cargo: u.cargo || u.role || '', isAdmin: Boolean(u.isAdmin), status: u.status || 'pending',
-            allowedTabs: ((u.allowedTabs || u.abas || []) as AppTabKey[]).filter(Boolean),
-          })));
-          setDisciplinas(ad.disciplinas || []); setCargos(ad.cargos || []); setDatabaseLinks(ad.databaseLinks || []);
+          const adminState = getAdminState(fullData);
+          setUsuarios(adminState.usuarios);
+          setDisciplinas(adminState.disciplinas);
+          setCargos(adminState.cargos);
+          setDatabaseLinks(adminState.databaseLinks);
         }
       if (!isBackgroundSync && progressInterval) {
         clearInterval(progressInterval); setLoadProgress(100); setLoadText('Tudo pronto!');
@@ -526,7 +564,7 @@ export default function App() {
           {activeTab === 'cronograma' && <Cronograma />}
           {activeTab === 'administracao' && currentUser?.isAdmin && (
             <Administracao
-              usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} databaseLinks={databaseLinks} appTabs={[]} onRefresh={loadAdminData}
+              usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
               onUpdateUsuario={async (id, patch) => { const u = usuarios.find(x => x.id === id); if (u) await persistUser({ ...u, ...patch }); }}
               onToggleAdmin={async (id, checked) => { const u = usuarios.find(x => x.id === id); if (u) await persistUser({ ...u, isAdmin: checked }); }}
               onToggleTabPermission={async (id, tab) => { const u = usuarios.find(x => x.id === id); if (u) { const tabs = u.allowedTabs.includes(tab) ? u.allowedTabs.filter(t => t !== tab) : [...u.allowedTabs, tab]; await persistUser({ ...u, allowedTabs: tabs }); } }}

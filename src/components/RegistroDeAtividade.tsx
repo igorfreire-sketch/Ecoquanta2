@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   Plus,
@@ -299,6 +299,15 @@ function createLocalId() {
 function getDraftStorageKey(email: string) { return `quanta_registro_atividade_${String(email || '').trim().toLowerCase()}`; }
 function getActivitiesCacheKey(email: string) { return `quanta_registro_atividade_cache_${String(email || '').trim().toLowerCase()}`; }
 
+function hasLocalDraftPayload(payload: LocalDraftPayload) {
+  const draftQueue = Array.isArray(payload?.draftQueue) ? payload.draftQueue : [];
+  const pendingChanges = payload?.pendingChanges && typeof payload.pendingChanges === 'object' ? payload.pendingChanges : {};
+  return Boolean(payload?.formData?.descricao)
+    || Boolean(payload?.formData?.itemCodigo)
+    || draftQueue.length > 0
+    || Object.keys(pendingChanges).length > 0;
+}
+
 function normalizePercentage(value: number) {
   return Math.max(0, Math.min(100, Number(value) || 0));
 }
@@ -407,6 +416,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const [syncingPublishedJson, setSyncingPublishedJson] = useState(false);
   const [balloonMessage, setBalloonMessage] = useState('');
   const [searchText, setSearchText] = useState('');
+  const deferredSearchText = useDeferredValue(searchText);
 
   const [draftQueue, setDraftQueue] = useState<NewActivityDraft[]>([]);
   const [pendingChanges, setPendingChanges] = useState<Record<string, ActivityUpdateDraft>>({});
@@ -415,6 +425,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
   const [restorableDraft, setRestorableDraft] = useState<LocalDraftPayload | null>(null);
   const [hasInitializedDraftRecovery, setHasInitializedDraftRecovery] = useState(false);
+  const draftSaveTimerRef = useRef<number | null>(null);
+  const latestDraftPayloadRef = useRef<LocalDraftPayload | null>(null);
 
   const [formData, setFormData] = useState({
     contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [] as string[], dificuldade: '' as DifficultyLevel | '', descricao: '', avancoInicial: 0,
@@ -513,12 +525,12 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   }, [itemOptions, formData.osCodigo]);
 
   const filteredActivities = useMemo(() => {
-    const term = searchText.trim().toLowerCase();
+    const term = deferredSearchText.trim().toLowerCase();
     if (!term) return activeActivities;
     return activeActivities.filter((item) => (
       item.itemCodigo.toLowerCase().includes(term) || item.itemNome.toLowerCase().includes(term) || item.osNome.toLowerCase().includes(term) || item.profissionais.join(', ').toLowerCase().includes(term)
     ));
-  }, [activeActivities, searchText]);
+  }, [activeActivities, deferredSearchText]);
 
   const hasPendingChanges = Object.keys(pendingChanges).length > 0;
   const hasQueuedActivities = draftQueue.length > 0;
@@ -635,23 +647,61 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       const raw = localStorage.getItem(getDraftStorageKey(currentUser.email));
       if (raw) {
         const parsed = JSON.parse(raw) as LocalDraftPayload;
-        if (Boolean(parsed?.formData?.descricao) || Boolean(parsed?.formData?.itemCodigo) || (parsed?.draftQueue?.length || 0) > 0 || Object.keys(parsed?.pendingChanges || {}).length > 0) {
+        if (hasLocalDraftPayload(parsed)) {
           setRestorableDraft(parsed); setShowRestorePrompt(true);
         }
       }
     } catch (error) {} finally { setHasInitializedDraftRecovery(true); }
   }, [currentUser.email, hasInitializedDraftRecovery]);
 
+  const flushLocalDraft = useCallback(() => {
+    if (!hasInitializedDraftRecovery) return;
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+
+    const key = getDraftStorageKey(currentUser.email);
+    const payload = latestDraftPayloadRef.current;
+    try {
+      if (payload && hasLocalDraftPayload(payload)) {
+        localStorage.setItem(key, JSON.stringify(payload));
+      } else {
+        localStorage.removeItem(key);
+      }
+    } catch (error) {}
+  }, [currentUser.email, hasInitializedDraftRecovery]);
+
   useEffect(() => {
     if (!hasInitializedDraftRecovery) return;
-    const key = getDraftStorageKey(currentUser.email);
-    if (!formData.descricao && !formData.itemCodigo && draftQueue.length === 0 && Object.keys(pendingChanges).length === 0) {
-      localStorage.removeItem(key); return;
-    }
-    try { localStorage.setItem(key, JSON.stringify({ formData, draftQueue, pendingChanges, expandedActivities })); } catch (error) {}
-  }, [currentUser.email, formData, draftQueue, pendingChanges, expandedActivities, hasInitializedDraftRecovery]);
+    latestDraftPayloadRef.current = { formData, draftQueue, pendingChanges, expandedActivities };
+    if (draftSaveTimerRef.current) window.clearTimeout(draftSaveTimerRef.current);
+    draftSaveTimerRef.current = window.setTimeout(flushLocalDraft, 250);
+  }, [formData, draftQueue, pendingChanges, expandedActivities, hasInitializedDraftRecovery, flushLocalDraft]);
 
-  const clearLocalDraft = () => { try { localStorage.removeItem(getDraftStorageKey(currentUser.email)); } catch (error) {} };
+  useEffect(() => {
+    const handlePageHide = () => flushLocalDraft();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flushLocalDraft();
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      flushLocalDraft();
+    };
+  }, [flushLocalDraft]);
+
+  const clearLocalDraft = () => {
+    latestDraftPayloadRef.current = null;
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+    try { localStorage.removeItem(getDraftStorageKey(currentUser.email)); } catch (error) {}
+  };
   const restoreLocalDraft = () => {
     if (!restorableDraft) return;
     setFormData({ contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [], dificuldade: '', descricao: '', avancoInicial: 0, ...(restorableDraft.formData || {}) });
@@ -741,7 +791,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
     if (!hasBothPending) return;
     setSavingAll(true);
     try {
-      if (await sendQueuedActivities() && await savePendingChanges()) { clearLocalDraft(); }
+      await sendQueuedActivities();
+      await savePendingChanges();
     } finally { setSavingAll(false); }
   };
 
@@ -979,12 +1030,12 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
           ) : (
             <>
               {hasQueuedActivities && (
-                <button type="button" disabled={sendingBatch || syncingPublishedJson} onClick={async () => { if (await sendQueuedActivities()) { clearLocalDraft(); } }} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
+                <button type="button" disabled={sendingBatch || syncingPublishedJson} onClick={() => void sendQueuedActivities()} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
                   {draftQueue.length === 1 ? 'Enviar 1 atividade' : `Enviar ${draftQueue.length} atividades`} <Send size={18} />
                 </button>
               )}
               {hasPendingChanges && (
-                <button type="button" disabled={savingChanges || syncingPublishedJson} onClick={async () => { if (await savePendingChanges()) { clearLocalDraft(); } }} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
+                <button type="button" disabled={savingChanges || syncingPublishedJson} onClick={() => void savePendingChanges()} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
                   Salvar alterações <Save size={18} />
                 </button>
               )}

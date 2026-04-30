@@ -13,7 +13,7 @@ function clearOutdatedClientCaches() {
     localStorage.removeItem('curvasAppData');
 
     Object.keys(localStorage).forEach((key) => {
-      if (key.startsWith('quanta_registro_atividade_')) {
+      if (key.startsWith('quanta_registro_atividade_cache_')) {
         localStorage.removeItem(key);
       }
     });

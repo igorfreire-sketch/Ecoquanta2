@@ -62,6 +62,24 @@ function isAllValue(value?: string) {
   return !v || v === 'todos' || v === 'todas' || v === 'todas as os' || v === 'todos os contratos' || v === 'todas as disciplinas';
 }
 
+function isDateLikeLabel(value?: string) {
+  const text = String(value || '').trim();
+  return Boolean(
+    text.match(/^\d{4}-\d{2}-\d{2}T/) ||
+    text.match(/^\d{1,2}\/\d{1,2}\/\d{2,4}/) ||
+    text.match(/GMT|Hor.rio|Bras.lia/i)
+  );
+}
+
+function getOsDisplayName(osCodigo: string, osNome: string) {
+  const cleanName = String(osNome || '').trim();
+  const cleanCode = String(osCodigo || '').trim();
+
+  if (cleanName && !isDateLikeLabel(cleanName)) return cleanName;
+  if (cleanCode && !isDateLikeLabel(cleanCode)) return cleanCode;
+  return 'Sem OS';
+}
+
 function formatDateBR(value?: string) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -187,7 +205,7 @@ function buildComposicaoData(tableData: ConsultaAtividade[], disciplinas: string
   tableData.forEach((item) => {
     const osCodigo = item.os || 'Sem OS';
     const osNome = item.osNome || osCodigo;
-    const osLabel = osNome && osNome !== osCodigo ? `${osCodigo} - ${osNome}` : osCodigo;
+    const osLabel = getOsDisplayName(osCodigo, osNome);
     if (!grouped[osCodigo]) {
       const base: Record<string, any> = {
         os: osCodigo,

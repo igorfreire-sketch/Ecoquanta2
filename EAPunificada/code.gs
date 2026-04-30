@@ -1,7 +1,16 @@
 // --- CONFIGURACOES DE PUBLICACAO JSON ---
+//
+// POLITICA DE PERFORMANCE:
+// - Toda interacao do site deve priorizar resposta rapida ao usuario.
+// - Escreva na planilha e no JSON com o menor numero possivel de chamadas.
+// - Publique JSON compacto para reduzir trafego e tempo da API do GitHub.
+// - Use gatilhos curtos para trabalho pesado em segundo plano.
+// - Quando json_crypto_key/crypto_key existir, publique envelope criptografado;
+//   velocidade nao deve abrir janela publica para dados sensiveis.
 var PUBLIC_JSON_FOLDER = "Publica";
 var EAP_PUBLIC_JSON_FILE = "eap-unificada.json";
 var DEFAULT_REGISTRO_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec";
+var PUBLIC_JSON_FAST_DELAY_MS = 1000;
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
@@ -36,23 +45,31 @@ function getAppVersion_() {
 
 function handleSpreadsheetEdit(e) {
   updateVersion_();
-  scheduleCompressedDataPublicJson_(30 * 1000);
+  scheduleCompressedDataPublicJson_(PUBLIC_JSON_FAST_DELAY_MS);
 }
 
 function handleSpreadsheetChange(e) {
   updateVersion_();
-  scheduleCompressedDataPublicJson_(30 * 1000);
+  scheduleCompressedDataPublicJson_(PUBLIC_JSON_FAST_DELAY_MS);
 }
 
 function scheduleCompressedDataPublicJson() {
-  scheduleCompressedDataPublicJson_(5 * 1000);
+  scheduleCompressedDataPublicJson_(PUBLIC_JSON_FAST_DELAY_MS);
   return "Publicacao da EAP agendada.";
 }
 
-function scheduleCompressedDataPublicJson_(delayMs) {
-  var waitMs = delayMs || 30 * 1000;
+function scheduleCompressedDataPublicJson_(delayMs, force) {
+  var waitMs = Math.max(1000, Number(delayMs || PUBLIC_JSON_FAST_DELAY_MS));
+  var now = Date.now();
+  var targetAt = now + waitMs;
   var props = PropertiesService.getScriptProperties();
-  props.setProperty('pending_eap_publish_at', String(Date.now() + waitMs));
+  var pendingAt = Number(props.getProperty('pending_eap_publish_at') || 0);
+
+  if (!force && pendingAt && pendingAt > now && pendingAt <= targetAt) {
+    return;
+  }
+
+  props.setProperty('pending_eap_publish_at', String(targetAt));
   cleanupCompressedDataPublishTriggers_();
 
   ScriptApp.newTrigger("publishCompressedDataToPublicJsonByTrigger")
@@ -958,7 +975,7 @@ function parseSimpleDate_(name) {
 
 function publishEncryptedJsonToGithub_(fileName, payloadObj) {
   var cfg = getGithubPublisherConfig_();
-  var body = JSON.stringify(payloadObj, null, 2);
+  var body = buildFastPublicJsonBody_(payloadObj);
 
   var url = buildGithubContentsUrl_(
     cfg.githubApi,
@@ -973,6 +990,15 @@ function publishEncryptedJsonToGithub_(fileName, payloadObj) {
     cfg.githubBranch,
     "Atualiza " + PUBLIC_JSON_FOLDER + "/" + fileName
   );
+}
+
+function buildFastPublicJsonBody_(payloadObj) {
+  var cryptoKey = getOptionalJsonCryptoKey_();
+  var out = cryptoKey
+    ? encryptPayloadEnvelope_(payloadObj, cryptoKey)
+    : payloadObj;
+
+  return JSON.stringify(out);
 }
 
 function getGithubPublisherConfig_() {
@@ -995,6 +1021,11 @@ function getGithubPublisherConfig_() {
     githubToken: githubToken,
     githubBranch: githubBranch
   };
+}
+
+function getOptionalJsonCryptoKey_() {
+  var props = PropertiesService.getScriptProperties();
+  return String(props.getProperty("json_crypto_key") || props.getProperty("crypto_key") || "").trim();
 }
 
 function buildGithubContentsUrl_(baseApi, folderName, fileName) {

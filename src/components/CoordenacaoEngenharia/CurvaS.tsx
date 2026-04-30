@@ -29,6 +29,7 @@ interface CurvasProps {
   onForceRefresh?: () => void;
   isSyncing?: boolean;
   lockedContractCode?: string;
+  activeContractCode?: string;
 }
 
 interface PublicEapEnvelope {
@@ -87,10 +88,15 @@ function normalizeKey(value: any) {
   return String(value || '').trim();
 }
 
+function isAllContract(value: any) {
+  const normalized = normalizeKey(value).toLowerCase();
+  return !normalized || normalized === 'todos' || normalized === 'todos os contratos';
+}
+
 function isOrderServiceName(value: any) {
   const text = normalizeKey(value);
   if (!text) return false;
-  return /^_?OS(?=$|[\s_\-.0-9A-Za-zÀ-ÿ])/i.test(text);
+  return /^OS(?=$|[\s_\-.0-9A-Za-zÀ-ÿ])/i.test(text);
 }
 
 function isLikelyHeaderRow(row: any[]) {
@@ -314,7 +320,7 @@ function OsPanel({ data, globalConfig }: { data: any, globalConfig: any, key?: a
   );
 }
 
-export default function Curvas({ preloadedData, onForceRefresh, isSyncing, lockedContractCode }: CurvasProps) {
+export default function Curvas({ preloadedData, onForceRefresh, isSyncing, lockedContractCode, activeContractCode }: CurvasProps) {
   const [loading, setLoading] = useState(false);
   const [localIsSyncing, setLocalIsSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -434,12 +440,15 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
     return hierarchy.find(c => c.code === selectedContract)?.osList || [];
   }, [selectedContract, hierarchy]);
 
+  const effectiveContractCode = isAllContract(activeContractCode) && !lockedContractCode
+    ? ''
+    : normalizeKey(lockedContractCode || activeContractCode || '');
+
   useEffect(() => {
-    const locked = normalizeKey(lockedContractCode || '');
-    if (!locked) return;
-    setSelectedContract(locked);
+    if (!effectiveContractCode) return;
+    setSelectedContract(effectiveContractCode);
     setSelectedOsList([]);
-  }, [lockedContractCode]);
+  }, [effectiveContractCode]);
 
   const chartsData = useMemo(() => {
     if (!rawData || !rawData.atual || selectedOsList.length === 0) return [];
@@ -519,7 +528,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
         </div>
         <button 
           onClick={() => {
-             setSelectedContract('TODOS'); setSelectedOsList([]);
+             setSelectedContract(effectiveContractCode || 'TODOS'); setSelectedOsList([]);
              if (onForceRefresh) onForceRefresh(); else fetchCurvasData(true);
           }} 
           disabled={loading || activeSyncState} 
@@ -535,7 +544,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Contrato</label>
             <select value={selectedContract} disabled={Boolean(normalizeKey(lockedContractCode || ''))} onChange={(e) => { setSelectedContract(e.target.value); setSelectedOsList([]); }} className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px] disabled:opacity-70">
-              {!normalizeKey(lockedContractCode || '') && <option value="TODOS">Selecione...</option>}
+              {!effectiveContractCode && <option value="TODOS">Selecione...</option>}
               {hierarchy.map(c => <option key={c.code} value={c.code}>{c.code} - {c.name}</option>)}
             </select>
           </div>

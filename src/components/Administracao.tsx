@@ -19,8 +19,8 @@ import {
 export type AppTabKey =
   | 'registro'
   | 'controle'
+  | 'contrato'
   | 'alocacoes'
-  | 'contratos'
   | 'nc'
   | 'cronograma'
   | 'administracao';
@@ -433,6 +433,7 @@ export default function Administracao({
   onDeleteDatabaseLink,
 }: AdministracaoProps) {
   const [search, setSearch] = React.useState('');
+  const deferredSearch = React.useDeferredValue(search);
   const [disciplinaFiltro, setDisciplinaFiltro] = React.useState('Todas');
   const [cargoFiltro, setCargoFiltro] = React.useState('Todos');
 
@@ -443,7 +444,7 @@ export default function Administracao({
 
   const usuariosFiltrados = React.useMemo(() => {
     return usuarios.filter((user) => {
-      const termo = search.trim().toLowerCase();
+      const termo = deferredSearch.trim().toLowerCase();
 
       const matchesSearch =
         !termo ||
@@ -458,7 +459,7 @@ export default function Administracao({
 
       return matchesSearch && matchesDisciplina && matchesCargo;
     });
-  }, [usuarios, search, disciplinaFiltro, cargoFiltro]);
+  }, [usuarios, deferredSearch, disciplinaFiltro, cargoFiltro]);
 
   return (
     <div className="space-y-6 max-w-full">
@@ -647,7 +648,7 @@ export default function Administracao({
                     value={user.contrato}
                     onChange={(e) => onUpdateUsuario(user.id, { contrato: e.target.value })}
                   >
-                    <option value="">Sem limitaÃ§Ã£o</option>
+                    <option value="">Sem limite</option>
                     {contratos.map((contrato) => (
                       <option key={contrato.id} value={contrato.id}>
                         {contrato.nome}

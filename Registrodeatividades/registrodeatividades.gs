@@ -2,6 +2,17 @@
  * ============================================================================
  * BACK-END DE ACESSO / ADMINISTRAÇÃO / REGISTRO DE ATIVIDADES / CRONOGRAMA
  * ============================================================================
+ *
+ * POLITICA DE PERFORMANCE:
+ * - Toda interacao do site deve priorizar resposta rapida ao usuario.
+ * - Escreva na planilha em lote sempre que possivel; evite setValue repetido.
+ * - Nao bloqueie o salvamento esperando publicacao pesada no GitHub.
+ * - Publique JSON em segundo plano por gatilho curto, reaproveitando publicacoes
+ *   pendentes em vez de recriar trabalho.
+ * - JSON publico deve ser compacto para trafegar rapido.
+ * - Dados administrativos/usuarios nao devem ser publicados sem criptografia
+ *   quando json_crypto_key/crypto_key estiver configurada; velocidade nao deve
+ *   criar janela publica de dados sensiveis.
  */
 
 var DEFAULT_EAP_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec";
@@ -38,6 +49,87 @@ function doPost(e) {
     if (action === 'scheduleFullPublicJsonRefresh') {
       var fullRefreshMessage = scheduleFullPublicJsonRefresh();
       return json_({ success: true, message: fullRefreshMessage });
+    }
+
+    if (action === 'saveConfigOptions') {
+      var cargosFast = arrayFromAny_(data.cargos);
+      var disciplinasFast = arrayFromAny_(data.disciplinas);
+      var alocacoesFast = arrayFromAny_(data.alocacoes);
+
+      saveConfigSheet_(ss, cargosFast, disciplinasFast, alocacoesFast);
+      logAuth_(ss, 'INFO', 'saveConfigOptions ok', safeJson_({ cargos: cargosFast.length, disciplinas: disciplinasFast.length, alocacoes: alocacoesFast.length }));
+      flushAndSchedulePublicJsonPublish_();
+      return json_({ success: true });
+    }
+
+    if (action === 'saveRoleTabPermissions') {
+      var roleTabPermissionsFast = data.roleTabPermissions || {};
+
+      saveRoleTabPermissions_(ss, roleTabPermissionsFast);
+      logAuth_(ss, 'INFO', 'saveRoleTabPermissions ok', safeJson_(roleTabPermissionsFast));
+      flushAndSchedulePublicJsonPublish_();
+      return json_({ success: true });
+    }
+
+    if (action === 'saveDatabaseLink') {
+      var idDbFast = String(data.id || '').trim();
+      var nomeDbFast = String(data.nome || '').trim();
+      var linkDbFast = String(data.link || '').trim();
+      var descricaoDbFast = String(data.descricao || '').trim();
+
+      if (!nomeDbFast) return json_({ success: false, error: 'Informe o nome da planilha.' });
+      if (!linkDbFast) return json_({ success: false, error: 'Informe o link da planilha.' });
+      if (descricaoDbFast.length > 100) descricaoDbFast = descricaoDbFast.slice(0, 100);
+
+      var shDbFast = getOrCreateDatabaseLinksSheet_(ss);
+      var rowsDbFast = shDbFast.getDataRange().getValues();
+      var nowDbFast = new Date().toLocaleString('pt-BR');
+
+      if (!idDbFast) {
+        idDbFast = Utilities.getUuid();
+        shDbFast.appendRow([idDbFast, nomeDbFast, linkDbFast, descricaoDbFast, nowDbFast]);
+      } else {
+        var foundDbFast = false;
+        for (var iDbFast = 1; iDbFast < rowsDbFast.length; iDbFast++) {
+          if (String(rowsDbFast[iDbFast][0]) === idDbFast) {
+            shDbFast.getRange(iDbFast + 1, 2, 1, 4).setValues([[nomeDbFast, linkDbFast, descricaoDbFast, nowDbFast]]);
+            foundDbFast = true;
+            break;
+          }
+        }
+        if (!foundDbFast) {
+          shDbFast.appendRow([idDbFast, nomeDbFast, linkDbFast, descricaoDbFast, nowDbFast]);
+        }
+      }
+
+      flushAndSchedulePublicJsonPublish_();
+      return json_({ success: true, id: idDbFast });
+    }
+
+    if (action === 'deleteDatabaseLink') {
+      var idDelFast = String(data.id || '').trim();
+      if (!idDelFast) return json_({ success: false, error: 'ID inválido.' });
+
+      var shDelFast = getOrCreateDatabaseLinksSheet_(ss);
+      var rowsDelFast = shDelFast.getDataRange().getValues();
+
+      for (var iDelFast = rowsDelFast.length - 1; iDelFast >= 1; iDelFast--) {
+        if (String(rowsDelFast[iDelFast][0]) === idDelFast) {
+          shDelFast.deleteRow(iDelFast + 1);
+          flushAndSchedulePublicJsonPublish_();
+          return json_({ success: true });
+        }
+      }
+
+      return json_({ success: false, error: 'Banco de dados não encontrado.' });
+    }
+
+    if (action === 'registerActivitiesBatch') {
+      return registerActivitiesBatch_(ss, data);
+    }
+
+    if (action === 'updateActivitiesBatch') {
+      return updateActivitiesBatch_(ss, data);
     }
 
     var loginSheet = getOrCreateLoginSheet_(ss);
@@ -78,7 +170,7 @@ function doPost(e) {
 
       loginSheet.appendRow(row);
       logAuth_(ss, 'INFO', 'registerUser ok', email);
-      schedulePublicJsonPublish_(); return json_({ success: true, message: 'Cadastro realizado com sucesso. Aguarde aprovação.' });
+      flushAndSchedulePublicJsonPublish_(); return json_({ success: true, message: 'Cadastro realizado com sucesso. Aguarde aprovação.' });
     }
 
     if (action === 'authUser') {
@@ -148,8 +240,10 @@ function doPost(e) {
       var code = randomCode_(6);
       var expires = Date.now() + 15 * 60 * 1000;
 
-      loginSheet.getRange(idx2 + 1, header.resetcode + 1).setValue(code);
-      loginSheet.getRange(idx2 + 1, header.resetexpires + 1).setValue(expires);
+      setLoginRowPatch_(loginSheet, idx2 + 1, header, {
+        resetcode: code,
+        resetexpires: expires
+      });
 
       try {
         sendResetCodeEmail_(email3, code, 15);
@@ -186,10 +280,12 @@ function doPost(e) {
 
       var newHash = makePasswordHash_(newPass);
 
-      loginSheet.getRange(idx3 + 1, header.passwordhash + 1).setValue(newHash);
-      loginSheet.getRange(idx3 + 1, header.resetcode + 1).setValue('');
-      loginSheet.getRange(idx3 + 1, header.resetexpires + 1).setValue('');
-      loginSheet.getRange(idx3 + 1, header.lastseen + 1).setValue('');
+      setLoginRowPatch_(loginSheet, idx3 + 1, header, {
+        passwordhash: newHash,
+        resetcode: '',
+        resetexpires: '',
+        lastseen: ''
+      });
 
       logRecovery_(ss, email4, 'concluido', 'senha redefinida');
       logAuth_(ss, 'INFO', 'resetPassword ok', email4);
@@ -204,17 +300,17 @@ function doPost(e) {
       var idxA = findUserRowByEmail_(values, header, emailA);
       if (idxA < 0) return json_({ success: false, error: 'Usuário não encontrado.' });
 
-      if (data.name !== undefined) loginSheet.getRange(idxA + 1, header.nome + 1).setValue(data.name || '');
-      if (data.role !== undefined) loginSheet.getRange(idxA + 1, header.role + 1).setValue(data.role || '');
-      if (data.discipline !== undefined) loginSheet.getRange(idxA + 1, header.disciplina + 1).setValue(data.discipline || '');
-      if (data.allowedTabs !== undefined) loginSheet.getRange(idxA + 1, header.abas + 1).setValue(normalizeAllowedTabs_(data.allowedTabs));
-      if (data.allocation !== undefined) loginSheet.getRange(idxA + 1, header.alocacao + 1).setValue(String(data.allocation || ''));
-      if (data.contract !== undefined) loginSheet.getRange(idxA + 1, header.contrato + 1).setValue(String(data.contract || ''));
-      if (data.isAdmin !== undefined) loginSheet.getRange(idxA + 1, header.isadmin + 1).setValue(boolToSheet_(data.isAdmin));
-
-      loginSheet.getRange(idxA + 1, header.status + 1).setValue('approved');
+      var approvePatch = { status: 'approved' };
+      if (data.name !== undefined) approvePatch.nome = data.name || '';
+      if (data.role !== undefined) approvePatch.role = data.role || '';
+      if (data.discipline !== undefined) approvePatch.disciplina = data.discipline || '';
+      if (data.allowedTabs !== undefined) approvePatch.abas = normalizeAllowedTabs_(data.allowedTabs);
+      if (data.allocation !== undefined) approvePatch.alocacao = String(data.allocation || '');
+      if (data.contract !== undefined) approvePatch.contrato = String(data.contract || '');
+      if (data.isAdmin !== undefined) approvePatch.isadmin = boolToSheet_(data.isAdmin);
+      setLoginRowPatch_(loginSheet, idxA + 1, header, approvePatch);
       logAuth_(ss, 'INFO', 'approveUser ok', emailA);
-      schedulePublicJsonPublish_(); return json_({ success: true });
+      flushAndSchedulePublicJsonPublish_(); return json_({ success: true });
     }
 
     if (action === 'blockUser') {
@@ -224,10 +320,12 @@ function doPost(e) {
       var idxB = findUserRowByEmail_(values, header, emailB);
       if (idxB < 0) return json_({ success: false, error: 'Usuário não encontrado.' });
 
-      loginSheet.getRange(idxB + 1, header.status + 1).setValue('blocked');
-      loginSheet.getRange(idxB + 1, header.lastseen + 1).setValue('');
+      setLoginRowPatch_(loginSheet, idxB + 1, header, {
+        status: 'blocked',
+        lastseen: ''
+      });
       logAuth_(ss, 'INFO', 'blockUser ok', emailB);
-      schedulePublicJsonPublish_(); return json_({ success: true });
+      flushAndSchedulePublicJsonPublish_(); return json_({ success: true });
     }
 
     if (action === 'saveUserAccess') {
@@ -237,17 +335,19 @@ function doPost(e) {
       var idxS = findUserRowByEmail_(values, header, emailS);
       if (idxS < 0) return json_({ success: false, error: 'Usuário não encontrado.' });
 
-      if (data.name !== undefined) loginSheet.getRange(idxS + 1, header.nome + 1).setValue(String(data.name || ''));
-      if (data.role !== undefined) loginSheet.getRange(idxS + 1, header.role + 1).setValue(String(data.role || ''));
-      if (data.discipline !== undefined) loginSheet.getRange(idxS + 1, header.disciplina + 1).setValue(String(data.discipline || ''));
-      if (data.allowedTabs !== undefined) loginSheet.getRange(idxS + 1, header.abas + 1).setValue(normalizeAllowedTabs_(data.allowedTabs));
-      if (data.allocation !== undefined) loginSheet.getRange(idxS + 1, header.alocacao + 1).setValue(String(data.allocation || ''));
-      if (data.contract !== undefined) loginSheet.getRange(idxS + 1, header.contrato + 1).setValue(String(data.contract || ''));
-      if (data.isAdmin !== undefined) loginSheet.getRange(idxS + 1, header.isadmin + 1).setValue(boolToSheet_(data.isAdmin));
-      if (data.status !== undefined) loginSheet.getRange(idxS + 1, header.status + 1).setValue(String(data.status || 'pending'));
+      var saveUserPatch = {};
+      if (data.name !== undefined) saveUserPatch.nome = String(data.name || '');
+      if (data.role !== undefined) saveUserPatch.role = String(data.role || '');
+      if (data.discipline !== undefined) saveUserPatch.disciplina = String(data.discipline || '');
+      if (data.allowedTabs !== undefined) saveUserPatch.abas = normalizeAllowedTabs_(data.allowedTabs);
+      if (data.allocation !== undefined) saveUserPatch.alocacao = String(data.allocation || '');
+      if (data.contract !== undefined) saveUserPatch.contrato = String(data.contract || '');
+      if (data.isAdmin !== undefined) saveUserPatch.isadmin = boolToSheet_(data.isAdmin);
+      if (data.status !== undefined) saveUserPatch.status = String(data.status || 'pending');
+      setLoginRowPatch_(loginSheet, idxS + 1, header, saveUserPatch);
 
       logAuth_(ss, 'INFO', 'saveUserAccess ok', emailS);
-      schedulePublicJsonPublish_(); return json_({ success: true });
+      flushAndSchedulePublicJsonPublish_(); return json_({ success: true });
     }
 
     if (action === 'adminResetPassword') {
@@ -260,10 +360,12 @@ function doPost(e) {
       var tempPassword = randomTemporaryPassword_();
       var hashTemp = makePasswordHash_(tempPassword);
 
-      loginSheet.getRange(idxR + 1, header.passwordhash + 1).setValue(hashTemp);
-      loginSheet.getRange(idxR + 1, header.resetcode + 1).setValue('');
-      loginSheet.getRange(idxR + 1, header.resetexpires + 1).setValue('');
-      loginSheet.getRange(idxR + 1, header.lastseen + 1).setValue('');
+      setLoginRowPatch_(loginSheet, idxR + 1, header, {
+        passwordhash: hashTemp,
+        resetcode: '',
+        resetexpires: '',
+        lastseen: ''
+      });
 
       try {
         sendAdminTemporaryPasswordEmail_(emailR, tempPassword);
@@ -275,82 +377,6 @@ function doPost(e) {
 
       logAuth_(ss, 'INFO', 'adminResetPassword ok', emailR);
       return json_({ success: true, message: 'Senha temporária enviada por e-mail.' });
-    }
-
-    if (action === 'saveConfigOptions') {
-      var cargos = arrayFromAny_(data.cargos);
-      var disciplinas = arrayFromAny_(data.disciplinas);
-      var alocacoes = arrayFromAny_(data.alocacoes);
-
-      saveConfigSheet_(ss, cargos, disciplinas, alocacoes);
-      logAuth_(ss, 'INFO', 'saveConfigOptions ok', safeJson_({ cargos: cargos.length, disciplinas: disciplinas.length, alocacoes: alocacoes.length }));
-      schedulePublicJsonPublish_(); return json_({ success: true });
-    }
-
-    if (action === 'saveRoleTabPermissions') {
-      var roleTabPermissions = data.roleTabPermissions || {};
-
-      saveRoleTabPermissions_(ss, roleTabPermissions);
-      logAuth_(ss, 'INFO', 'saveRoleTabPermissions ok', safeJson_(roleTabPermissions));
-      schedulePublicJsonPublish_(); return json_({ success: true });
-    }
-
-    if (action === 'saveDatabaseLink') {
-      var idDb = String(data.id || '').trim();
-      var nomeDb = String(data.nome || '').trim();
-      var linkDb = String(data.link || '').trim();
-      var descricaoDb = String(data.descricao || '').trim();
-
-      if (!nomeDb) return json_({ success: false, error: 'Informe o nome da planilha.' });
-      if (!linkDb) return json_({ success: false, error: 'Informe o link da planilha.' });
-      if (descricaoDb.length > 100) descricaoDb = descricaoDb.slice(0, 100);
-
-      var shDb = getOrCreateDatabaseLinksSheet_(ss);
-      var rowsDb = shDb.getDataRange().getValues();
-
-      if (!idDb) {
-        idDb = Utilities.getUuid();
-        shDb.appendRow([idDb, nomeDb, linkDb, descricaoDb, new Date().toLocaleString('pt-BR')]);
-      } else {
-        var found = false;
-        for (var iDb = 1; iDb < rowsDb.length; iDb++) {
-          if (String(rowsDb[iDb][0]) === idDb) {
-            shDb.getRange(iDb + 1, 2, 1, 4).setValues([[nomeDb, linkDb, descricaoDb, new Date().toLocaleString('pt-BR')]]);
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          shDb.appendRow([idDb, nomeDb, linkDb, descricaoDb, new Date().toLocaleString('pt-BR')]);
-        }
-      }
-
-      schedulePublicJsonPublish_(); return json_({ success: true, id: idDb });
-    }
-
-    if (action === 'deleteDatabaseLink') {
-      var idDel = String(data.id || '').trim();
-      if (!idDel) return json_({ success: false, error: 'ID inválido.' });
-
-      var shDel = getOrCreateDatabaseLinksSheet_(ss);
-      var rowsDel = shDel.getDataRange().getValues();
-
-      for (var iDel = rowsDel.length - 1; iDel >= 1; iDel--) {
-        if (String(rowsDel[iDel][0]) === idDel) {
-          shDel.deleteRow(iDel + 1);
-          schedulePublicJsonPublish_(); return json_({ success: true });
-        }
-      }
-
-      return json_({ success: false, error: 'Banco de dados não encontrado.' });
-    }
-
-    if (action === 'registerActivitiesBatch') {
-      return registerActivitiesBatch_(ss, data);
-    }
-
-    if (action === 'updateActivitiesBatch') {
-      return updateActivitiesBatch_(ss, data);
     }
 
     return json_({
@@ -491,14 +517,20 @@ function registerActivitiesBatch_(ss, data) {
   if (!activities.length) return json_({ success: false, error: 'Nenhuma atividade para registrar.' });
 
   var shAct = getOrCreateActivitiesSheet_(ss);
-  var actValues = shAct.getDataRange().getValues();
 
+  // VELOCIDADE: para validar duplicidade lemos somente ItemCodigo (K) e Status (U).
+  // Evite getDataRange() aqui; em planilhas grandes ele aumenta o tempo de input do usuario.
+  var lastActRow = shAct.getLastRow();
   var existingOpenItems = {};
-  for (var iAct = 1; iAct < actValues.length; iAct++) {
-    var existingItemCodigo = String(actValues[iAct][10] || '').trim();
-    var existingStatus = String(actValues[iAct][20] || '').trim().toLowerCase();
-    if (existingItemCodigo && existingStatus !== 'concluida') {
-      existingOpenItems[existingItemCodigo] = true;
+  if (lastActRow > 1) {
+    var itemCodigoValues = shAct.getRange(2, 11, lastActRow - 1, 1).getValues();
+    var statusValues = shAct.getRange(2, 21, lastActRow - 1, 1).getValues();
+    for (var iAct = 0; iAct < itemCodigoValues.length; iAct++) {
+      var existingItemCodigo = String(itemCodigoValues[iAct][0] || '').trim();
+      var existingStatus = String(statusValues[iAct][0] || '').trim().toLowerCase();
+      if (existingItemCodigo && existingStatus !== 'concluida') {
+        existingOpenItems[existingItemCodigo] = true;
+      }
     }
   }
 
@@ -601,25 +633,16 @@ function registerActivitiesBatch_(ss, data) {
 
   var shHistory = getOrCreateActivitiesHistorySheet_(ss);
   shHistory.getRange(shHistory.getLastRow() + 1, 1, historyRows.length, 8).setValues(historyRows);
-
-  var publicJsonUpdated = false;
-  var publicJsonError = '';
-  try {
-    publishRegistroAtividadesJson_(getAllActivitiesForPublicJson_(ss));
-    publicJsonUpdated = true;
-  } catch (publishErr) {
-    publicJsonError = String(publishErr || '');
-    logAuth_(ss, 'WARN', 'registerActivitiesBatch publishRegistroAtividadesJson falhou', publicJsonError);
-  }
+  SpreadsheetApp.flush();
 
   schedulePublicJsonPublish_();
   return json_({
     success: true,
     message: rowsToAppend.length + ' atividade(s) registrada(s) com sucesso.',
     duplicateItems: duplicateItems,
-    publicJsonUpdated: publicJsonUpdated,
-    publicJsonError: publicJsonError,
-    registroSnapshot: buildRegistroAtividadesResponseData_(ss, userEmailA, userRoleA, userDisciplinaA)
+    publicJsonUpdated: false,
+    publicJsonError: '',
+    registroSnapshot: buildRegistroActivitiesOnlyResponseData_(ss, userEmailA, userRoleA)
   });
 }
 
@@ -635,13 +658,17 @@ function updateActivitiesBatch_(ss, data) {
   }
 
   var shUpd = getOrCreateActivitiesSheet_(ss);
-  var updValues = shUpd.getDataRange().getValues();
   var activityRowMap = {};
 
-  for (var i = 1; i < updValues.length; i++) {
-    var activityId = String(updValues[i][0] || '').trim();
-    if (activityId) {
-      activityRowMap[activityId] = i + 1;
+  // VELOCIDADE: mapeie atividades pela coluna A, sem carregar as 25 colunas da planilha inteira.
+  var lastUpdRow = shUpd.getLastRow();
+  if (lastUpdRow > 1) {
+    var activityIdValues = shUpd.getRange(2, 1, lastUpdRow - 1, 1).getValues();
+    for (var i = 0; i < activityIdValues.length; i++) {
+      var activityId = String(activityIdValues[i][0] || '').trim();
+      if (activityId) {
+        activityRowMap[activityId] = i + 2;
+      }
     }
   }
 
@@ -649,12 +676,14 @@ function updateActivitiesBatch_(ss, data) {
   var shEap = ss.getSheetByName('EAP');
   var eapRowMap = {};
   if (shEap) {
-    var eapValues = shEap.getDataRange().getValues();
-    var eapDisplayValues = shEap.getDataRange().getDisplayValues();
-    for (var e = 1; e < eapValues.length; e++) {
+    // VELOCIDADE: limita a busca da EAP ate a coluna D, sem carregar a planilha inteira.
+    var lastEapRow = shEap.getLastRow();
+    var eapValues = lastEapRow > 1 ? shEap.getRange(2, 1, lastEapRow - 1, 4).getValues() : [];
+    var eapDisplayValues = lastEapRow > 1 ? shEap.getRange(2, 1, lastEapRow - 1, 4).getDisplayValues() : [];
+    for (var e = 0; e < eapValues.length; e++) {
       var codEap = String(eapDisplayValues[e][3] || eapValues[e][3] || '').trim(); // Coluna D (índice 3) é o código
       if (codEap) {
-        eapRowMap[codEap] = e + 1; 
+        eapRowMap[codEap] = e + 2;
       }
     }
   }
@@ -681,6 +710,8 @@ function updateActivitiesBatch_(ss, data) {
     var oldAvanco = Number(currentRow[17] || 0);
     var oldAvaliacao = String(currentRow[18] || '');
     var oldObservacao = String(currentRow[19] || '');
+    var updatedRow = currentRow.slice();
+    var rowChanged = false;
 
     var profissionaisEmailsU = Array.isArray(upd.profissionaisEmails) ? upd.profissionaisEmails : null;
     var profissionaisNomesU = Array.isArray(upd.profissionaisNomes) ? upd.profissionaisNomes : null;
@@ -689,18 +720,19 @@ function updateActivitiesBatch_(ss, data) {
     var observacaoAtualU = upd.observacaoAtual !== undefined ? String(upd.observacaoAtual || '') : null;
 
     if (profissionaisEmailsU !== null && profissionaisNomesU !== null) {
-      shUpd.getRange(rowFound, 14).setValue(profissionaisNomesU.join(' | '));
-      shUpd.getRange(rowFound, 15).setValue(profissionaisEmailsU.join(' | '));
+      updatedRow[13] = profissionaisNomesU.join(' | ');
+      updatedRow[14] = profissionaisEmailsU.join(' | ');
 
       historyRows.push([
         Utilities.getUuid(), activityIdU, new Date().toLocaleString('pt-BR'), userEmailU, userNameU, 'profissionais', oldEmails, profissionaisEmailsU.join(' | ')
       ]);
+      rowChanged = true;
       anyUpdated = true;
     }
 
     if (avancoAtualU !== null) {
       var avancoNormalizado = Math.max(0, Math.min(100, avancoAtualU));
-      shUpd.getRange(rowFound, 18).setValue(avancoNormalizado);
+      updatedRow[17] = avancoNormalizado;
 
       // === Salvar % na coluna C da EAP (% Atual) ===
       if (shEap && eapRowMap[itemCodigoU]) {
@@ -714,29 +746,35 @@ function updateActivitiesBatch_(ss, data) {
 
       if (avancoNormalizado === 100 && currentStatus !== 'aguardando_conclusao') {
         var now100 = new Date();
-        shUpd.getRange(rowFound, 21).setValue('aguardando_conclusao');
-        shUpd.getRange(rowFound, 22).setValue(now100.toLocaleString('pt-BR'));
+        updatedRow[20] = 'aguardando_conclusao';
+        updatedRow[21] = now100.toLocaleString('pt-BR');
       } else if (avancoNormalizado < 100 && currentStatus === 'aguardando_conclusao') {
-        shUpd.getRange(rowFound, 21).setValue('em_andamento');
-        shUpd.getRange(rowFound, 22).setValue('');
+        updatedRow[20] = 'em_andamento';
+        updatedRow[21] = '';
       }
 
+      rowChanged = true;
       anyUpdated = true;
     }
 
     if (avaliacaoAtualU !== null) {
-      shUpd.getRange(rowFound, 19).setValue(avaliacaoAtualU);
+      updatedRow[18] = avaliacaoAtualU;
       historyRows.push([Utilities.getUuid(), activityIdU, new Date().toLocaleString('pt-BR'), userEmailU, userNameU, 'avaliacao', oldAvaliacao, avaliacaoAtualU]);
+      rowChanged = true;
       anyUpdated = true;
     }
 
     if (observacaoAtualU !== null) {
-      shUpd.getRange(rowFound, 20).setValue(observacaoAtualU);
+      updatedRow[19] = observacaoAtualU;
       historyRows.push([Utilities.getUuid(), activityIdU, new Date().toLocaleString('pt-BR'), userEmailU, userNameU, 'observacao', oldObservacao, observacaoAtualU]);
+      rowChanged = true;
       anyUpdated = true;
     }
 
-    shUpd.getRange(rowFound, 25).setValue(new Date().toLocaleString('pt-BR'));
+    if (rowChanged) {
+      updatedRow[24] = new Date().toLocaleString('pt-BR');
+      shUpd.getRange(rowFound, 1, 1, 25).setValues([updatedRow]);
+    }
   }
 
   if (historyRows.length) {
@@ -748,7 +786,7 @@ function updateActivitiesBatch_(ss, data) {
     return json_({ success: false, error: 'Nenhuma alteração válida foi encontrada.' });
   }
 
-  schedulePublicJsonPublish_(); return json_({ success: true, message: 'Alterações salvas com sucesso.' });
+  flushAndSchedulePublicJsonPublish_(); return json_({ success: true, message: 'Alterações salvas com sucesso.' });
 }
 
 // ============================================================================
@@ -876,17 +914,16 @@ function getOrCreateActivitiesHistorySheet_(ss) {
 
 function saveConfigSheet_(ss, cargos, disciplinas, alocacoes) {
   var sh = getOrCreateConfigSheet_(ss);
-  sh.clear();
-  sh.getRange(1, 1, 1, 3).setValues([['Cargo', 'Disciplina', 'Alocacao']]);
+  sh.clearContents();
 
   alocacoes = Array.isArray(alocacoes) ? alocacoes : [];
   var maxLen = Math.max(cargos.length, disciplinas.length, alocacoes.length, 1);
-  var rows = [];
+  var rows = [['Cargo', 'Disciplina', 'Alocacao']];
   for (var i = 0; i < maxLen; i++) {
     rows.push([cargos[i] || '', disciplinas[i] || '', alocacoes[i] || '']);
   }
 
-  sh.getRange(2, 1, rows.length, 3).setValues(rows);
+  sh.getRange(1, 1, rows.length, 3).setValues(rows);
 }
 
 function getConfigOptions_(ss) {
@@ -911,8 +948,7 @@ function getConfigOptions_(ss) {
 
 function saveRoleTabPermissions_(ss, permissions) {
   var sh = getOrCreateRoleTabPermissionsSheet_(ss);
-  sh.clear();
-  sh.getRange(1, 1, 1, 2).setValues([['Cargo', 'Abas']]);
+  sh.clearContents();
 
   var rows = [];
   var map = permissions && typeof permissions === 'object' ? permissions : {};
@@ -924,7 +960,8 @@ function saveRoleTabPermissions_(ss, permissions) {
   }
 
   rows.sort(function (a, b) { return String(a[0]).localeCompare(String(b[0]), 'pt-BR'); });
-  if (rows.length) sh.getRange(2, 1, rows.length, 2).setValues(rows);
+  rows.unshift(['Cargo', 'Abas']);
+  sh.getRange(1, 1, rows.length, 2).setValues(rows);
 }
 
 function getRoleTabPermissions_(ss) {
@@ -1284,6 +1321,14 @@ function buildRegistroAtividadesResponseData_(ss, userEmail, userRole, userDisci
   };
 }
 
+function buildRegistroActivitiesOnlyResponseData_(ss, userEmail, userRole) {
+  var activitiesData = getActivitiesForUser_(ss, userEmail, userRole);
+  return {
+    activeActivities: activitiesData.activeActivities,
+    completedActivities: activitiesData.completedActivities
+  };
+}
+
 function updateDelayedCompletedActivities_(ss) {
   var sh = getOrCreateActivitiesSheet_(ss);
   var values = sh.getDataRange().getValues();
@@ -1306,15 +1351,16 @@ function updateDelayedCompletedActivities_(ss) {
     var diffDays = diffMs / (1000 * 60 * 60 * 24);
 
     if (diffDays >= 3) {
-      sh.getRange(i + 1, 21).setValue('concluida');
-      sh.getRange(i + 1, 23).setValue(now.toLocaleString('pt-BR'));
-      sh.getRange(i + 1, 24).setValue('false');
-      sh.getRange(i + 1, 25).setValue(now.toLocaleString('pt-BR'));
+      values[i][20] = 'concluida';
+      values[i][22] = now.toLocaleString('pt-BR');
+      values[i][23] = 'false';
+      values[i][24] = now.toLocaleString('pt-BR');
+      sh.getRange(i + 1, 1, 1, 25).setValues([values[i].slice(0, 25)]);
       changed = true;
     }
   }
 
-  if (changed) schedulePublicJsonPublish_();
+  if (changed) flushAndSchedulePublicJsonPublish_();
 }
 
 function parsePtBrDateTime_(text) {
@@ -1335,8 +1381,12 @@ function logRecovery_(ss, email, status, obs) {
 }
 
 function logAuth_(ss, level, eventName, detail) {
+  var normalizedLevel = String(level || '').trim().toUpperCase();
+  var verboseInfoLogs = String(PropertiesService.getScriptProperties().getProperty('auth_verbose_logs') || '').trim().toLowerCase() === 'true';
+  if (normalizedLevel === 'INFO' && !verboseInfoLogs) return;
+
   var sh = getOrCreateAuthLogSheet_(ss);
-  sh.appendRow([new Date().toLocaleString('pt-BR'), level, eventName, String(detail || '')]);
+  sh.appendRow([new Date().toLocaleString('pt-BR'), normalizedLevel || level, eventName, String(detail || '')]);
 }
 
 function getHeaderMapSafe_(sheet) {
@@ -1369,6 +1419,28 @@ function newEmptyLoginRow_(header) {
   var row = [];
   for (var i = 0; i <= max; i++) row.push('');
   return row;
+}
+
+function getHeaderWidth_(header) {
+  var max = 0;
+  for (var k in header) {
+    if (Object.prototype.hasOwnProperty.call(header, k)) max = Math.max(max, header[k]);
+  }
+  return max + 1;
+}
+
+function setLoginRowPatch_(sheet, rowNumber, header, patch) {
+  var width = getHeaderWidth_(header);
+  var range = sheet.getRange(rowNumber, 1, 1, width);
+  var row = range.getValues()[0];
+
+  for (var key in patch) {
+    if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+    if (header[key] === undefined) continue;
+    row[header[key]] = patch[key];
+  }
+
+  range.setValues([row]);
 }
 
 function normalizeEmail_(email) { return String(email || '').trim().toLowerCase(); }
@@ -1582,21 +1654,36 @@ var PUBLIC_JSON_FOLDER = "Publica";
 var REGISTRO_PUBLIC_JSON_FILE = "registro-atividades.json";
 var REGISTRO_ATIVIDADES_JSON_FILE = "registrodeatividades.json";
 var REGISTRO_ATIVIDADES_IMPORT_SHEET = "registrodeatividades_limpo";
+var PUBLIC_JSON_FAST_DELAY_MS = 1000;
+var PUBLIC_JSON_FULL_REFRESH_DELAY_MS = 90 * 1000;
 
 function schedulePublicJsonPublish() {
-  schedulePublicJsonPublish_(5 * 1000);
+  schedulePublicJsonPublish_(PUBLIC_JSON_FAST_DELAY_MS);
   return "Publicacao do Registro agendada.";
 }
 
-function schedulePublicJsonPublish_(delayMs) {
-  var waitMs = delayMs || 10 * 1000;
+function schedulePublicJsonPublish_(delayMs, force) {
+  var waitMs = Math.max(1000, Number(delayMs || PUBLIC_JSON_FAST_DELAY_MS));
+  var now = Date.now();
+  var targetAt = now + waitMs;
   var props = PropertiesService.getScriptProperties();
-  props.setProperty('pending_registro_publish_at', String(Date.now() + waitMs));
+  var pendingAt = Number(props.getProperty('pending_registro_publish_at') || 0);
+
+  if (!force && pendingAt && pendingAt > now && pendingAt <= targetAt) {
+    return;
+  }
+
+  props.setProperty('pending_registro_publish_at', String(targetAt));
   cleanupPublicJsonPublishTriggers_();
   ScriptApp.newTrigger("publishFullDatabaseToPublicJsonByTrigger")
     .timeBased()
     .after(waitMs)
     .create();
+}
+
+function flushAndSchedulePublicJsonPublish_(delayMs) {
+  SpreadsheetApp.flush();
+  schedulePublicJsonPublish_(delayMs || PUBLIC_JSON_FAST_DELAY_MS);
 }
 
 function scheduleFullPublicJsonRefresh() {
@@ -1616,7 +1703,7 @@ function scheduleFullPublicJsonRefresh() {
 function runFullPublicJsonRefreshByTrigger() {
   try {
     var eapResult = scheduleEapPublicJsonPublish_();
-    schedulePublicJsonPublish_(90 * 1000);
+    schedulePublicJsonPublish_(PUBLIC_JSON_FULL_REFRESH_DELAY_MS, true);
     return eapResult + " Publicacao do Registro agendada para depois da EAP.";
   } finally {
     cleanupFullPublicJsonRefreshTriggers_();
@@ -1814,6 +1901,7 @@ function publishFullDatabaseToPublicJson() {
 
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+    SpreadsheetApp.flush();
     var loginSheet = getOrCreateLoginSheet_(ss);
     var header = getHeaderMapSafe_(loginSheet);
     var values = loginSheet.getDataRange().getValues();
@@ -1850,7 +1938,7 @@ function publishFullDatabaseToPublicJson() {
             childrenByParent: eapDataR.childrenByParent,
             rootCodes: eapDataR.rootCodes,
             activitiesList: activities,
-            professionalsByDisciplina: getProfessionalsIndexForJson_(ss),
+            professionalsByDisciplina: getProfessionalsIndexForJson_(ss, values, header),
             usersSummary: getUsersSummaryForJson_(values, header)
         },
         cronograma: cronograma
@@ -1970,10 +2058,12 @@ function getAllActivitiesForPublicJson_(ss) {
   return acts;
 }
 
-function getProfessionalsIndexForJson_(ss) {
-  var loginSheet = getOrCreateLoginSheet_(ss);
-  var header = getHeaderMapSafe_(loginSheet);
-  var values = loginSheet.getDataRange().getValues();
+function getProfessionalsIndexForJson_(ss, values, header) {
+  if (!values || !header) {
+    var loginSheet = getOrCreateLoginSheet_(ss);
+    header = getHeaderMapSafe_(loginSheet);
+    values = loginSheet.getDataRange().getValues();
+  }
   var out = {};
 
   for (var i = 1; i < values.length; i++) {
@@ -2023,9 +2113,18 @@ function getUsersSummaryForJson_(values, header) {
 
 function publishEncryptedJsonToGithub_(fileName, payloadObj) {
   var cfg = getGithubPublisherConfig_();
-  var body = JSON.stringify(payloadObj, null, 2);
+  var body = buildFastPublicJsonBody_(payloadObj);
   var url = buildGithubContentsUrl_(cfg.githubApi, PUBLIC_JSON_FOLDER, fileName);
   writeGithubFile_(url, body, cfg.githubToken, cfg.githubBranch, "Atualiza " + PUBLIC_JSON_FOLDER + "/" + fileName);
+}
+
+function buildFastPublicJsonBody_(payloadObj) {
+  var cryptoKey = getOptionalJsonCryptoKey_();
+  var out = cryptoKey
+    ? encryptPayloadEnvelope_(payloadObj, cryptoKey)
+    : payloadObj;
+
+  return JSON.stringify(out);
 }
 
 function getGithubPublisherConfig_() {
@@ -2049,6 +2148,11 @@ function getJsonCryptoKey_() {
   var cryptoKey = String(props.getProperty("json_crypto_key") || props.getProperty("crypto_key") || "").trim();
   if (!cryptoKey) throw new Error('Propriedade "json_crypto_key" nao configurada.');
   return cryptoKey;
+}
+
+function getOptionalJsonCryptoKey_() {
+  var props = PropertiesService.getScriptProperties();
+  return String(props.getProperty("json_crypto_key") || props.getProperty("crypto_key") || "").trim();
 }
 
 function buildGithubContentsUrl_(baseApi, folderName, fileName) {

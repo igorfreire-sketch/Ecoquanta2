@@ -82,6 +82,7 @@ export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, su
     { id: 'matrix', label: 'Matriz' },
   ];
   const latestEapDate = getLatestEapDisplayDate(preloadedData?.eap);
+  const activeContractCode = String(lockedContractCode || filtrosAtivos?.contrato || '').trim();
 
   return (
     <div className="w-full flex flex-col font-['Montserrat']">
@@ -101,8 +102,8 @@ export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, su
 
       <div className="pb-10">
         {subTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} />}
-        {subTab === 'alocacoes' && <Alocacoes preloadedData={preloadedData} />}
-        {subTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} />}
+        {subTab === 'alocacoes' && <Alocacoes preloadedData={preloadedData} activeContractCode={activeContractCode} />}
+        {subTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
         {subTab === 'matrix' && <Matrix />}
       </div>
     </div>

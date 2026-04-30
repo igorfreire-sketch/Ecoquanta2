@@ -25,6 +25,7 @@ interface AlocacoesProps {
     registro?: any;
     admin?: any;
   };
+  activeContractCode?: string;
 }
 
 function normalizeText(value?: string) {
@@ -33,6 +34,19 @@ function normalizeText(value?: string) {
 
 function formatPercent(value: number) {
   return `${Math.round(value * 10) / 10}`.replace('.', ',') + '%';
+}
+
+function isAllContract(value?: string) {
+  const normalized = normalizeText(value);
+  return !normalized || normalized === 'todos' || normalized === 'todos os contratos';
+}
+
+function getVisibleActivities(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string) {
+  const activities = Array.isArray(preloadedData?.registro?.activitiesList) ? preloadedData.registro.activitiesList : [];
+  if (isAllContract(activeContractCode)) return activities;
+
+  const target = normalizeText(activeContractCode);
+  return activities.filter((activity: any) => normalizeText(activity?.contratoCodigo) === target);
 }
 
 const DisciplineCard: React.FC<DisciplineCardProps> = ({ title, professionals, contratos }) => {
@@ -122,8 +136,8 @@ function getProfessionalsByDisciplina(preloadedData?: AlocacoesProps['preloadedD
   return out;
 }
 
-function buildActivityCountByEmail(preloadedData?: AlocacoesProps['preloadedData']) {
-  const activities = Array.isArray(preloadedData?.registro?.activitiesList) ? preloadedData.registro.activitiesList : [];
+function buildActivityCountByEmail(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string) {
+  const activities = getVisibleActivities(preloadedData, activeContractCode);
   const counts: Record<string, number> = {};
 
   activities.forEach((activity: any) => {
@@ -136,16 +150,16 @@ function buildActivityCountByEmail(preloadedData?: AlocacoesProps['preloadedData
   return counts;
 }
 
-function getContratosAtivos(preloadedData?: AlocacoesProps['preloadedData']) {
-  const activities = Array.isArray(preloadedData?.registro?.activitiesList) ? preloadedData.registro.activitiesList : [];
+function getContratosAtivos(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string) {
+  const activities = getVisibleActivities(preloadedData, activeContractCode);
   return Array.from(new Set(activities
     .filter((activity: any) => String(activity?.status || '').trim().toLowerCase() !== 'concluida')
     .map((activity: any) => String(activity?.contratoCodigo || '').trim())
     .filter(Boolean)));
 }
 
-function buildContractCountsByEmail(preloadedData?: AlocacoesProps['preloadedData']) {
-  const activities = Array.isArray(preloadedData?.registro?.activitiesList) ? preloadedData.registro.activitiesList : [];
+function buildContractCountsByEmail(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string) {
+  const activities = getVisibleActivities(preloadedData, activeContractCode);
   const counts: Record<string, Record<string, number>> = {};
 
   activities.forEach((activity: any) => {
@@ -162,11 +176,11 @@ function buildContractCountsByEmail(preloadedData?: AlocacoesProps['preloadedDat
   return counts;
 }
 
-function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contratos: string[] = []): AlocacaoData[] {
+function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contratos: string[] = [], activeContractCode?: string): AlocacaoData[] {
   const disciplinas = getDisciplinas(preloadedData);
   const professionalsByDisciplina = getProfessionalsByDisciplina(preloadedData);
-  const activityCountByEmail = buildActivityCountByEmail(preloadedData);
-  const contractCountsByEmail = buildContractCountsByEmail(preloadedData);
+  const activityCountByEmail = buildActivityCountByEmail(preloadedData, activeContractCode);
+  const contractCountsByEmail = buildContractCountsByEmail(preloadedData, activeContractCode);
   const maxCount = Math.max(...Object.values(activityCountByEmail), 1);
 
   return disciplinas.map((disciplina) => {
@@ -196,10 +210,10 @@ function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contrat
   });
 }
 
-const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData }) => {
+const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode }) => {
   const [filtroAtivo, setFiltroAtivo] = useState<string | null>(null);
-  const contratos = useMemo(() => getContratosAtivos(preloadedData), [preloadedData]);
-  const dadosAlocacoes = useMemo(() => buildAlocacoes(preloadedData, contratos), [preloadedData, contratos]);
+  const contratos = useMemo(() => getContratosAtivos(preloadedData, activeContractCode), [preloadedData, activeContractCode]);
+  const dadosAlocacoes = useMemo(() => buildAlocacoes(preloadedData, contratos, activeContractCode), [preloadedData, contratos, activeContractCode]);
   const disciplinasLista = dadosAlocacoes.map((item) => item.disciplina);
 
   const cardsFiltrados = filtroAtivo

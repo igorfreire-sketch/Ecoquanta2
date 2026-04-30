@@ -86,6 +86,12 @@ function normalizeKey(value: any) {
   return String(value || '').trim();
 }
 
+function isOrderServiceName(value: any) {
+  const text = normalizeKey(value);
+  if (!text) return false;
+  return /^_?OS(?=$|[\s_\-.0-9A-Za-zÀ-ÿ])/i.test(text);
+}
+
 function isLikelyHeaderRow(row: any[]) {
   return normalizeKey(row?.[0]).toLowerCase() === 'os';
 }
@@ -386,6 +392,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing }: Cur
         name: normalizeKey(contract.nome || contract.codigo),
         osList: registroOsOptions
           .filter((os) => normalizeKey(os.contratoCodigo) === normalizeKey(contract.codigo))
+          .filter((os) => isOrderServiceName(os.nome || os.codigo))
           .map((os) => ({ code: normalizeKey(os.codigo), name: normalizeKey(os.nome || os.codigo) }))
       })).filter((contract) => contract.osList.length > 0);
     }
@@ -397,7 +404,9 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing }: Cur
     if (!hasHierarchicalCodes) {
       contratosMap.set('EAP', {
         nome: 'EAP Unificada',
-        osList: rows.map((r) => ({ code: normalizeKey(r[0]), name: normalizeKey(r[1] || r[0]) }))
+        osList: rows
+          .filter((r) => isOrderServiceName(r[1] || r[0]))
+          .map((r) => ({ code: normalizeKey(r[0]), name: normalizeKey(r[1] || r[0]) }))
       });
       return Array.from(contratosMap.entries()).map(([code, val]) => ({ code, name: val.nome, osList: val.osList }));
     }
@@ -411,7 +420,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing }: Cur
     rows.forEach((r) => {
       const code = normalizeKey(r[0]);
       const name = normalizeKey(r[1] || r[0]);
-      if ((code.match(/\./g) || []).length === 1) {
+      if ((code.match(/\./g) || []).length === 1 && isOrderServiceName(name)) {
         const root = code.split('.')[0];
         if (contratosMap.has(root)) contratosMap.get(root)!.osList.push({ code, name });
       }
@@ -532,7 +541,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing }: Cur
                   </button>
                   {activeOsOptions.map(os => (
                     <button key={os.code} onClick={() => setSelectedOsList(p => p.includes(os.code) ? p.filter(c => c !== os.code) : [...p, os.code])} className="flex items-center gap-2 text-[12px] text-gray-700 p-2 hover:bg-gray-200 w-full rounded text-left">
-                      {selectedOsList.includes(os.code) ? <CheckSquare size={16} className="text-[#3B82F6]"/> : <Square size={16} className="text-gray-400"/>} {os.code}
+                      {selectedOsList.includes(os.code) ? <CheckSquare size={16} className="text-[#3B82F6]"/> : <Square size={16} className="text-gray-400"/>} {os.name}
                     </button>
                   ))}
                 </>

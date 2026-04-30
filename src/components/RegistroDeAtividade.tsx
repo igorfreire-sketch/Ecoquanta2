@@ -260,6 +260,12 @@ function buildChildrenMapFromNodes(nodes: EapHierarchyNode[]) {
   return out;
 }
 
+function isOrderServiceName(value: string) {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  return /^_?OS(?=$|[\s_\-.0-9A-Za-zÀ-ÿ])/i.test(text);
+}
+
 const difficultyColorMap: Record<DifficultyLevel, string> = {
   Facil: 'bg-blue-50 text-blue-700 border-blue-200',
   Moderada: 'bg-green-50 text-green-700 border-green-200',
@@ -395,14 +401,14 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const selectedContract = useMemo(() => contracts.find((c) => c.codigo === formData.contratoCodigo), [contracts, formData.contratoCodigo]);
   const filteredOs = useMemo(() => {
     const children = childrenByParent[formData.contratoCodigo] || [];
-    if (children.length > 0) return children.filter((item) => item.tipo === 'os');
+    if (children.length > 0) return children.filter((item) => item.tipo === 'os' && isOrderServiceName(item.nome || item.codigo));
     return osOptions.filter((item) => item.contratoCodigo === formData.contratoCodigo).map((item) => ({
       ...item,
       tipo: 'os' as const,
       nivel: (item.codigo.match(/\./g) || []).length,
       parentCodigo: item.contratoCodigo,
       osCodigo: item.codigo,
-    }));
+    })).filter((item) => isOrderServiceName(item.nome || item.codigo));
   }, [childrenByParent, osOptions, formData.contratoCodigo]);
   const selectedOs = useMemo(() => filteredOs.find((item) => item.codigo === formData.osCodigo), [filteredOs, formData.osCodigo]);
   const filteredItems = useMemo(() => {
@@ -649,7 +655,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
                 <label className="bentham-label">2. OS</label>
                 <select className="bentham-select" value={formData.osCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, osCodigo: e.target.value, itemCodigo: '' }))}>
                   <option value="">Selecione...</option>
-                  {filteredOs.map((item) => (<option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>))}
+                  {filteredOs.map((item) => (<option key={item.codigo} value={item.codigo}>{item.nome}</option>))}
                 </select>
               </div>
               <div><label className="bentham-label">3. SETOR</label><input value="Engenharia" className="bentham-input" readOnly /></div>

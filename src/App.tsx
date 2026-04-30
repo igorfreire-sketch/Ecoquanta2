@@ -32,9 +32,11 @@ import Administracao, {
 } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
 import { fetchEapPublicData, fetchRegistroPublicData } from './lib/publicJson';
+import { getAppVersionLabel } from './config/appVersion';
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
 const PUBLIC_JSON_SYNC_DELAY_MS = 15000;
+const APP_VERSION_LABEL = getAppVersionLabel();
 
 // Domínio corporativo: usuários deste domínio são aprovados automaticamente
 // mas sem nenhuma aba habilitada (admin atribuirá acessos depois se necessário)
@@ -227,12 +229,24 @@ function getUserInitials(nome: string) {
 
 function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleTabPermissions = {}) {
   if (tab === 'administracao') return Boolean(user.isAdmin);
+  const roleName = String(user.role || '').trim();
+  if (!roleName) return false;
   const userTabs = Array.isArray(user.abas) ? user.abas : [];
-  const roleTabs = roleTabPermissions[String(user.role || '').trim()] || [];
+  const roleTabs = roleTabPermissions[roleName] || [];
   if (tab === 'controle') {
     return userTabs.includes('controle') || roleTabs.includes('controle') || userTabs.includes('alocacoes') || roleTabs.includes('alocacoes');
   }
   return userTabs.includes(tab) || roleTabs.includes(tab as AppTabKey);
+}
+
+function getFirstAccessibleTab(user: AuthUser, roleTabPermissions: RoleTabPermissions = {}): AppTab | null {
+  if (userHasTabAccess(user, 'registro', roleTabPermissions)) return 'registro';
+  if (userHasTabAccess(user, 'controle', roleTabPermissions)) return 'controle';
+  if (userHasTabAccess(user, 'contratos', roleTabPermissions)) return 'contratos';
+  if (userHasTabAccess(user, 'nc', roleTabPermissions)) return 'nc';
+  if (userHasTabAccess(user, 'cronograma', roleTabPermissions)) return 'cronograma';
+  if (userHasTabAccess(user, 'administracao', roleTabPermissions)) return 'administracao';
+  return null;
 }
 
 function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
@@ -605,9 +619,11 @@ export default function App() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold text-[#2D2D2D] truncate">{currentUser?.nome}</p>
+                  <p className="text-xs text-[#757575] truncate">{currentUser?.disciplina || 'Sem disciplina'}</p>
                   <p className="text-xs text-[#757575] truncate">{currentUser?.role}</p>
                 </div>
               </div>
+              <p className="px-1 text-[10px] font-bold uppercase tracking-[1.5px] text-[#9CA3AF]">{APP_VERSION_LABEL}</p>
               <button onClick={handleLogout} className="flex items-center gap-3 px-3 py-2 text-[#757575] hover:text-[#EF4444] transition-colors w-full text-sm font-medium"><LogOut size={18} /> Sair</button>
             </div>
           </motion.aside>

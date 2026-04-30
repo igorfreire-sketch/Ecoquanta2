@@ -451,8 +451,8 @@ export default function Administracao({
   }, [usuarios, search, disciplinaFiltro, cargoFiltro]);
 
   return (
-    <div className="space-y-8">
-      <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-8">
+    <div className="space-y-6 max-w-full">
+      <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 lg:p-8">
         <div className="space-y-6">
           <div>
             <p className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">
@@ -474,8 +474,8 @@ export default function Administracao({
         </div>
       </section>
 
-      <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6">
-        <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_220px_220px_auto] gap-4 items-end">
+      <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-5 lg:p-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-[minmax(280px,1.2fr)_minmax(180px,220px)_minmax(180px,220px)_auto] gap-4 items-end">
           <div>
             <label className="bentham-label">Pesquisar usuário</label>
             <div className="relative">
@@ -533,17 +533,17 @@ export default function Administracao({
       </section>
 
       <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-8 py-6 border-b border-[#E5E7EB]">
+        <div className="px-6 lg:px-8 py-6 border-b border-[#E5E7EB]">
           <h2 className="text-[18px] font-bold text-[#2D2D2D]">Lista de Usuários Cadastrados</h2>
           <p className="text-[13px] text-[#757575] mt-1">
             Usuários pendentes aguardam aceite do administrador. Usuários bloqueados perdem acesso ao app.
           </p>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-4 lg:p-6 space-y-4">
           {usuariosFiltrados.map((user) => (
             <div key={user.id} className="border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] p-5">
-              <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-[minmax(260px,1.2fr)_110px_minmax(160px,180px)_minmax(160px,180px)_130px_minmax(240px,1fr)_220px] gap-4 items-start">
+              <div className="grid grid-cols-1 2xl:grid-cols-[minmax(240px,1.1fr)_minmax(140px,180px)_minmax(160px,200px)_minmax(160px,200px)_minmax(150px,180px)_minmax(220px,1fr)] gap-4 items-start">
                 <div className="min-w-0">
                   <div className="flex items-center gap-3">
                     <div className="w-11 h-11 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm shrink-0">
@@ -629,7 +629,7 @@ export default function Administracao({
                   </label>
                 </div>
 
-                <div className="flex flex-col gap-1.5 min-w-0">
+                <div className="flex flex-col gap-1.5 min-w-0 2xl:col-span-1 2xl:row-span-2">
                   <label className="bentham-label">Abas permitidas</label>
                   <MultiTabSelector
                     user={user}
@@ -638,29 +638,20 @@ export default function Administracao({
                   />
                 </div>
 
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2 2xl:col-start-1 2xl:col-end-6">
                   <label className="bentham-label">Ações</label>
-
-                  <button
-                    type="button"
-                    onClick={() => void onPasswordReset(user)}
-                    className="h-11 px-4 rounded-xl border border-[#E5E7EB] bg-white text-[#2D2D2D] text-[13px] font-bold hover:border-[#F05D28] hover:text-[#F05D28] transition-colors flex items-center justify-center gap-2"
-                  >
-                    <RefreshCcw size={16} />
-                    Password Reset
-                  </button>
-
+                  <div className="flex flex-wrap gap-3">
                   {user.status === 'pending' ? (
                     <button
                       type="button"
                       onClick={() => void onAcceptUser(user.id)}
-                      className="h-11 px-4 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors flex items-center justify-center gap-2"
+                      className="h-11 px-4 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center justify-center gap-2"
                     >
                       <Check size={16} />
                       Aceitar
                     </button>
                   ) : (
-                    <div className="h-11 px-4 rounded-xl border border-dashed border-[#E5E7EB] text-[#9CA3AF] text-[12px] font-medium flex items-center justify-center">
+                    <div className="h-11 px-4 rounded-xl border border-dashed border-[#E5E7EB] text-[#9CA3AF] text-[12px] font-medium inline-flex items-center justify-center">
                       Usuário já analisado
                     </div>
                   )}
@@ -668,11 +659,12 @@ export default function Administracao({
                   <button
                     type="button"
                     onClick={() => void onBlockUser(user.id)}
-                    className="h-11 px-4 rounded-xl bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] text-[13px] font-bold hover:bg-[#FEE2E2] transition-colors flex items-center justify-center gap-2"
+                    className="h-11 px-4 rounded-xl bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] text-[13px] font-bold hover:bg-[#FEE2E2] transition-colors inline-flex items-center justify-center gap-2"
                   >
                     <Ban size={16} />
                     Bloquear
                   </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -680,7 +672,7 @@ export default function Administracao({
         </div>
       </section>
 
-      <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <section className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
         <InlineListManager
           title="Gerenciar Cargos"
           subtitle="Adicione ou remova os cargos disponíveis para seleção no cadastro administrativo."

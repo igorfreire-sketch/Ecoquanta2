@@ -88,6 +88,7 @@ interface PublicEapEnvelope {
 
 interface BatchResponse {
   success: boolean; error?: string; message?: string; duplicateItems?: Array<{ itemCodigo: string; itemNome: string }>;
+  publicJsonUpdated?: boolean; publicJsonError?: string; registroSnapshot?: Partial<RegistroDataResponse>;
 }
 
 interface RegistroDeAtividadeProps {
@@ -98,7 +99,7 @@ interface RegistroDeAtividadeProps {
 interface NewActivityDraft {
   localId: string; contratoCodigo: string; contratoNome: string; osCodigo: string; osNome: string;
   setor: string; itemCodigo: string; itemNome: string; profissionaisEmails: string[]; profissionaisNomes: string[];
-  dificuldade: DifficultyLevel; descricao: string;
+  dificuldade: DifficultyLevel; descricao: string; avancoInicial: number;
 }
 
 interface ActivityUpdateDraft {
@@ -106,7 +107,7 @@ interface ActivityUpdateDraft {
 }
 
 interface LocalDraftPayload {
-  formData: { contratoCodigo: string; osCodigo: string; setor: string; itemCodigo: string; profissionaisEmails: string[]; dificuldade: DifficultyLevel | ''; descricao: string; };
+  formData: { contratoCodigo: string; osCodigo: string; setor: string; itemCodigo: string; profissionaisEmails: string[]; dificuldade: DifficultyLevel | ''; descricao: string; avancoInicial: number; };
   draftQueue: NewActivityDraft[]; pendingChanges: Record<string, ActivityUpdateDraft>; expandedActivities: Record<string, boolean>;
 }
 
@@ -296,6 +297,35 @@ function createLocalId() {
 }
 
 function getDraftStorageKey(email: string) { return `quanta_registro_atividade_${String(email || '').trim().toLowerCase()}`; }
+function getActivitiesCacheKey(email: string) { return `quanta_registro_atividade_cache_${String(email || '').trim().toLowerCase()}`; }
+
+function normalizePercentage(value: number) {
+  return Math.max(0, Math.min(100, Number(value) || 0));
+}
+
+function mergeActivitiesWithCache(serverItems: RegistroAtividade[], cachedItems: RegistroAtividade[]) {
+  const byId = new Map<string, RegistroAtividade>();
+  serverItems.forEach((item) => { if (item?.id) byId.set(item.id, item); });
+  cachedItems.forEach((item) => { if (item?.id) byId.set(item.id, item); });
+  return Array.from(byId.values()).sort((a, b) => {
+    const aTime = parsePtBrDateTime(a.dataRegistro)?.getTime() || 0;
+    const bTime = parsePtBrDateTime(b.dataRegistro)?.getTime() || 0;
+    return bTime - aTime;
+  });
+}
+
+function filterRegistroPayloadByContract<T extends { contracts?: any[]; osOptions?: any[]; itemOptions?: any[]; activeActivities?: any[]; completedActivities?: any[] }>(payload: T, contractCode: string): T {
+  const target = String(contractCode || '').trim();
+  if (!target) return payload;
+  return {
+    ...payload,
+    contracts: (payload.contracts || []).filter((item: any) => String(item?.codigo || '').trim() === target),
+    osOptions: (payload.osOptions || []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target),
+    itemOptions: (payload.itemOptions || []).filter((item: any) => String(item?.osCodigo || '').trim().startsWith(`${target}.`)),
+    activeActivities: (payload.activeActivities || []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target),
+    completedActivities: (payload.completedActivities || []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target),
+  };
+}
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -321,11 +351,25 @@ async function fetchRegistroDataFromAppsScript(currentUser: AuthUser): Promise<R
 
 function MultiProfessionalSelector({ value, options, onChange }: { value: string[]; options: ProfessionalOption[]; onChange: (next: string[]) => void; }) {
   const [open, setOpen] = useState(false);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
   const toggleItem = (email: string) => onChange(value.includes(email) ? value.filter((item) => item !== email) : [...value, email]);
   const selectedNames = options.filter((o) => value.includes(o.email)).map((o) => o.nome);
 
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       <button type="button" onClick={() => setOpen((prev) => !prev)} className="bentham-input flex items-center justify-between text-left">
         <span className={selectedNames.length ? 'text-bentham-dark' : 'text-bentham-gray'}>{selectedNames.length ? selectedNames.join(', ') : 'Selecione os profissionais'}</span>
         <ChevronDown size={18} className="text-bentham-gray" />
@@ -373,12 +417,51 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const [hasInitializedDraftRecovery, setHasInitializedDraftRecovery] = useState(false);
 
   const [formData, setFormData] = useState({
-    contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [] as string[], dificuldade: '' as DifficultyLevel | '', descricao: '',
+    contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [] as string[], dificuldade: '' as DifficultyLevel | '', descricao: '', avancoInicial: 0,
   });
+
+  const persistActivitiesCache = (nextActiveActivities: RegistroAtividade[], nextCompletedActivities: RegistroAtividade[]) => {
+    try {
+      localStorage.setItem(getActivitiesCacheKey(currentUser.email), JSON.stringify({
+        activeActivities: nextActiveActivities,
+        completedActivities: nextCompletedActivities,
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch (error) {}
+  };
+
+  const applyActivitiesState = (nextActiveActivities: RegistroAtividade[], nextCompletedActivities: RegistroAtividade[]) => {
+    setActiveActivities(nextActiveActivities);
+    setCompletedActivities(nextCompletedActivities);
+    persistActivitiesCache(nextActiveActivities, nextCompletedActivities);
+  };
+
+  const applyRegistroSnapshot = (snapshot?: Partial<RegistroDataResponse>) => {
+    if (!snapshot) return;
+    if (Array.isArray(snapshot.contracts)) setContracts(snapshot.contracts);
+    if (Array.isArray(snapshot.osOptions)) setOsOptions(snapshot.osOptions);
+    if (Array.isArray(snapshot.itemOptions)) setItemOptions(snapshot.itemOptions);
+    const nextHierarchyNodes = normalizeHierarchyNodes(snapshot.hierarchyNodes, snapshot.contracts, snapshot.osOptions, snapshot.itemOptions);
+    if (nextHierarchyNodes.length) {
+      setHierarchyNodes(nextHierarchyNodes);
+      setChildrenByParent(snapshot.childrenByParent && Object.keys(snapshot.childrenByParent).length > 0
+        ? snapshot.childrenByParent
+        : buildChildrenMapFromNodes(nextHierarchyNodes));
+    }
+    if (Array.isArray(snapshot.professionals)) setProfessionals(snapshot.professionals);
+    if (Array.isArray(snapshot.activeActivities) || Array.isArray(snapshot.completedActivities)) {
+      applyActivitiesState(snapshot.activeActivities || [], snapshot.completedActivities || []);
+    }
+  };
 
   useEffect(() => {
     if (preloadedData && Object.keys(preloadedData).length > 0) {
       const nextData = buildRegistroViewModel(preloadedData, currentUser);
+      let cachedActivities: { activeActivities?: RegistroAtividade[]; completedActivities?: RegistroAtividade[] } | null = null;
+      try {
+        const raw = localStorage.getItem(getActivitiesCacheKey(currentUser.email));
+        cachedActivities = raw ? JSON.parse(raw) as { activeActivities?: RegistroAtividade[]; completedActivities?: RegistroAtividade[] } : null;
+      } catch (error) {}
       setContracts(nextData.contracts);
       setOsOptions(nextData.osOptions);
       setItemOptions(nextData.itemOptions);
@@ -387,10 +470,20 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
         ? nextData.childrenByParent
         : buildChildrenMapFromNodes(normalizeHierarchyNodes(nextData.hierarchyNodes, nextData.contracts, nextData.osOptions, nextData.itemOptions)));
       setProfessionals(nextData.professionals);
-      setActiveActivities(nextData.activeActivities);
-      setCompletedActivities(nextData.completedActivities);
+      applyActivitiesState(
+        mergeActivitiesWithCache(nextData.activeActivities, cachedActivities?.activeActivities || []),
+        mergeActivitiesWithCache(nextData.completedActivities, cachedActivities?.completedActivities || []),
+      );
     }
   }, [preloadedData, currentUser]);
+
+  useEffect(() => {
+    const lockedContract = String(currentUser.contrato || '').trim();
+    if (!lockedContract) return;
+    setFormData((prev) => prev.contratoCodigo === lockedContract
+      ? prev
+      : { ...prev, contratoCodigo: lockedContract, osCodigo: '', itemCodigo: '' });
+  }, [currentUser.contrato]);
 
   const filteredProfessionals = useMemo(() => {
     const myDiscipline = String(currentUser.disciplina || '').trim().toLowerCase();
@@ -433,11 +526,17 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
 
   const fetchFreshData = async () => {
     try {
+      let cachedActivities: { activeActivities?: RegistroAtividade[]; completedActivities?: RegistroAtividade[] } | null = null;
+      try {
+        const rawCache = localStorage.getItem(getActivitiesCacheKey(currentUser.email));
+        cachedActivities = rawCache ? JSON.parse(rawCache) as { activeActivities?: RegistroAtividade[]; completedActivities?: RegistroAtividade[] } : null;
+      } catch (error) {}
+
       const [payload, eapPayload] = await Promise.all([
         fetchRegistroPublicData<PublicRegistroEnvelope>(),
         fetchEapPublicData<PublicEapEnvelope>().catch(() => null),
       ]);
-      const registro = applyUnifiedEapToRegistro(payload.data?.registro, eapPayload);
+      const registro = filterRegistroPayloadByContract(applyUnifiedEapToRegistro(payload.data?.registro, eapPayload) || {}, currentUser.contrato || '');
       if (!registro) throw new Error('Dados de registro ausentes no JSON publico.');
       if (!Array.isArray(registro.contracts) || !Array.isArray(registro.osOptions) || !Array.isArray(registro.itemOptions)) {
         throw new Error('Estrutura da EAP ausente no JSON publico.');
@@ -487,11 +586,13 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
         ? registro.childrenByParent
         : buildChildrenMapFromNodes(nextHierarchyNodes));
       setProfessionals(registro.professionalsByDisciplina?.[disciplinaKey] || []);
-      setActiveActivities(mappedActivities.filter((item) => item.status !== 'concluida'));
-      setCompletedActivities(mappedActivities.filter((item) => item.status === 'concluida'));
+      applyActivitiesState(
+        mergeActivitiesWithCache(mappedActivities.filter((item) => item.status !== 'concluida'), cachedActivities?.activeActivities || []),
+        mergeActivitiesWithCache(mappedActivities.filter((item) => item.status === 'concluida'), cachedActivities?.completedActivities || []),
+      );
     } catch {
       try {
-        const fallback = await fetchRegistroDataFromAppsScript(currentUser);
+        const fallback = filterRegistroPayloadByContract(await fetchRegistroDataFromAppsScript(currentUser), currentUser.contrato || '');
         setContracts(fallback.contracts || []);
         setOsOptions(fallback.osOptions || []);
         setItemOptions(fallback.itemOptions || []);
@@ -501,8 +602,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
           ? fallback.childrenByParent
           : buildChildrenMapFromNodes(fallbackHierarchyNodes));
         setProfessionals(fallback.professionals || []);
-        setActiveActivities(fallback.activeActivities || []);
-        setCompletedActivities(fallback.completedActivities || []);
+        applyActivitiesState(fallback.activeActivities || [], fallback.completedActivities || []);
       } catch {}
     }
   };
@@ -554,7 +654,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const clearLocalDraft = () => { try { localStorage.removeItem(getDraftStorageKey(currentUser.email)); } catch (error) {} };
   const restoreLocalDraft = () => {
     if (!restorableDraft) return;
-    setFormData(restorableDraft.formData || { contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [], dificuldade: '', descricao: '' });
+    setFormData({ contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [], dificuldade: '', descricao: '', avancoInicial: 0, ...(restorableDraft.formData || {}) });
     setDraftQueue(restorableDraft.draftQueue || []); setPendingChanges(restorableDraft.pendingChanges || {}); setExpandedActivities(restorableDraft.expandedActivities || {});
     setShowRestorePrompt(false); setRestorableDraft(null); setBalloonMessage('Últimas alterações restauradas com sucesso.');
   };
@@ -574,8 +674,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
 
     const selectedProfessionalNames = filteredProfessionals.filter((item) => formData.profissionaisEmails.includes(item.email)).map((item) => item.nome);
 
-    setDraftQueue((prev) => [...prev, { localId: createLocalId(), contratoCodigo: formData.contratoCodigo, contratoNome: selectedContract?.nome || '', osCodigo: formData.osCodigo, osNome: selectedOs?.nome || '', setor: formData.setor, itemCodigo: formData.itemCodigo, itemNome: itemSelected.nome, profissionaisEmails: formData.profissionaisEmails, profissionaisNomes: selectedProfessionalNames, dificuldade: formData.dificuldade, descricao: formData.descricao.trim() }]);
-    setFormData({ contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [], dificuldade: '', descricao: '' });
+    setDraftQueue((prev) => [...prev, { localId: createLocalId(), contratoCodigo: formData.contratoCodigo, contratoNome: selectedContract?.nome || '', osCodigo: formData.osCodigo, osNome: selectedOs?.nome || '', setor: formData.setor, itemCodigo: formData.itemCodigo, itemNome: itemSelected.nome, profissionaisEmails: formData.profissionaisEmails, profissionaisNomes: selectedProfessionalNames, dificuldade: formData.dificuldade, descricao: formData.descricao.trim(), avancoInicial: normalizePercentage(formData.avancoInicial) }]);
+    setFormData({ contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [], dificuldade: '', descricao: '', avancoInicial: 0 });
     setBalloonMessage('Atividade adicionada à fila. Você pode registrar a próxima.');
   };
 
@@ -586,7 +686,11 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       const response = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'registerActivitiesBatch', userEmail: currentUser.email, userName: currentUser.nome, userRole: currentUser.role, userDisciplina: currentUser.disciplina, activities: draftQueue }) });
       const data: BatchResponse = await response.json();
       if (!data.success) throw new Error(data.error || 'Erro ao enviar lote de atividades.');
-      setDraftQueue([]); setBalloonMessage(data.message || 'Atividades enviadas com sucesso.');
+      if (data.registroSnapshot) applyRegistroSnapshot(data.registroSnapshot);
+      setDraftQueue([]);
+      setBalloonMessage(data.publicJsonUpdated === false
+        ? `${data.message || 'Atividades enviadas com sucesso.'} O cache local foi atualizado e o JSON global segue sincronizando em segundo plano.`
+        : (data.message || 'Atividades enviadas com sucesso.'));
       return true;
     } catch (error) { setBalloonMessage(error instanceof Error ? error.message : 'Erro ao enviar atividades.'); return false; } finally { setSendingBatch(false); }
   };
@@ -602,9 +706,31 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
     if (!updates.length) return false;
     setSavingChanges(true);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'updateActivitiesBatch', userEmail: currentUser.email, userName: currentUser.nome, updates }) });
+      const response = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'updateActivitiesBatch', userEmail: currentUser.email, userName: currentUser.nome, userRole: currentUser.role, userDisciplina: currentUser.disciplina, updates }) });
       const data: BatchResponse = await response.json();
       if (!data.success) throw new Error(data.error || 'Erro ao salvar alterações.');
+      if (data.registroSnapshot) {
+        applyRegistroSnapshot(data.registroSnapshot);
+      } else {
+        const updatesById = new Map(updates.map((item) => [item.activityId, item]));
+        const nextActiveActivities = activeActivities.map((activity) => {
+          const draft = updatesById.get(activity.id);
+          if (!draft) return activity;
+          const avancoAtual = normalizePercentage(Number(draft.avancoAtual));
+          return {
+            ...activity,
+            profissionaisEmails: draft.profissionaisEmails,
+            profissionais: draft.profissionaisNomes,
+            avancoAtual,
+            avaliacaoAtual: draft.avaliacaoAtual,
+            observacaoAtual: draft.observacaoAtual,
+            status: avancoAtual === 100 ? 'aguardando_conclusao' : activity.status === 'aguardando_conclusao' ? 'em_andamento' : activity.status,
+            data100: avancoAtual === 100 ? (activity.data100 || new Date().toLocaleString('pt-BR')) : '',
+            ultimaAtualizacao: new Date().toLocaleString('pt-BR'),
+          };
+        });
+        applyActivitiesState(nextActiveActivities, completedActivities);
+      }
       setPendingChanges({});
       setBalloonMessage(updates.some((item) => Number(item.avancoAtual) === 100) ? 'Em 3 dias as atividades com 100% serão tidas como entregues e irão para concluídos.' : data.message || 'Alterações salvas com sucesso.');
       return true;
@@ -615,7 +741,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
     if (!hasBothPending) return;
     setSavingAll(true);
     try {
-      if (await sendQueuedActivities() && await savePendingChanges()) { await refreshFromPublishedJsonAfterSheetUpdate(); clearLocalDraft(); }
+      if (await sendQueuedActivities() && await savePendingChanges()) { clearLocalDraft(); }
     } finally { setSavingAll(false); }
   };
 
@@ -631,6 +757,14 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
                 <button type="button" onClick={discardLocalDraft} className="h-10 px-4 rounded-xl border border-[#E5E7EB] bg-white text-[#2D2D2D] text-[13px] font-bold hover:bg-[#F9FAFB] transition-all">Não, descartar</button>
               </div>
             </div>
+
+            <div className="max-w-[220px]">
+              <label className="bentham-label">8. % INICIAL</label>
+              <div className="relative">
+                <input type="number" min={0} max={100} value={formData.avancoInicial} onChange={(e) => setFormData((prev) => ({ ...prev, avancoInicial: normalizePercentage(Number(e.target.value)) }))} className="bentham-input pr-10" />
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[12px] font-bold text-bentham-gray">%</span>
+              </div>
+            </div>
           </div>
         )}
 
@@ -640,8 +774,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
           <div className="space-y-6">
             <div className="w-full">
               <label className="bentham-label">1. CONTRATO</label>
-              <select className="bentham-select" value={formData.contratoCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, contratoCodigo: e.target.value, osCodigo: '', itemCodigo: '' }))}>
-                <option value="">Selecione...</option>
+              <select className="bentham-select" value={formData.contratoCodigo} disabled={Boolean(String(currentUser.contrato || '').trim())} onChange={(e) => setFormData((prev) => ({ ...prev, contratoCodigo: e.target.value, osCodigo: '', itemCodigo: '' }))}>
+                <option value="">{String(currentUser.contrato || '').trim() ? 'Contrato fixo' : 'Selecione...'}</option>
                 {contracts.map((item) => (<option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>))}
               </select>
             </div>
@@ -700,6 +834,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
                   <div key={item.localId} className="rounded-xl border border-bentham-border bg-[#F9FAFB] px-4 py-3">
                     <div className="text-[13px] font-bold text-bentham-dark">{index + 1}. {item.itemCodigo} - {item.itemNome}</div>
                     <div className="text-[12px] text-bentham-gray mt-1">{item.profissionaisNomes.join(', ')}</div>
+                    <div className="text-[12px] text-bentham-gray mt-1">AvanÃ§o inicial: {item.avancoInicial}%</div>
                   </div>
                 ))}
               </div>
@@ -844,12 +979,12 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
           ) : (
             <>
               {hasQueuedActivities && (
-                <button type="button" disabled={sendingBatch || syncingPublishedJson} onClick={async () => { if (await sendQueuedActivities()) { await refreshFromPublishedJsonAfterSheetUpdate(); clearLocalDraft(); } }} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
+                <button type="button" disabled={sendingBatch || syncingPublishedJson} onClick={async () => { if (await sendQueuedActivities()) { clearLocalDraft(); } }} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
                   {draftQueue.length === 1 ? 'Enviar 1 atividade' : `Enviar ${draftQueue.length} atividades`} <Send size={18} />
                 </button>
               )}
               {hasPendingChanges && (
-                <button type="button" disabled={savingChanges || syncingPublishedJson} onClick={async () => { if (await savePendingChanges()) { await refreshFromPublishedJsonAfterSheetUpdate(); clearLocalDraft(); } }} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
+                <button type="button" disabled={savingChanges || syncingPublishedJson} onClick={async () => { if (await savePendingChanges()) { clearLocalDraft(); } }} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
                   Salvar alterações <Save size={18} />
                 </button>
               )}

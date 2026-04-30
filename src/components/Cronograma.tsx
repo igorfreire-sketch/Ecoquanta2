@@ -16,6 +16,7 @@ interface CronogramaRow {
 }
 
 interface CronogramaProps {
+  lockedContractCode?: string;
   preloadedData?: {
     cronograma?: CronogramaRow[];
     registro?: {
@@ -106,7 +107,7 @@ function buildOsOptions(rows: CronogramaRow[], contractCodes: string[], preloade
     .filter((item) => item.code && item.contractCode && /(^|[^A-Za-z0-9])_?OS/i.test(item.name));
 }
 
-export default function Cronograma({ preloadedData }: CronogramaProps) {
+export default function Cronograma({ preloadedData, lockedContractCode }: CronogramaProps) {
   const rows = useMemo(
     () => Array.isArray(preloadedData?.cronograma) ? preloadedData!.cronograma!.filter((row) => normalizeText(row.code) && normalizeText(row.name)) : [],
     [preloadedData?.cronograma]
@@ -117,6 +118,13 @@ export default function Cronograma({ preloadedData }: CronogramaProps) {
 
   const [contractFilter, setContractFilter] = useState('Todos');
   const [osFilter, setOsFilter] = useState('Todas');
+
+  React.useEffect(() => {
+    const locked = normalizeText(lockedContractCode);
+    if (!locked) return;
+    setContractFilter(locked);
+    setOsFilter('Todas');
+  }, [lockedContractCode]);
 
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
@@ -164,10 +172,11 @@ export default function Cronograma({ preloadedData }: CronogramaProps) {
             <div className="relative mt-1.5">
               <select
                 value={contractFilter}
+                disabled={Boolean(normalizeText(lockedContractCode))}
                 onChange={(event) => { setContractFilter(event.target.value); setOsFilter('Todas'); }}
                 className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-[14px] font-medium text-[#2D2D2D] appearance-none focus:border-[#F05D28] focus:ring-2 focus:ring-[#F05D28]/20 outline-none"
               >
-                <option value="Todos">Todos</option>
+                {!normalizeText(lockedContractCode) && <option value="Todos">Todos</option>}
                 {contracts.map((contract) => (
                   <option key={contract.code} value={contract.code}>{contract.code} - {contract.name}</option>
                 ))}

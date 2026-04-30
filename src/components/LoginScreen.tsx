@@ -6,6 +6,7 @@ export interface AuthUser {
   email: string;
   role: string;
   disciplina: string;
+  contrato: string;
   status: string;
   abas: string[];
   isAdmin: boolean;

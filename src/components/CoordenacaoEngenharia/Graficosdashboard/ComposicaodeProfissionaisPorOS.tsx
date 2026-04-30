@@ -191,7 +191,7 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
               <CartesianGrid vertical={false} stroke="#F1F5F9" />
 
               <XAxis
-                dataKey="os"
+                dataKey="nomeCompleto"
                 tick={{ fill: '#2D2D2D', fontSize: 11, fontWeight: 700 }}
                 axisLine={false}
                 tickLine={false}

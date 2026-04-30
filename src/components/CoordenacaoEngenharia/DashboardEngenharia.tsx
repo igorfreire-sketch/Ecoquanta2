@@ -32,6 +32,7 @@ type ConsultaAtividade = {
   descricao: string;
   contrato: string;
   os: string;
+  osNome: string;
   disciplina: string;
   prazoAtual: number;
   dificuldade: number;
@@ -161,6 +162,7 @@ function buildConsultaData(registro: any, cronograma: any): ConsultaAtividade[] 
         descricao: String(activity?.itemNome || activity?.descricao || ''),
         contrato: String(activity?.contratoCodigo || ''),
         os: String(activity?.osCodigo || ''),
+        osNome: String(activity?.osNome || activity?.osCodigo || ''),
         disciplina,
         prazoAtual,
         dificuldade: difficultyToNumber(activity?.dificuldade),
@@ -183,21 +185,23 @@ function buildComposicaoData(tableData: ConsultaAtividade[], disciplinas: string
   const disciplinasBase = disciplinas.length ? disciplinas : Array.from(new Set(tableData.map((item) => item.disciplina).filter(Boolean)));
 
   tableData.forEach((item) => {
-    const os = item.os || 'Sem OS';
-    if (!grouped[os]) {
+    const osCodigo = item.os || 'Sem OS';
+    const osNome = item.osNome || osCodigo;
+    const osLabel = osNome && osNome !== osCodigo ? `${osCodigo} - ${osNome}` : osCodigo;
+    if (!grouped[osCodigo]) {
       const base: Record<string, any> = {
-        os,
-        nomeCompleto: os,
+        os: osCodigo,
+        nomeCompleto: osLabel,
         contrato: item.contrato
       };
       disciplinasBase.forEach((disciplina) => {
         base[disciplinaKey(disciplina)] = 0;
       });
-      grouped[os] = base;
+      grouped[osCodigo] = base;
     }
 
     const key = disciplinaKey(item.disciplina);
-    grouped[os][key] = Number(grouped[os][key] || 0) + 1;
+    grouped[osCodigo][key] = Number(grouped[osCodigo][key] || 0) + 1;
   });
 
   return Object.values(grouped);

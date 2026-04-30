@@ -37,6 +37,8 @@ export interface UserAccessRecord {
   online: boolean;
   disciplina: string;
   cargo: string;
+  alocacao: string;
+  contrato: string;
   isAdmin: boolean;
   status: UserStatus;
   allowedTabs: AppTabKey[];
@@ -54,6 +56,8 @@ interface AdministracaoProps {
   usuarios: UserAccessRecord[];
   disciplinas: DisciplinaOption[];
   cargos: CargoOption[];
+  alocacoes: string[];
+  contratos: Array<{ id: string; nome: string }>;
   roleTabPermissions: RoleTabPermissions;
   databaseLinks: DatabaseLinkRecord[];
   appTabs: Array<{ key: AppTabKey; label: string }>;
@@ -68,6 +72,8 @@ interface AdministracaoProps {
   onRemoveDisciplina: (value: string) => Promise<void>;
   onAddCargo: (value: string) => Promise<void>;
   onRemoveCargo: (value: string) => Promise<void>;
+  onAddAlocacao: (value: string) => Promise<void>;
+  onRemoveAlocacao: (value: string) => Promise<void>;
   onToggleRoleTabPermission: (cargo: string, tabKey: AppTabKey) => Promise<void>;
   onSaveDatabaseLink: (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => Promise<void>;
   onDeleteDatabaseLink: (id: string) => Promise<void>;
@@ -264,7 +270,7 @@ function RoleTabPermissionsManager({
       <div className="px-8 py-6 border-b border-[#E5E7EB]">
         <h2 className="text-[18px] font-bold text-[#2D2D2D]">Abas por Cargo</h2>
         <p className="text-[13px] text-[#757575] mt-1">
-          Defina quais janelas cada cargo pode visualizar. Permissoes individuais continuam valendo.
+          Cargos novos nascem com todas as abas marcadas. A organizacao pode ser feita desmarcando manualmente o que cada cargo nao deve visualizar.
         </p>
       </div>
 
@@ -274,7 +280,7 @@ function RoleTabPermissionsManager({
         )}
 
         {cargos.map((cargo) => {
-          const allowed = roleTabPermissions[cargo] || [];
+          const allowed = roleTabPermissions[cargo] || visibleTabs.map((tab) => tab.key);
 
           return (
             <div key={cargo} className="border border-[#E5E7EB] bg-[#F9FAFB] rounded-2xl p-5">
@@ -404,6 +410,8 @@ export default function Administracao({
   usuarios,
   disciplinas,
   cargos,
+  alocacoes,
+  contratos,
   roleTabPermissions,
   databaseLinks,
   appTabs,
@@ -418,6 +426,8 @@ export default function Administracao({
   onRemoveDisciplina,
   onAddCargo,
   onRemoveCargo,
+  onAddAlocacao,
+  onRemoveAlocacao,
   onToggleRoleTabPermission,
   onSaveDatabaseLink,
   onDeleteDatabaseLink,
@@ -543,7 +553,7 @@ export default function Administracao({
         <div className="p-4 lg:p-6 space-y-4">
           {usuariosFiltrados.map((user) => (
             <div key={user.id} className="border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] p-5">
-              <div className="grid grid-cols-1 2xl:grid-cols-[minmax(240px,1.1fr)_minmax(140px,180px)_minmax(160px,200px)_minmax(160px,200px)_minmax(150px,180px)_minmax(220px,1fr)] gap-4 items-start">
+              <div className="grid grid-cols-1 2xl:grid-cols-[minmax(240px,1.1fr)_minmax(140px,180px)_minmax(160px,200px)_minmax(160px,200px)_minmax(160px,200px)_minmax(180px,220px)_minmax(150px,180px)_minmax(220px,1fr)] gap-4 items-start">
                 <div className="min-w-0">
                   <div className="flex items-center gap-3">
                     <div className="w-11 h-11 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm shrink-0">
@@ -615,6 +625,38 @@ export default function Administracao({
                 </div>
 
                 <div className="flex flex-col gap-1.5">
+                  <label className="bentham-label">Alocação</label>
+                  <select
+                    className="bentham-select"
+                    value={user.alocacao}
+                    onChange={(e) => onUpdateUsuario(user.id, { alocacao: e.target.value })}
+                  >
+                    <option value="">Selecionar</option>
+                    {alocacoes.map((alocacao) => (
+                      <option key={alocacao} value={alocacao}>
+                        {alocacao}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="bentham-label">Contrato</label>
+                  <select
+                    className="bentham-select"
+                    value={user.contrato}
+                    onChange={(e) => onUpdateUsuario(user.id, { contrato: e.target.value })}
+                  >
+                    <option value="">Sem limitaÃ§Ã£o</option>
+                    {contratos.map((contrato) => (
+                      <option key={contrato.id} value={contrato.id}>
+                        {contrato.nome}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
                   <label className="bentham-label">Administrador</label>
                   <label className="h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center justify-between cursor-pointer">
                     <span className="text-[13px] font-medium text-[#2D2D2D]">
@@ -638,7 +680,7 @@ export default function Administracao({
                   />
                 </div>
 
-                <div className="flex flex-col gap-2 2xl:col-start-1 2xl:col-end-6">
+                <div className="flex flex-col gap-2 2xl:col-start-1 2xl:col-end-7">
                   <label className="bentham-label">Ações</label>
                   <div className="flex flex-wrap gap-3">
                   {user.status === 'pending' ? (
@@ -672,7 +714,7 @@ export default function Administracao({
         </div>
       </section>
 
-      <section className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
+      <section className="grid grid-cols-1 2xl:grid-cols-3 gap-6">
         <InlineListManager
           title="Gerenciar Cargos"
           subtitle="Adicione ou remova os cargos disponíveis para seleção no cadastro administrativo."
@@ -689,6 +731,14 @@ export default function Administracao({
           placeholder="Nova disciplina"
           onAdd={onAddDisciplina}
           onRemove={onRemoveDisciplina}
+        />
+        <InlineListManager
+          title="Gerenciar Alocação"
+          subtitle="Adicione ou remova as opcoes de alocacao disponiveis para os usuarios."
+          items={alocacoes}
+          placeholder="Nova alocação"
+          onAdd={onAddAlocacao}
+          onRemove={onRemoveAlocacao}
         />
       </section>
 

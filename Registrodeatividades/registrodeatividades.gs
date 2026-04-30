@@ -67,6 +67,8 @@ function doPost(e) {
       row[header.role] = '';
       row[header.disciplina] = '';
       row[header.status] = 'pending';
+      row[header.alocacao] = '';
+      row[header.contrato] = '';
       row[header.abas] = '';
       row[header.passwordhash] = hash;
       row[header.resetcode] = '';
@@ -206,6 +208,8 @@ function doPost(e) {
       if (data.role !== undefined) loginSheet.getRange(idxA + 1, header.role + 1).setValue(data.role || '');
       if (data.discipline !== undefined) loginSheet.getRange(idxA + 1, header.disciplina + 1).setValue(data.discipline || '');
       if (data.allowedTabs !== undefined) loginSheet.getRange(idxA + 1, header.abas + 1).setValue(normalizeAllowedTabs_(data.allowedTabs));
+      if (data.allocation !== undefined) loginSheet.getRange(idxA + 1, header.alocacao + 1).setValue(String(data.allocation || ''));
+      if (data.contract !== undefined) loginSheet.getRange(idxA + 1, header.contrato + 1).setValue(String(data.contract || ''));
       if (data.isAdmin !== undefined) loginSheet.getRange(idxA + 1, header.isadmin + 1).setValue(boolToSheet_(data.isAdmin));
 
       loginSheet.getRange(idxA + 1, header.status + 1).setValue('approved');
@@ -237,6 +241,8 @@ function doPost(e) {
       if (data.role !== undefined) loginSheet.getRange(idxS + 1, header.role + 1).setValue(String(data.role || ''));
       if (data.discipline !== undefined) loginSheet.getRange(idxS + 1, header.disciplina + 1).setValue(String(data.discipline || ''));
       if (data.allowedTabs !== undefined) loginSheet.getRange(idxS + 1, header.abas + 1).setValue(normalizeAllowedTabs_(data.allowedTabs));
+      if (data.allocation !== undefined) loginSheet.getRange(idxS + 1, header.alocacao + 1).setValue(String(data.allocation || ''));
+      if (data.contract !== undefined) loginSheet.getRange(idxS + 1, header.contrato + 1).setValue(String(data.contract || ''));
       if (data.isAdmin !== undefined) loginSheet.getRange(idxS + 1, header.isadmin + 1).setValue(boolToSheet_(data.isAdmin));
       if (data.status !== undefined) loginSheet.getRange(idxS + 1, header.status + 1).setValue(String(data.status || 'pending'));
 
@@ -274,9 +280,10 @@ function doPost(e) {
     if (action === 'saveConfigOptions') {
       var cargos = arrayFromAny_(data.cargos);
       var disciplinas = arrayFromAny_(data.disciplinas);
+      var alocacoes = arrayFromAny_(data.alocacoes);
 
-      saveConfigSheet_(ss, cargos, disciplinas);
-      logAuth_(ss, 'INFO', 'saveConfigOptions ok', safeJson_({ cargos: cargos.length, disciplinas: disciplinas.length }));
+      saveConfigSheet_(ss, cargos, disciplinas, alocacoes);
+      logAuth_(ss, 'INFO', 'saveConfigOptions ok', safeJson_({ cargos: cargos.length, disciplinas: disciplinas.length, alocacoes: alocacoes.length }));
       schedulePublicJsonPublish_(); return json_({ success: true });
     }
 
@@ -420,6 +427,7 @@ function doGet(e) {
         users: users,
         cargos: config.cargos,
         disciplinas: config.disciplinas,
+        alocacoes: config.alocacoes,
         databaseLinks: databaseLinks,
         roleTabPermissions: roleTabPermissions
       };
@@ -437,7 +445,7 @@ function doGet(e) {
     var roleTabPermissionsAdmin = getRoleTabPermissions_(ss);
 
     var responseDataAdmin = {
-      users: [], cargos: config.cargos, disciplinas: config.disciplinas, databaseLinks: databaseLinks, roleTabPermissions: roleTabPermissionsAdmin
+      users: [], cargos: config.cargos, disciplinas: config.disciplinas, alocacoes: config.alocacoes, databaseLinks: databaseLinks, roleTabPermissions: roleTabPermissionsAdmin
     };
 
     for (var iA = 1; iA < values.length; iA++) {
@@ -454,23 +462,7 @@ function doGet(e) {
     var uEmail = normalizeEmail_(e.parameter.userEmail);
     var uRole = String(e.parameter.userRole || '').trim().toLowerCase();
     var uDisciplina = String(e.parameter.userDisciplina || '').trim();
-
-    var eapDataR = getEapStructuredData_(ss);
-    var profData = getProfessionalsByDisciplina_(ss, uDisciplina);
-    var actData = getActivitiesForUser_(ss, uEmail, uRole);
-
-    return json_({
-      success: true,
-      contracts: eapDataR.contracts,
-      osOptions: eapDataR.osOptions,
-      itemOptions: eapDataR.itemOptions,
-      hierarchyNodes: eapDataR.hierarchyNodes,
-      childrenByParent: eapDataR.childrenByParent,
-      rootCodes: eapDataR.rootCodes,
-      professionals: profData,
-      activeActivities: actData.activeActivities,
-      completedActivities: actData.completedActivities
-    });
+    return json_(Object.assign({ success: true }, buildRegistroAtividadesResponseData_(ss, uEmail, uRole, uDisciplina)));
   }
 
   if (action === 'getCronogramaData') {
@@ -527,6 +519,7 @@ function registerActivitiesBatch_(ss, data) {
     var itemNome = String(item.itemNome || '').trim();
     var dificuldade = String(item.dificuldade || '').trim();
     var descricao = String(item.descricao || '').trim();
+    var avancoInicial = Math.max(0, Math.min(100, Number(item.avancoInicial || 0)));
     var profissionaisEmails = Array.isArray(item.profissionaisEmails) ? item.profissionaisEmails : [];
     var profissionaisNomes = Array.isArray(item.profissionaisNomes) ? item.profissionaisNomes : [];
 
@@ -543,6 +536,8 @@ function registerActivitiesBatch_(ss, data) {
 
     var activityId = Utilities.getUuid();
     var nowStr = new Date().toLocaleString('pt-BR');
+    var statusInicial = avancoInicial === 100 ? 'aguardando_conclusao' : 'em_andamento';
+    var data100Inicial = avancoInicial === 100 ? nowStr : '';
 
     rowsToAppend.push([
       activityId,
@@ -562,11 +557,11 @@ function registerActivitiesBatch_(ss, data) {
       profissionaisEmails.join(' | '),
       dificuldade,
       descricao,
-      0,
+      avancoInicial,
       '',
       '',
-      'em_andamento',
-      '',
+      statusInicial,
+      data100Inicial,
       '',
       'true',
       nowStr
@@ -585,6 +580,7 @@ function registerActivitiesBatch_(ss, data) {
         osCodigo: osCodigo,
         itemCodigo: itemCodigo,
         profissionaisEmails: profissionaisEmails,
+        avancoInicial: avancoInicial,
         dificuldade: dificuldade,
         descricao: descricao
       })
@@ -606,17 +602,32 @@ function registerActivitiesBatch_(ss, data) {
   var shHistory = getOrCreateActivitiesHistorySheet_(ss);
   shHistory.getRange(shHistory.getLastRow() + 1, 1, historyRows.length, 8).setValues(historyRows);
 
+  var publicJsonUpdated = false;
+  var publicJsonError = '';
+  try {
+    publishRegistroAtividadesJson_(getAllActivitiesForPublicJson_(ss));
+    publicJsonUpdated = true;
+  } catch (publishErr) {
+    publicJsonError = String(publishErr || '');
+    logAuth_(ss, 'WARN', 'registerActivitiesBatch publishRegistroAtividadesJson falhou', publicJsonError);
+  }
+
   schedulePublicJsonPublish_();
   return json_({
     success: true,
     message: rowsToAppend.length + ' atividade(s) registrada(s) com sucesso.',
-    duplicateItems: duplicateItems
+    duplicateItems: duplicateItems,
+    publicJsonUpdated: publicJsonUpdated,
+    publicJsonError: publicJsonError,
+    registroSnapshot: buildRegistroAtividadesResponseData_(ss, userEmailA, userRoleA, userDisciplinaA)
   });
 }
 
 function updateActivitiesBatch_(ss, data) {
   var userEmailU = normalizeEmail_(data.userEmail);
   var userNameU = String(data.userName || '').trim();
+  var userRoleU = String(data.userRole || '').trim();
+  var userDisciplinaU = String(data.userDisciplina || '').trim();
   var updates = Array.isArray(data.updates) ? data.updates : [];
 
   if (!updates.length) {
@@ -863,18 +874,19 @@ function getOrCreateActivitiesHistorySheet_(ss) {
 // HELPERS
 // ============================================================================
 
-function saveConfigSheet_(ss, cargos, disciplinas) {
+function saveConfigSheet_(ss, cargos, disciplinas, alocacoes) {
   var sh = getOrCreateConfigSheet_(ss);
   sh.clear();
-  sh.getRange(1, 1, 1, 2).setValues([['Cargo', 'Disciplina']]);
+  sh.getRange(1, 1, 1, 3).setValues([['Cargo', 'Disciplina', 'Alocacao']]);
 
-  var maxLen = Math.max(cargos.length, disciplinas.length, 1);
+  alocacoes = Array.isArray(alocacoes) ? alocacoes : [];
+  var maxLen = Math.max(cargos.length, disciplinas.length, alocacoes.length, 1);
   var rows = [];
   for (var i = 0; i < maxLen; i++) {
-    rows.push([cargos[i] || '', disciplinas[i] || '']);
+    rows.push([cargos[i] || '', disciplinas[i] || '', alocacoes[i] || '']);
   }
 
-  sh.getRange(2, 1, rows.length, 2).setValues(rows);
+  sh.getRange(2, 1, rows.length, 3).setValues(rows);
 }
 
 function getConfigOptions_(ss) {
@@ -882,15 +894,18 @@ function getConfigOptions_(ss) {
   var values = sh.getDataRange().getValues();
   var cargos = [];
   var disciplinas = [];
+  var alocacoes = [];
 
   for (var i = 1; i < values.length; i++) {
     if (values[i][0]) cargos.push(String(values[i][0]));
     if (values[i][1]) disciplinas.push(String(values[i][1]));
+    if (values[i][2]) alocacoes.push(String(values[i][2]));
   }
 
   return {
     cargos: uniqueSorted_(cargos),
-    disciplinas: uniqueSorted_(disciplinas)
+    disciplinas: uniqueSorted_(disciplinas),
+    alocacoes: uniqueSorted_(alocacoes)
   };
 }
 
@@ -1251,6 +1266,24 @@ function getActivitiesForUser_(ss, userEmail, userRole) {
   return { activeActivities: activeActivities, completedActivities: completedActivities };
 }
 
+function buildRegistroAtividadesResponseData_(ss, userEmail, userRole, userDisciplina) {
+  var eapData = getEapStructuredData_(ss);
+  var professionalsData = getProfessionalsByDisciplina_(ss, userDisciplina);
+  var activitiesData = getActivitiesForUser_(ss, userEmail, userRole);
+
+  return {
+    contracts: eapData.contracts,
+    osOptions: eapData.osOptions,
+    itemOptions: eapData.itemOptions,
+    hierarchyNodes: eapData.hierarchyNodes,
+    childrenByParent: eapData.childrenByParent,
+    rootCodes: eapData.rootCodes,
+    professionals: professionalsData,
+    activeActivities: activitiesData.activeActivities,
+    completedActivities: activitiesData.completedActivities
+  };
+}
+
 function updateDelayedCompletedActivities_(ss) {
   var sh = getOrCreateActivitiesSheet_(ss);
   var values = sh.getDataRange().getValues();
@@ -1325,7 +1358,8 @@ function getHeaderMapSafe_(sheet) {
     data: ensure('Data'), nome: ensure('Nome'), email: ensure('Email'),
     role: ensure('Role'), disciplina: ensure('Disciplina'), status: ensure('Status'),
     abas: ensure('Abas'), passwordhash: ensure('PasswordHash'), resetcode: ensure('ResetCode'),
-    resetexpires: ensure('ResetExpires'), isadmin: ensure('IsAdmin'), lastseen: ensure('LastSeen')
+    resetexpires: ensure('ResetExpires'), isadmin: ensure('IsAdmin'), lastseen: ensure('LastSeen'),
+    alocacao: ensure('Alocacao'), contrato: ensure('Contrato')
   };
 }
 
@@ -1354,6 +1388,8 @@ function normalizeUserResponse_(row, header) {
     id: String(row[header.email] || ''), data: row[header.data], nome: String(row[header.nome] || ''),
     email: String(row[header.email] || ''), cargo: String(row[header.role] || ''), role: String(row[header.role] || ''),
     disciplina: String(row[header.disciplina] || ''), status: String(row[header.status] || 'pending'),
+    alocacao: String(row[header.alocacao] || ''),
+    contrato: String(row[header.contrato] || ''),
     allowedTabs: parseAllowedTabs_(row[header.abas]), abas: parseAllowedTabs_(row[header.abas]),
     isAdmin: parseBool_(row[header.isadmin]), online: online
   };
@@ -1802,6 +1838,7 @@ function publishFullDatabaseToPublicJson() {
             usersByEmail: users,
             cargos: config.cargos,
             disciplinas: config.disciplinas,
+            alocacoes: config.alocacoes,
             databaseLinks: databaseLinks,
             roleTabPermissions: roleTabPermissions
         },
@@ -1954,7 +1991,8 @@ function getProfessionalsIndexForJson_(ss) {
       nome: nome,
       email: email,
       cargo: cargo,
-      disciplina: disciplina
+      disciplina: disciplina,
+      alocacao: String(values[i][header.alocacao] || '').trim()
     });
   }
 
@@ -1973,6 +2011,8 @@ function getUsersSummaryForJson_(values, header) {
       email: email,
       role: String(values[i][header.role] || '').trim(),
       disciplina: String(values[i][header.disciplina] || '').trim(),
+      alocacao: String(values[i][header.alocacao] || '').trim(),
+      contrato: String(values[i][header.contrato] || '').trim(),
       status: String(values[i][header.status] || '').trim(),
       isAdmin: parseBool_(values[i][header.isadmin])
     });

@@ -28,6 +28,7 @@ interface CurvasProps {
   preloadedData?: CompressedPayload | null;
   onForceRefresh?: () => void;
   isSyncing?: boolean;
+  lockedContractCode?: string;
 }
 
 interface PublicEapEnvelope {
@@ -313,7 +314,7 @@ function OsPanel({ data, globalConfig }: { data: any, globalConfig: any, key?: a
   );
 }
 
-export default function Curvas({ preloadedData, onForceRefresh, isSyncing }: CurvasProps) {
+export default function Curvas({ preloadedData, onForceRefresh, isSyncing, lockedContractCode }: CurvasProps) {
   const [loading, setLoading] = useState(false);
   const [localIsSyncing, setLocalIsSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -433,6 +434,13 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing }: Cur
     return hierarchy.find(c => c.code === selectedContract)?.osList || [];
   }, [selectedContract, hierarchy]);
 
+  useEffect(() => {
+    const locked = normalizeKey(lockedContractCode || '');
+    if (!locked) return;
+    setSelectedContract(locked);
+    setSelectedOsList([]);
+  }, [lockedContractCode]);
+
   const chartsData = useMemo(() => {
     if (!rawData || !rawData.atual || selectedOsList.length === 0) return [];
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -526,8 +534,8 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing }: Cur
         <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Contrato</label>
-            <select value={selectedContract} onChange={(e) => { setSelectedContract(e.target.value); setSelectedOsList([]); }} className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px]">
-              <option value="TODOS">Selecione...</option>
+            <select value={selectedContract} disabled={Boolean(normalizeKey(lockedContractCode || ''))} onChange={(e) => { setSelectedContract(e.target.value); setSelectedOsList([]); }} className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px] disabled:opacity-70">
+              {!normalizeKey(lockedContractCode || '') && <option value="TODOS">Selecione...</option>}
               {hierarchy.map(c => <option key={c.code} value={c.code}>{c.code} - {c.name}</option>)}
             </select>
           </div>

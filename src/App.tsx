@@ -82,6 +82,7 @@ interface PublicGlobalRegistroPayload {
       users?: any[];
       cargos?: string[];
       disciplinas?: string[];
+      alocacoes?: string[];
       databaseLinks?: DatabaseLinkRecord[];
       roleTabPermissions?: RoleTabPermissions;
     };
@@ -219,6 +220,7 @@ function normalizeUser(raw: any): AuthUser {
     email: raw.email || '',
     role: raw.role || '',
     disciplina: raw.disciplina || '',
+    contrato: raw.contrato || '',
     status: raw.status || '',
     abas,
     isAdmin: Boolean(raw.isAdmin),
@@ -271,6 +273,8 @@ function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
       online: Boolean(u.online),
       disciplina: String(u.disciplina || u.discipline || ''),
       cargo: String(u.cargo || u.role || ''),
+      alocacao: String(u.alocacao || u.allocation || ''),
+      contrato: String(u.contrato || u.contract || ''),
       isAdmin: Boolean(u.isAdmin),
       status: String(u.status || 'pending') as UserAccessRecord['status'],
       allowedTabs: (Array.isArray(u.allowedTabs) ? u.allowedTabs : Array.isArray(u.abas) ? u.abas : [])
@@ -285,9 +289,77 @@ function getAdminState(data: GlobalData) {
     usuarios: normalizeAdminUsers(data),
     disciplinas: Array.isArray(admin.disciplinas) ? admin.disciplinas : [],
     cargos: Array.isArray(admin.cargos) ? admin.cargos : [],
+    alocacoes: Array.isArray(admin.alocacoes) ? admin.alocacoes : [],
     databaseLinks: Array.isArray(admin.databaseLinks) ? admin.databaseLinks : [],
     roleTabPermissions: admin.roleTabPermissions && typeof admin.roleTabPermissions === 'object' ? admin.roleTabPermissions as RoleTabPermissions : {},
   };
+}
+
+function filterRowsByContract(rows: any[], contractCode: string) {
+  const target = String(contractCode || '').trim();
+  if (!target) return Array.isArray(rows) ? rows : [];
+  return (Array.isArray(rows) ? rows : []).filter((row: any) => {
+    const code = String(row?.code || row?.codigo || '').trim();
+    const rowContract = String(row?.contractCode || row?.contratoCodigo || '').trim();
+    return code === target || code.startsWith(`${target}.`) || rowContract === target;
+  });
+}
+
+function filterGlobalDataByContract(data: GlobalData, contractCode: string): GlobalData {
+  const target = String(contractCode || '').trim();
+  if (!target) return data;
+
+  const next: GlobalData = {
+    ...data,
+    registro: data.registro ? { ...data.registro } : data.registro,
+    admin: data.admin ? { ...data.admin } : data.admin,
+    eap: data.eap ? { ...data.eap } : data.eap,
+  };
+
+  if (next.registro && typeof next.registro === 'object') {
+    next.registro.contracts = (Array.isArray(next.registro.contracts) ? next.registro.contracts : []).filter((item: any) => String(item?.codigo || '').trim() === target);
+    next.registro.osOptions = (Array.isArray(next.registro.osOptions) ? next.registro.osOptions : []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target);
+    next.registro.itemOptions = (Array.isArray(next.registro.itemOptions) ? next.registro.itemOptions : []).filter((item: any) => String(item?.osCodigo || '').trim().startsWith(`${target}.`));
+    next.registro.hierarchyNodes = (Array.isArray(next.registro.hierarchyNodes) ? next.registro.hierarchyNodes : []).filter((item: any) => {
+      const codigo = String(item?.codigo || '').trim();
+      const contratoCodigo = String(item?.contratoCodigo || '').trim();
+      return codigo === target || codigo.startsWith(`${target}.`) || contratoCodigo === target;
+    });
+    next.registro.rootCodes = (Array.isArray(next.registro.rootCodes) ? next.registro.rootCodes : []).filter((code: any) => String(code || '').trim() === target);
+    next.registro.childrenByParent = Object.fromEntries(
+      Object.entries(next.registro.childrenByParent && typeof next.registro.childrenByParent === 'object' ? next.registro.childrenByParent : {})
+        .filter(([key]) => key === 'ROOT' || String(key).trim() === target || String(key).trim().startsWith(`${target}.`))
+        .map(([key, value]) => [key, (Array.isArray(value) ? value : []).filter((item: any) => String(item?.codigo || '').trim() === target || String(item?.codigo || '').trim().startsWith(`${target}.`))])
+    );
+    next.registro.activitiesList = (Array.isArray(next.registro.activitiesList) ? next.registro.activitiesList : []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target);
+    next.registro.activeActivities = (Array.isArray(next.registro.activeActivities) ? next.registro.activeActivities : []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target);
+    next.registro.completedActivities = (Array.isArray(next.registro.completedActivities) ? next.registro.completedActivities : []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target);
+  }
+
+  next.cronograma = filterRowsByContract(data.cronograma as any[], target);
+
+  if (next.eap && typeof next.eap === 'object') {
+    const eapData = next.eap.data && typeof next.eap.data === 'object' ? { ...next.eap.data } : null;
+    const targetEap = eapData || next.eap;
+    targetEap.registro = targetEap.registro && typeof targetEap.registro === 'object'
+      ? {
+          ...targetEap.registro,
+          contracts: (Array.isArray(targetEap.registro.contracts) ? targetEap.registro.contracts : []).filter((item: any) => String(item?.codigo || '').trim() === target),
+          osOptions: (Array.isArray(targetEap.registro.osOptions) ? targetEap.registro.osOptions : []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target),
+        }
+      : targetEap.registro;
+    targetEap.atual = filterRowsByContract(targetEap.atual as any[], target);
+    if (targetEap.timeline && typeof targetEap.timeline === 'object') {
+      targetEap.timeline = Object.fromEntries(Object.entries(targetEap.timeline).filter(([key]) => String(key).trim().startsWith(`${target}.`)));
+    }
+    if (Array.isArray(targetEap.reajustado)) {
+      targetEap.reajustado = filterRowsByContract(targetEap.reajustado, target);
+    }
+    if (eapData) next.eap = { ...next.eap, data: targetEap };
+    else next.eap = targetEap;
+  }
+
+  return next;
 }
 
 export default function App() {
@@ -310,6 +382,7 @@ export default function App() {
   const [usuarios, setUsuarios] = useState<UserAccessRecord[]>([]);
   const [disciplinas, setDisciplinas] = useState<string[]>([]);
   const [cargos, setCargos] = useState<string[]>([]);
+  const [alocacoes, setAlocacoes] = useState<string[]>([]);
   const [roleTabPermissions, setRoleTabPermissions] = useState<RoleTabPermissions>({});
   const [databaseLinks, setDatabaseLinks] = useState<DatabaseLinkRecord[]>([]);
 
@@ -324,16 +397,25 @@ export default function App() {
     })).filter((item: any) => item.id);
   }, [globalData.registro?.contracts]);
 
+  useEffect(() => {
+    const lockedContract = String(currentUser?.contrato || '').trim();
+    if (lockedContract) {
+      setFiltrosAtivos((prev) => ({ ...prev, contrato: lockedContract }));
+    }
+  }, [currentUser?.contrato]);
+
   const loadGlobalEnvironment = async (user: AuthUser, isBackgroundSync = false) => {
     if (!isBackgroundSync) {
       const cachedData = getGlobalDataCache();
       if (cachedData && Object.keys(cachedData).length > 0) {
-        setGlobalData(cachedData);
-        if (cachedData.admin) {
-          const adminState = getAdminState(cachedData);
+        const scopedCachedData = filterGlobalDataByContract(cachedData, user.contrato || '');
+        setGlobalData(scopedCachedData);
+        if (scopedCachedData.admin) {
+          const adminState = getAdminState(scopedCachedData);
           setUsuarios(adminState.usuarios);
           setDisciplinas(adminState.disciplinas);
           setCargos(adminState.cargos);
+          setAlocacoes(adminState.alocacoes);
           setRoleTabPermissions(adminState.roleTabPermissions);
           setDatabaseLinks(adminState.databaseLinks);
         }
@@ -382,6 +464,7 @@ export default function App() {
           latestEapPublishedAt: eapPayload.data.latestEapPublishedAt || eapPayload.publishedAt,
         });
       }
+      fullData = filterGlobalDataByContract(fullData, user.contrato || '');
         
         // Converte o índice por e-mail do JSON público de volta para o array esperado pelo app
         if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
@@ -393,6 +476,7 @@ export default function App() {
           setUsuarios(adminState.usuarios);
           setDisciplinas(adminState.disciplinas);
           setCargos(adminState.cargos);
+          setAlocacoes(adminState.alocacoes);
           setRoleTabPermissions(adminState.roleTabPermissions);
           setDatabaseLinks(adminState.databaseLinks);
         }
@@ -479,38 +563,54 @@ export default function App() {
 
   // Admin Hooks (abbreviated wrapper functions saving directly)
   const persistUser = useCallback(async (user: UserAccessRecord) => {
-    await postToAppsScript<GenericResponse>({ action: 'saveUserAccess', email: user.email, name: user.nome, role: user.cargo, discipline: user.disciplina, isAdmin: user.isAdmin, status: user.status, allowedTabs: user.allowedTabs });
-    await wait(PUBLIC_JSON_SYNC_DELAY_MS);
-    await loadAdminData();
+    setUsuarios((prev) => prev.map((item) => item.id === user.id ? user : item));
+    await postToAppsScript<GenericResponse>({ action: 'saveUserAccess', email: user.email, name: user.nome, role: user.cargo, discipline: user.disciplina, allocation: user.alocacao, contract: user.contrato, isAdmin: user.isAdmin, status: user.status, allowedTabs: user.allowedTabs });
+    void loadAdminData();
   }, [loadAdminData]);
 
-  const saveConfigOptions = useCallback(async (nextCargos: string[], nextDisciplinas: string[]) => {
-    await postToAppsScript<GenericResponse>({ action: 'saveConfigOptions', cargos: nextCargos, disciplinas: nextDisciplinas });
-    await wait(PUBLIC_JSON_SYNC_DELAY_MS);
-    await loadAdminData();
+  const saveConfigOptions = useCallback(async (nextCargos: string[], nextDisciplinas: string[], nextAlocacoes: string[]) => {
+    setCargos(nextCargos);
+    setDisciplinas(nextDisciplinas);
+    setAlocacoes(nextAlocacoes);
+    await postToAppsScript<GenericResponse>({ action: 'saveConfigOptions', cargos: nextCargos, disciplinas: nextDisciplinas, alocacoes: nextAlocacoes });
+    void loadAdminData();
   }, [loadAdminData]);
 
   const saveRoleTabPermissions = useCallback(async (nextPermissions: RoleTabPermissions) => {
     await postToAppsScript<GenericResponse>({ action: 'saveRoleTabPermissions', roleTabPermissions: nextPermissions });
-    await wait(PUBLIC_JSON_SYNC_DELAY_MS);
-    await loadAdminData();
+    void loadAdminData();
   }, [loadAdminData]);
 
   const addDisciplina = useCallback(async (value: string) => {
     const item = value.trim();
     if (!item) return;
-    await saveConfigOptions(cargos, Array.from(new Set([...disciplinas, item])));
-  }, [cargos, disciplinas, saveConfigOptions]);
+    await saveConfigOptions(cargos, Array.from(new Set([...disciplinas, item])), alocacoes);
+  }, [alocacoes, cargos, disciplinas, saveConfigOptions]);
 
   const removeDisciplina = useCallback(async (value: string) => {
-    await saveConfigOptions(cargos, disciplinas.filter((item) => item !== value));
-  }, [cargos, disciplinas, saveConfigOptions]);
+    await saveConfigOptions(cargos, disciplinas.filter((item) => item !== value), alocacoes);
+  }, [alocacoes, cargos, disciplinas, saveConfigOptions]);
 
   const addCargo = useCallback(async (value: string) => {
     const item = value.trim();
     if (!item) return;
-    await saveConfigOptions(Array.from(new Set([...cargos, item])), disciplinas);
-  }, [cargos, disciplinas, saveConfigOptions]);
+    await saveConfigOptions(Array.from(new Set([...cargos, item])), disciplinas, alocacoes);
+    const visibleTabs = ADMIN_APP_TABS.filter((tab) => tab.key !== 'administracao').map((tab) => tab.key);
+    await saveRoleTabPermissions({
+      ...roleTabPermissions,
+      [item]: visibleTabs,
+    });
+  }, [alocacoes, cargos, disciplinas, roleTabPermissions, saveConfigOptions, saveRoleTabPermissions]);
+
+  const addAlocacao = useCallback(async (value: string) => {
+    const item = value.trim();
+    if (!item) return;
+    await saveConfigOptions(cargos, disciplinas, Array.from(new Set([...alocacoes, item])));
+  }, [alocacoes, cargos, disciplinas, saveConfigOptions]);
+
+  const removeAlocacao = useCallback(async (value: string) => {
+    await saveConfigOptions(cargos, disciplinas, alocacoes.filter((item) => item !== value));
+  }, [alocacoes, cargos, disciplinas, saveConfigOptions]);
 
   const removeCargo = useCallback(async (value: string) => {
     const nextPermissions = { ...roleTabPermissions };
@@ -519,14 +619,15 @@ export default function App() {
       action: 'saveConfigOptions',
       cargos: cargos.filter((item) => item !== value),
       disciplinas,
+      alocacoes,
     });
     await postToAppsScript<GenericResponse>({ action: 'saveRoleTabPermissions', roleTabPermissions: nextPermissions });
-    await wait(PUBLIC_JSON_SYNC_DELAY_MS);
-    await loadAdminData();
-  }, [cargos, disciplinas, loadAdminData, roleTabPermissions]);
+    setCargos((prev) => prev.filter((item) => item !== value));
+    void loadAdminData();
+  }, [alocacoes, cargos, disciplinas, loadAdminData, roleTabPermissions]);
 
   const toggleRoleTabPermission = useCallback(async (cargo: string, tab: AppTabKey) => {
-    const currentTabs = roleTabPermissions[cargo] || [];
+    const currentTabs = roleTabPermissions[cargo] || ADMIN_APP_TABS.filter((item) => item.key !== 'administracao').map((item) => item.key);
     const nextTabs = currentTabs.includes(tab)
       ? currentTabs.filter((item) => item !== tab)
       : [...currentTabs, tab];
@@ -539,14 +640,13 @@ export default function App() {
 
   const saveDatabaseLink = useCallback(async (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => {
     await postToAppsScript<GenericResponse>({ action: 'saveDatabaseLink', ...payload });
-    await wait(PUBLIC_JSON_SYNC_DELAY_MS);
-    await loadAdminData();
+    void loadAdminData();
   }, [loadAdminData]);
 
   const deleteDatabaseLink = useCallback(async (id: string) => {
     await postToAppsScript<GenericResponse>({ action: 'deleteDatabaseLink', id });
-    await wait(PUBLIC_JSON_SYNC_DELAY_MS);
-    await loadAdminData();
+    setDatabaseLinks((prev) => prev.filter((item) => item.id !== id));
+    void loadAdminData();
   }, [loadAdminData]);
 
   const acceptUser = useCallback(async (userId: string) => {
@@ -558,19 +658,21 @@ export default function App() {
       name: user.nome,
       role: user.cargo,
       discipline: user.disciplina,
+      allocation: user.alocacao,
+      contract: user.contrato,
       isAdmin: user.isAdmin,
       allowedTabs: user.allowedTabs,
     });
-    await wait(PUBLIC_JSON_SYNC_DELAY_MS);
-    await loadAdminData();
+    setUsuarios((prev) => prev.map((item) => item.id === userId ? { ...item, status: 'approved' } : item));
+    void loadAdminData();
   }, [loadAdminData, usuarios]);
 
   const blockUser = useCallback(async (userId: string) => {
     const user = usuarios.find((item) => item.id === userId);
     if (!user) return;
     await postToAppsScript<GenericResponse>({ action: 'blockUser', email: user.email });
-    await wait(PUBLIC_JSON_SYNC_DELAY_MS);
-    await loadAdminData();
+    setUsuarios((prev) => prev.map((item) => item.id === userId ? { ...item, status: 'blocked', online: false } : item));
+    void loadAdminData();
   }, [loadAdminData, usuarios]);
 
   const resetUserPassword = useCallback(async (user: UserAccessRecord) => {
@@ -667,8 +769,8 @@ export default function App() {
             {showFilters && (
               <div className="absolute top-[calc(100%-10px)] right-8 w-80 bg-white border border-[#E5E7EB] rounded-2xl shadow-2xl p-6 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
                 <div className="space-y-4">
-                  <select className="w-full h-10 px-3 bg-[#F8F9FA] border rounded-lg text-xs font-bold" value={filtrosAtivos.contrato} onChange={(e) => setFiltrosAtivos({ ...filtrosAtivos, contrato: e.target.value })}>
-                    <option value="Todos">Todos os Contratos</option>{contratos.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                  <select className="w-full h-10 px-3 bg-[#F8F9FA] border rounded-lg text-xs font-bold disabled:opacity-70" value={String(currentUser?.contrato || '').trim() || filtrosAtivos.contrato} disabled={Boolean(String(currentUser?.contrato || '').trim())} onChange={(e) => setFiltrosAtivos({ ...filtrosAtivos, contrato: e.target.value })}>
+                    {!String(currentUser?.contrato || '').trim() && <option value="Todos">Todos os Contratos</option>}{contratos.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
                   </select>
                 </div>
                 <button onClick={() => setShowFilters(false)} className="w-full mt-6 py-2.5 bg-[#F05D28] text-white rounded-xl text-xs font-bold uppercase hover:bg-[#D94D1A] transition-colors shadow-lg">Aplicar Filtros</button>
@@ -682,17 +784,17 @@ export default function App() {
 
         <main className={`flex-1 overflow-y-auto p-8 ${activeTab === 'registro' ? 'bg-white' : 'bg-[#F8F9FA]'}`}>
           {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && <RegistroDeAtividade currentUser={currentUser} preloadedData={globalData.registro} />}
-          {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={globalData} />}
+          {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={globalData} lockedContractCode={currentUser.contrato} />}
           {activeTab === 'contratos' && currentUser && userHasTabAccess(currentUser, 'contratos', roleTabPermissions) && <ContratosSudeste preloadedData={globalData} />}
           {activeTab === 'nc' && currentUser && userHasTabAccess(currentUser, 'nc', roleTabPermissions) && <NaoConformidades />}
-          {activeTab === 'cronograma' && currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && <Cronograma preloadedData={globalData} />}
+          {activeTab === 'cronograma' && currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && <Cronograma preloadedData={globalData} lockedContractCode={currentUser.contrato} />}
           {activeTab === 'administracao' && currentUser?.isAdmin && (
             <Administracao
-              usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
+              usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} alocacoes={alocacoes} contratos={contratos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
               onUpdateUsuario={async (id, patch) => { const u = usuarios.find(x => x.id === id); if (u) await persistUser({ ...u, ...patch }); }}
               onToggleAdmin={async (id, checked) => { const u = usuarios.find(x => x.id === id); if (u) await persistUser({ ...u, isAdmin: checked }); }}
               onToggleTabPermission={async (id, tab) => { const u = usuarios.find(x => x.id === id); if (u) { const tabs = u.allowedTabs.includes(tab) ? u.allowedTabs.filter(t => t !== tab) : [...u.allowedTabs, tab]; await persistUser({ ...u, allowedTabs: tabs }); } }}
-              onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onAddCargo={addCargo} onRemoveCargo={removeCargo} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
+              onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onAddCargo={addCargo} onRemoveCargo={removeCargo} onAddAlocacao={addAlocacao} onRemoveAlocacao={removeAlocacao} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
             />
           )}
         </main>

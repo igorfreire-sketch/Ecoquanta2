@@ -14,6 +14,7 @@ interface CoordenacaoEngenhariaProps {
     os: string;
     disciplina: string;
   };
+  lockedContractCode?: string;
   preloadedData?: {
     registro?: any;
     cronograma?: any;
@@ -73,7 +74,7 @@ function getLatestEapDisplayDate(eap?: any) {
   return 'Nao publicada';
 }
 
-export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, subTab }: CoordenacaoEngenhariaProps) {
+export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'alocacoes', label: 'Alocacoes' },
@@ -101,7 +102,7 @@ export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, su
       <div className="pb-10">
         {subTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} />}
         {subTab === 'alocacoes' && <Alocacoes preloadedData={preloadedData} />}
-        {subTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} />}
+        {subTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} />}
         {subTab === 'matrix' && <Matrix />}
       </div>
     </div>

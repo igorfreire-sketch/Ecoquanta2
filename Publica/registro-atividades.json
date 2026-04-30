@@ -1,8 +1,226 @@
 {
-  "version": 1,
-  "algorithm": "xor-sha256-stream",
-  "nonce": "0f9c3487d97b4d0c91badafa228904b8",
-  "checksum": "103f5db1302b61639b1fb82fb3ef10b5f91d42b0986b32d6141932571beaee18",
-  "publishedAt": "2026-04-30T13:58:37.888Z",
-  "payload": "PKIHJ3PiAWthVqmpT7zRvTf8aGIlEI6iFCIMMiaJNuF8jUNhmvCLor8ZtC-F8c5uwg4cMtBWYzp-1pf6HZCURlQ4-wj-teanYHXJNrL2kQmHe2dZzVXLHpUsHmMVGc9Hjg-sAtlmH4AKiQDRV504z2MhWuUYwgb1QRKqYNWDk2dOINyocmlcgSqGx6GY1bOOqiYOo4gHKOcIqZvOyDENteoLIDz2oxrKFJA1ks0GRr8m_5YiBV97R2__gyrMgFuHP7vX-JYSQAmfpnjqK0e0naUxYfYH-a3DZWYiDUzzkdtAGXsFSnOqiyUWPZ8Ocko9JFc4Ex28Rc-zdKg3ZTkFi2hRfLcd6W0L8Do8nA8s9NzrntJFqoF1cKxXHTfVg2ZogEnULDZdkSCNsScCCnlTOkzycKlxkjyNytgIBBXVR4hjOBs0ZJj6f3I4nYLStE5Lytho1Sc2hnk7tAbsPbYCOh2Xqhe9PZjs6eW5UyKbEaxrnB6hPx6BZY24hmbvGrWbnN14KLexcRRh-ctjwuHqDmacbpqg11DDz_-AVFKWeYNZtGhE3gkhghKg9oK-MRCPOENdW-ctuTndxidx2k-T1nWqufW32sHhdJONRKzAvVciJ9d1UejrYH7mmR-JPE2dO0hVoKlzLW7bgXBr3mGdJFfvYx7lT5Si3VwISZQnR6YzDJVoFhCEJuxvK1wIPq5gPYr5c5KH8m9EdEzYIZFwEAai9uMcfAWV6y1banqqhy0xTEzBtnaRXtVim1BlM9UhgVnvFDJswaH82IPDyrCCVlYBQ12D0FgjsnyF1OZVCgRoCnkdPQURisVLUq0JmrK_TC19Zf1eYCHzEYHGdRvUrIE0eOAIdOJgKdLxPyD4MMWkPQH7sOVaTz6KC7-26dEywoaFaZ-RrJTCCDNx4owciB1Q4QFCSnm45k-8Qs_mxgH11F-Uh3gTjXdeBgwTa5TsBocqVNBUwgMQTybB9AJcAnW5mpLFABz-njgkqK9gSCwp0uzfwCCH72MYgXQTIA2K39He1rsCplVdtbmGIuYrlWkS8pg6PAraxBAKKq7x0CKKNWo7jPSu8b8Mk35_fUYNBjm8O6DuK11bwqzuRZSxnrdMR-NIG0uUWi3tZrUJMYtvCJIY2B43NfaB6hWT31N6LRIIc9Qf8HNZ6JaPXtHK2qBX2sCXfQ0PkmqFTifRTYzXqYHRgSrwK4tH8Wl35hqIvODnx7_QhmriF6KKVJ07W4nu4_4zzvmwKVX0SWL38Ykpc4pHTFlr_fWVpRQhFtuTIkjSLCeb_B15-92EOuvflbEhqaXxo323v78b7S1rsEu4NTFRrINgHEGz1_dx8RhPgOAUdQIpeel3AO5qK965-OLZFwedN_31ruLArU-qSaqpaB-Q3bKR0qStBAvxpCsnVffQM_--NGLQUB-Hj-GLA8i56n5rLeoYpH05drCEaV9ksvGe7zqckuuWu8wtV7yYQTthKzZtgveYEO0E8tVfpVjglHF_kazTLlKrb8Q26MRiSlVbwv0gXNiNzkrWkB3qcjN6BWQqu4NgS0UEGOFdnRGQvMiGETINoAumMyePsXX-mC2BKQMVH3OTh_YvkmLn5lKqT6SnqY62YXFvebOZoHkAN7L_7e1J7LNEST99L_jAXvFAy299EYsI8v8aW54izLX76mQUTOJxvkV6co3h8dEJxbkuBNPoGoNcwU8ck_-Ec0d9e1UFzpTtajoqGbh_zlI9u8AlNIMxo01WOfNx0srzYLl45BlcqXzm4oDvBqbtU2f4ZjE5V4Gb79jRPwP9BOAoaemmdfwEb7ZChJq4dNaxnHnerYaOHDns2r88CLb3eS6Hkqj2V3VXpsmUsF1GzjcW0WFNDKpjR2Z2RsPtFxiiL6Q39A7vFlwJdHUnPjcIF_VTIzMlonaqZsS3PNgYQSlwiQOjH-mCnmGVgme0ByuRvjudNx89qWAc6RXCd-ywm0OhIABJONW2tie0O3QHCNsLvQ0Y9EMTdcbpe4JCJRK94_gpnWV-PqX8J0JMXavzoNG813fQvVBJ6FGr6QI-qGkbwwuNk3SjfA3Exyc3MFBLQQ5AcqvpDccPFPULfC4gtwxKHst8FnWxaZT18tSk1gfE8uZU01Q2lIxeW5lMhapaEOlnZjJ7EX-GMSwR7xIWVAvlTRxqnaXXsBd3RcyChkWWBzj2vP0yK-7fZNRZ-H1O3shbfib26xKXGX8fxJsPKv-sgJnO3l-ifpc-Yc0cwo91JGpo-Le-nmXo1kk87HtDaPw9kqFvQt3OfjyaSP8QA3eqfpWawF-xSXDfdFDQ2aVMkE8A1GxSVcoIBw3SJxjyJIU3ahci576g_ehhV-xB4uxQnb3jxG7kJdwi3Dm4PmRhq-cJgXpr9fNj5r3-JmTg07Dr8anTNZnUS_gmplJxZY3Mv-VSvAzqeNG7GXVe1vgycd5C6V2vyEjQujGnnY-KMJBbad99FN4NKTg2KsVqyRKYndGoEbDLf7A57q8Z62qD3UthXzZkcPlS34fgEisjPZV5cNTUtzecrm__X3VmuqILD5bhFd-V-BHSwawPnsviu0dOw1PdN3X8I_GJfFYRxjtg3ueq3fJ1YQ8HWTHKJbTg2QOgCpw9-VwjeMCfeb_JROXctWa0HBhiP5D4kwI8jwCwQPgzmFR_1Rw_koPfNX-4c1IGjv9R7RDKWdaUF7_nzMjumFjfXQZDzLOisiBIN7IievaIympT6gyoxKjOD8jvoonPQFNDzBR7TSAK-o7u2g_co8B9HV3nhouwqPu5QFDvtLj7LujRJ75FPmDTr2LAsGUdy-LBcp2HKmFu_753qlErJj2VNGug_ammedTtHl-1TSWXsFagkaLPu-A42eqAZ0MYbgiYbG7TmKmDtiBNvF1IA_GaWjz3sIVyltAJXNGIkTWkqbr6btEfSqQa5q4l68Nc55tbxwl7rStUaxrmynM-cxAFzG4Yq-gJ6ufQrRKGUTCMCDY9xIFI8h4nwnkL04KJr1ldqAX4EWH0vkDduQJlOB8CPuak46YszoHHcocs5FQfHbhPikSnQYbM0BgsxtmqQvJHjqmfP4xAj7TEy4Mo0DVRVmpzpLAqZL6wbCY-auvaWmTLnvusqzE6zS-KvYCx1vsnTC4763qAdVSuQNfg1rr1di7wtvOPIYSfRe4a0h-o_z5OSRT6QNWGNNRDI_kcMLI7obfTSKRXZtLu_e30bByeQh-jtLTjzNM9F0zry3rKmFd5hD4lBengJCrpe4npcwwmf3SOZYfY8jVUSDRlJus0dyK011dVuGFIIeGGm2BpF-GqjS4EMatWmh-Ski5JStXtnMYaGaKKGxfQw0tz8RRaUxzJD7-KeXkWjEzSP4WRy-INi0Kzx7wDmf8y0fuA4B3EDZZwg4K3BegngBtyGnYMeLhZWdtDDcfUcBDTiU7Qh1TlydVaxbeRDqu6oeezPHlJ3jPDf3q93Q7tmB6kSE7ox0KBEcUHCU1WVXoBiOIH7jou8m2jxVWYXVx8nJyK9iTckaEA1jkIr1pprsznPyQl8nne7bJDslSVxqJv59-RVmorUM16fFphhiuaf9pNvHEpPcPG3mTTB80c80Pqj06PlbhMJ1S16DhNkt3TOU_QRgf8Xs6A0k8quIBGwVLDEqrcxXPlzjq-n_v5ka4ARCl8Q9CI-JYR5srHfC7RU2yJ9IpAiCC6Wrpff4j9RvLKPTLYqAjmbVpRFat__YY4yXnAsiULwEW0YtP7gJyI0vJY6y5RcA_bdq5NqJ3kPN01exZZTAPvxb5mPP4x9Kb1Q_n0qbH5fE9HTOK2G1WawJXZk5cvPts9ELVrILnYaJmsTliVRqhHoFYOeA4YI1QxSFv0PsvFiirKYrI0ghTlwPoFb_3KNHx5Jb93ZzPmHXie2eiI7KrN1a0-xBU0O1K55uNMBvAXBYF2KEY-z_tcXsiBOncjJwBzrSYzlGNKukrU-YTAL-EMWxi6yQSYI9D84Lse3_J-hqsMdl68D5h9EaF4B6DHBOSCJTggYvMKZIDp2Unh-wHCMX34fZwn-I1S0CBakV68UO-Zd9EJoWS9S3pevVJdXYsab-yChTF7qOZ8H4Z0HndGXXGmsjAk63Oz_ubkVCG2hYAmiq29bKtXNB2_aOXnA7eRzGnvgfqt4aeq9BGonCaMGX-_jVwBT_f01VAKxHEpUNiQLXltYdvEP14y5S_9d-9QgavXeWl-GOTDeMTPw1N__dQmTV37ANgYCx8ZL8cqHgbocJSM-miTIElL_LH1tJ-UMo_XsP3y7liI-omA8r0xfMTt47UZXxIxrzy1aIh90TGBu925QE--8HYf0yfTFp0vlA-G5VRFwFK1ZeGBsglRGIC2ldER9h7Wr3FoeoLlaaT-9_2R6V-GKD6Nk1jYof4g_yenoePPcZL9tYuPeOYEjH7ibQ_VjBT3sQNN2kE4tKkM7nJeLLkggOsLUh6V67cBt5njmZj0UfkHiM4ry9RZihwNUxRiQcdGCEiSgcvHvnqHppujrld0EUM24UQ4MG1o6gYGYUSDC-YrosmJf8FPOmrK4Tmuwy4SRZSNReQLlpZvOQ7pL_XSsP09Axf9UaM60rX_0IQfEFZOv1b1gp-fciBTZ5ThlS2g6caC7h7VpNEeekNoE9s2BsXrnYa6t42zG6mjSQBGTswk2ac3y0ZPIrMz4LVcayqb_OBRSKUy2iIXV3dn9xpxt0UjTzw1_JxviT9HGT5n-WEgpVIinv1ZnA0A5ugsNqnIuXGl_Oi8XMw2qJ_fKOeGypmLapk3zYGIwl0x-JpeZFj1KgtQYAsxLwKJyVNoy0afV_HhYzWrtdUsuwz6pDBQRDkHd1toIiecEYU8XaeV3D7i34pTwzVSZysdYHyAGY9V93swm2DhnYDm1bWxkXAlF07MtutPTqmdDDIur_gwXxcrWx5eifDJAtCGUSoMUnWRphpmVGK87rQzgffyM0nG3yLBtVNQgEM7EaQSyPXK29nwbg9WEFRzLVxvnZafEMhJS-Z-pwBJxVgmlE1-4HK9dRYiIMvUxv31eWrjmX8s2Hn8yKACbsTUuNGM6GzdqECVCiYfRo-vetwAvsCJmscW4a6ypICEfb7cuvoZZAybkjNyXvmWNtL7p8RBZjPF7FkaU314QRhwjHTanF3nLHNTn9EhOGl5fGy76RCyHt-VVBME2OLmmG-waCNM_mYC0cMoRVZV_JVMICo6U9KfIRKmaU24tc-gX0tyegrY1NWVyKQjmWFCUYL4RCQZ5GQhydxd0PclbY62SeAHxWZSgQxMWCRI3b2VACLaPeyGEVoFq_oXjM_J5riO5a3CBvLWEGkJIWQHVOE4lZidqsMGH4vRW3oW65mBodjjZryx50qVSristGaSgxklt_zYb4I7lLCxVfMnAcZ0U_O13p8="
+  "source": "Registrodeatividades",
+  "publishedAt": "2026-04-30T14:23:06.008Z",
+  "data": {
+    "admin": {
+      "usersByEmail": {
+        "igor_freire@quantaconsultoria_com": {
+          "id": "igor.freire@quantaconsultoria.com",
+          "data": "2026-03-10T15:36:30.000Z",
+          "nome": "Igor Freire",
+          "email": "igor.freire@quantaconsultoria.com",
+          "cargo": "Líder",
+          "role": "Líder",
+          "disciplina": "Desenvolvimento",
+          "status": "approved",
+          "allowedTabs": [
+            "registro",
+            "controle",
+            "alocacoes",
+            "contratos",
+            "nc",
+            "cronograma",
+            "administracao"
+          ],
+          "abas": [
+            "registro",
+            "controle",
+            "alocacoes",
+            "contratos",
+            "nc",
+            "cronograma",
+            "administracao"
+          ],
+          "isAdmin": true,
+          "online": true
+        },
+        "gabriel_meurer@quantaconsultoria_com": {
+          "id": "gabriel.meurer@quantaconsultoria.com",
+          "data": "2026-03-10T16:21:12.000Z",
+          "nome": "Gabriel Silveira Meurer",
+          "email": "gabriel.meurer@quantaconsultoria.com",
+          "cargo": "Líder",
+          "role": "Líder",
+          "disciplina": "Planejamento",
+          "status": "approved",
+          "allowedTabs": [
+            "registro",
+            "controle",
+            "contratos",
+            "nc",
+            "cronograma"
+          ],
+          "abas": [
+            "registro",
+            "controle",
+            "contratos",
+            "nc",
+            "cronograma"
+          ],
+          "isAdmin": false,
+          "online": false
+        },
+        "hagata_oliveira@quantaconsultoria_com": {
+          "id": "hagata.oliveira@quantaconsultoria.com",
+          "data": "2026-03-10T17:09:09.000Z",
+          "nome": "Hágata Almeida",
+          "email": "hagata.oliveira@quantaconsultoria.com",
+          "cargo": "Líder",
+          "role": "Líder",
+          "disciplina": "Desenvolvimento",
+          "status": "approved",
+          "allowedTabs": [
+            "administracao",
+            "cronograma",
+            "nc",
+            "contratos",
+            "controle",
+            "registro"
+          ],
+          "abas": [
+            "administracao",
+            "cronograma",
+            "nc",
+            "contratos",
+            "controle",
+            "registro"
+          ],
+          "isAdmin": true,
+          "online": false
+        },
+        "vinicius_delgado@quantaconsultoria_com": {
+          "id": "vinicius.delgado@quantaconsultoria.com",
+          "data": "2026-03-11T20:27:27.000Z",
+          "nome": "Vinícius Delgado",
+          "email": "vinicius.delgado@quantaconsultoria.com",
+          "cargo": "",
+          "role": "",
+          "disciplina": "",
+          "status": "approved",
+          "allowedTabs": [
+            "registro",
+            "controle",
+            "contratos",
+            "nc",
+            "cronograma",
+            "administracao"
+          ],
+          "abas": [
+            "registro",
+            "controle",
+            "contratos",
+            "nc",
+            "cronograma",
+            "administracao"
+          ],
+          "isAdmin": true,
+          "online": false
+        }
+      },
+      "cargos": [
+        "Coordenador",
+        "Líder",
+        "Técnico"
+      ],
+      "disciplinas": [
+        "Desenvolvimento",
+        "Planejamento"
+      ],
+      "databaseLinks": [
+        {
+          "id": "80f2272e-9edb-48fd-9b1e-f8be713f3484",
+          "nome": "Banco de Dados Controle Sudeste",
+          "link": "https://docs.google.com/spreadsheets/d/1k9ivrT6A5DsWGLJx3mzfMgbm_zn3YxSoZT7-beI0Pyg/edit?usp=sharing",
+          "descricao": "Banco de dados utilizado nesse site",
+          "atualizadoEm": "Tue Mar 10 2026 13:13:32 GMT-0300 (Horário Padrão de Brasília)"
+        },
+        {
+          "id": "6cd7460c-0d2b-482c-9b23-609e8d8acc95",
+          "nome": "EAP Unificada",
+          "link": "https://docs.google.com/spreadsheets/d/1MdHIEnGx3vpLlEPxy8hfayqgrLkNREpLa7lH5K71EwY/edit?usp=sharing",
+          "descricao": "EAPS Unificadas",
+          "atualizadoEm": "Tue Mar 10 2026 14:26:08 GMT-0300 (Horário Padrão de Brasília)"
+        }
+      ],
+      "roleTabPermissions": {
+        "Coordenador": []
+      }
+    },
+    "registro": {
+      "contracts": [],
+      "osOptions": [],
+      "itemOptions": [],
+      "hierarchyNodes": [],
+      "childrenByParent": {},
+      "rootCodes": [],
+      "activitiesList": [],
+      "professionalsByDisciplina": {
+        "Desenvolvimento": [
+          {
+            "nome": "Igor Freire",
+            "email": "igor.freire@quantaconsultoria.com",
+            "cargo": "Líder",
+            "disciplina": "Desenvolvimento"
+          },
+          {
+            "nome": "Hágata Almeida",
+            "email": "hagata.oliveira@quantaconsultoria.com",
+            "cargo": "Líder",
+            "disciplina": "Desenvolvimento"
+          }
+        ],
+        "Planejamento": [
+          {
+            "nome": "Gabriel Silveira Meurer",
+            "email": "gabriel.meurer@quantaconsultoria.com",
+            "cargo": "Líder",
+            "disciplina": "Planejamento"
+          }
+        ],
+        "Sem disciplina": [
+          {
+            "nome": "Vinícius Delgado",
+            "email": "vinicius.delgado@quantaconsultoria.com",
+            "cargo": "",
+            "disciplina": ""
+          }
+        ]
+      },
+      "usersSummary": [
+        {
+          "nome": "Igor Freire",
+          "email": "igor.freire@quantaconsultoria.com",
+          "role": "Líder",
+          "disciplina": "Desenvolvimento",
+          "status": "approved",
+          "isAdmin": true
+        },
+        {
+          "nome": "Gabriel Silveira Meurer",
+          "email": "gabriel.meurer@quantaconsultoria.com",
+          "role": "Líder",
+          "disciplina": "Planejamento",
+          "status": "approved",
+          "isAdmin": false
+        },
+        {
+          "nome": "Hágata Almeida",
+          "email": "hagata.oliveira@quantaconsultoria.com",
+          "role": "Líder",
+          "disciplina": "Desenvolvimento",
+          "status": "approved",
+          "isAdmin": true
+        },
+        {
+          "nome": "Vinícius Delgado",
+          "email": "vinicius.delgado@quantaconsultoria.com",
+          "role": "",
+          "disciplina": "",
+          "status": "approved",
+          "isAdmin": true
+        }
+      ]
+    },
+    "cronograma": []
+  }
 }

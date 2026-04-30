@@ -1,6 +1,6 @@
 {
   "source": "Registrodeatividades",
-  "publishedAt": "2026-04-30T15:42:56.967Z",
+  "publishedAt": "2026-04-30T15:45:31.720Z",
   "data": {
     "admin": {
       "usersByEmail": {
@@ -13,6 +13,8 @@
           "role": "Líder",
           "disciplina": "Desenvolvimento",
           "status": "approved",
+          "alocacao": "",
+          "contrato": "",
           "allowedTabs": [
             "registro",
             "controle",
@@ -43,6 +45,8 @@
           "role": "Líder",
           "disciplina": "Planejamento",
           "status": "approved",
+          "alocacao": "",
+          "contrato": "",
           "allowedTabs": [
             "registro",
             "controle",
@@ -69,6 +73,8 @@
           "role": "Líder",
           "disciplina": "Desenvolvimento",
           "status": "approved",
+          "alocacao": "",
+          "contrato": "",
           "allowedTabs": [
             "administracao",
             "cronograma",
@@ -97,6 +103,8 @@
           "role": "",
           "disciplina": "",
           "status": "approved",
+          "alocacao": "",
+          "contrato": "",
           "allowedTabs": [
             "registro",
             "controle",
@@ -127,20 +135,21 @@
         "Desenvolvimento",
         "Planejamento"
       ],
+      "alocacoes": [],
       "databaseLinks": [
         {
           "id": "80f2272e-9edb-48fd-9b1e-f8be713f3484",
           "nome": "Banco de Dados Controle Sudeste",
           "link": "https://docs.google.com/spreadsheets/d/1k9ivrT6A5DsWGLJx3mzfMgbm_zn3YxSoZT7-beI0Pyg/edit?usp=sharing",
           "descricao": "Banco de dados utilizado nesse site",
-          "atualizadoEm": "Tue Mar 10 2026 13:13:32 GMT-0300 (Hora padrão de Brasília)"
+          "atualizadoEm": "Tue Mar 10 2026 13:13:32 GMT-0300 (Horário Padrão de Brasília)"
         },
         {
           "id": "6cd7460c-0d2b-482c-9b23-609e8d8acc95",
           "nome": "EAP Unificada",
           "link": "https://docs.google.com/spreadsheets/d/1MdHIEnGx3vpLlEPxy8hfayqgrLkNREpLa7lH5K71EwY/edit?usp=sharing",
           "descricao": "EAPS Unificadas",
-          "atualizadoEm": "Tue Mar 10 2026 14:26:08 GMT-0300 (Hora padrão de Brasília)"
+          "atualizadoEm": "Tue Mar 10 2026 14:26:08 GMT-0300 (Horário Padrão de Brasília)"
         }
       ],
       "roleTabPermissions": {
@@ -188,13 +197,15 @@
             "nome": "Igor Freire",
             "email": "igor.freire@quantaconsultoria.com",
             "cargo": "Líder",
-            "disciplina": "Desenvolvimento"
+            "disciplina": "Desenvolvimento",
+            "alocacao": ""
           },
           {
             "nome": "Hágata Almeida",
             "email": "hagata.oliveira@quantaconsultoria.com",
             "cargo": "Líder",
-            "disciplina": "Desenvolvimento"
+            "disciplina": "Desenvolvimento",
+            "alocacao": ""
           }
         ],
         "Planejamento": [
@@ -202,7 +213,8 @@
             "nome": "Gabriel Silveira Meurer",
             "email": "gabriel.meurer@quantaconsultoria.com",
             "cargo": "Líder",
-            "disciplina": "Planejamento"
+            "disciplina": "Planejamento",
+            "alocacao": ""
           }
         ],
         "Sem disciplina": [
@@ -210,7 +222,8 @@
             "nome": "Vinícius Delgado",
             "email": "vinicius.delgado@quantaconsultoria.com",
             "cargo": "",
-            "disciplina": ""
+            "disciplina": "",
+            "alocacao": ""
           }
         ]
       },
@@ -220,6 +233,8 @@
           "email": "igor.freire@quantaconsultoria.com",
           "role": "Líder",
           "disciplina": "Desenvolvimento",
+          "alocacao": "",
+          "contrato": "",
           "status": "approved",
           "isAdmin": true
         },
@@ -228,6 +243,8 @@
           "email": "gabriel.meurer@quantaconsultoria.com",
           "role": "Líder",
           "disciplina": "Planejamento",
+          "alocacao": "",
+          "contrato": "",
           "status": "approved",
           "isAdmin": false
         },
@@ -236,6 +253,8 @@
           "email": "hagata.oliveira@quantaconsultoria.com",
           "role": "Líder",
           "disciplina": "Desenvolvimento",
+          "alocacao": "",
+          "contrato": "",
           "status": "approved",
           "isAdmin": true
         },
@@ -244,6 +263,8 @@
           "email": "vinicius.delgado@quantaconsultoria.com",
           "role": "",
           "disciplina": "",
+          "alocacao": "",
+          "contrato": "",
           "status": "approved",
           "isAdmin": true
         }

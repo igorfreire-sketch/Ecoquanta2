@@ -1,6 +1,6 @@
 {
   "source": "Registrodeatividades",
-  "publishedAt": "2026-04-30T14:48:11.814Z",
+  "publishedAt": "2026-04-30T14:54:27.194Z",
   "data": {
     "admin": {
       "usersByEmail": {
@@ -86,7 +86,7 @@
             "registro"
           ],
           "isAdmin": true,
-          "online": false
+          "online": true
         },
         "vinicius_delgado@quantaconsultoria_com": {
           "id": "vinicius.delgado@quantaconsultoria.com",
@@ -132,14 +132,14 @@
           "nome": "Banco de Dados Controle Sudeste",
           "link": "https://docs.google.com/spreadsheets/d/1k9ivrT6A5DsWGLJx3mzfMgbm_zn3YxSoZT7-beI0Pyg/edit?usp=sharing",
           "descricao": "Banco de dados utilizado nesse site",
-          "atualizadoEm": "Tue Mar 10 2026 13:13:32 GMT-0300 (Brasilia Standard Time)"
+          "atualizadoEm": "Tue Mar 10 2026 13:13:32 GMT-0300 (Hora padrão de Brasília)"
         },
         {
           "id": "6cd7460c-0d2b-482c-9b23-609e8d8acc95",
           "nome": "EAP Unificada",
           "link": "https://docs.google.com/spreadsheets/d/1MdHIEnGx3vpLlEPxy8hfayqgrLkNREpLa7lH5K71EwY/edit?usp=sharing",
           "descricao": "EAPS Unificadas",
-          "atualizadoEm": "Tue Mar 10 2026 14:26:08 GMT-0300 (Brasilia Standard Time)"
+          "atualizadoEm": "Tue Mar 10 2026 14:26:08 GMT-0300 (Hora padrão de Brasília)"
         }
       ],
       "roleTabPermissions": {
@@ -153,7 +153,34 @@
       "hierarchyNodes": [],
       "childrenByParent": {},
       "rootCodes": [],
-      "activitiesList": [],
+      "activitiesList": [
+        {
+          "activityId": "a98520b4-1bab-4689-8b99-8014fb5f4dce",
+          "dataRegistro": "2026-04-30T14:53:55.000Z",
+          "criadoPorNome": "Igor Freire",
+          "criadoPorEmail": "igor.freire@quantaconsultoria.com",
+          "criadoPorRole": "Líder",
+          "criadoPorDisciplina": "Desenvolvimento",
+          "contratoCodigo": 2,
+          "contratoNome": "MRK 013/2024",
+          "osCodigo": "2026-01-02T03:00:00.000Z",
+          "osNome": "OS 012 - VLT",
+          "itemCodigo": "2005-01-02T02:00:00.000Z",
+          "itemNome": "TERMINAL ITAIPUAÇU (EXISTENTE)",
+          "setor": "Engenharia",
+          "profissionais": "Hágata Almeida",
+          "profissionaisEmails": "hagata.oliveira@quantaconsultoria.com",
+          "dificuldade": "Moderada",
+          "descricao": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "avancoAtual": 0,
+          "avaliacaoAtual": "",
+          "observacaoAtual": "",
+          "status": "em_andamento",
+          "data100": "",
+          "dataConclusaoEfetiva": "",
+          "ultimaAtualizacao": "2026-04-30T14:53:55.000Z"
+        }
+      ],
       "professionalsByDisciplina": {
         "Desenvolvimento": [
           {

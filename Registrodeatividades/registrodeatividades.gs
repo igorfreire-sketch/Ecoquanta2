@@ -10,10 +10,7 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
-    .addItem('Sincronizar tudo agora', 'syncAllPublicJsonNow')
-    .addItem('Sincronizar Registro agora', 'publishFullDatabaseToPublicJsonNow')
-    .addItem('Agendar sincronizacao completa', 'scheduleFullPublicJsonRefresh')
-    .addItem('Configurar Triggers', 'setupPublicJsonAutoPublishTriggers')
+    .addItem('Atualizar', 'syncAllPublicJsonNow')
     .addToUi();
 }
 
@@ -970,7 +967,10 @@ function getUnifiedEapPublicDataSafe_() {
     if (status < 200 || status >= 300) return null;
 
     var envelope = JSON.parse(response.getContentText() || "{}");
-    var payload = decryptPayloadEnvelope_(envelope, getJsonCryptoKey_());
+    var payload = decryptPayloadEnvelope_(
+      envelope,
+      envelope && envelope.algorithm === "xor-sha256-stream" ? getJsonCryptoKey_() : ""
+    );
 
     return payload && payload.data ? payload.data : null;
   } catch (e) {
@@ -1019,10 +1019,10 @@ function buildEapStructuredDataFromSimpleRows_(rows) {
     if (node.tipo === 'contrato') {
       contracts.push({ codigo: node.codigo, nome: node.nome });
     }
-    if (node.tipo === 'os' && node.contratoCodigo && node.parentCodigo === node.contratoCodigo) {
+    if (node.tipo === 'os' && node.contratoCodigo) {
       osOptions.push({ codigo: node.codigo, nome: node.nome, contratoCodigo: node.contratoCodigo });
     }
-    if (node.tipo === 'item' && node.osCodigo && node.parentCodigo === node.osCodigo) {
+    if (node.tipo === 'item' && node.osCodigo) {
       itemOptions.push({ codigo: node.codigo, nome: node.nome, osCodigo: node.osCodigo });
     }
   }
@@ -1626,6 +1626,7 @@ function publishFullDatabaseToPublicJsonNow() {
 }
 
 function syncAllPublicJsonNow() {
+  ensurePublicJsonAutoPublishTriggers_();
   cleanupPublicJsonPublishTriggers_();
   cleanupFullPublicJsonRefreshTriggers_();
   PropertiesService.getScriptProperties().deleteProperty('pending_registro_publish_at');
@@ -1636,20 +1637,49 @@ function syncAllPublicJsonNow() {
 }
 
 function setupPublicJsonAutoPublishTriggers() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  deleteAllProjectTriggers_();
-
-  ScriptApp.newTrigger("handlePublicJsonSpreadsheetEdit")
-    .forSpreadsheet(ss)
-    .onEdit()
-    .create();
-
-  ScriptApp.newTrigger("publishFullDatabaseToPublicJson")
-    .timeBased()
-    .everyMinutes(5)
-    .create();
-
+  ensurePublicJsonAutoPublishTriggers_();
   return "Publicacao automatica configurada.";
+}
+
+function ensurePublicJsonAutoPublishTriggers_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var triggers = ScriptApp.getProjectTriggers();
+  var hasEdit = false;
+  var hasChange = false;
+  var hasPeriodic = false;
+
+  for (var i = 0; i < triggers.length; i++) {
+    var trigger = triggers[i];
+    var handler = trigger.getHandlerFunction();
+    if (handler === "handlePublicJsonSpreadsheetEdit") hasEdit = true;
+    if (handler === "handlePublicJsonSpreadsheetChange") hasChange = true;
+    if (handler === "publishFullDatabaseToPublicJson") hasPeriodic = true;
+  }
+
+  if (!hasEdit) {
+    ScriptApp.newTrigger("handlePublicJsonSpreadsheetEdit")
+      .forSpreadsheet(ss)
+      .onEdit()
+      .create();
+  }
+
+  if (!hasChange) {
+    ScriptApp.newTrigger("handlePublicJsonSpreadsheetChange")
+      .forSpreadsheet(ss)
+      .onChange()
+      .create();
+  }
+
+  if (!hasPeriodic) {
+    ScriptApp.newTrigger("publishFullDatabaseToPublicJson")
+      .timeBased()
+      .everyMinutes(5)
+      .create();
+  }
+}
+
+function handlePublicJsonSpreadsheetChange(e) {
+  schedulePublicJsonPublish_();
 }
 
 function deleteAllProjectTriggers() {
@@ -1866,7 +1896,6 @@ function fetchRegistroAtividadesPayloadFromGit_() {
   var url = String(props.getProperty("git_registro") || "").trim();
   if (!url) throw new Error('Propriedade "git_registro" nao configurada.');
 
-  var cryptoKey = getJsonCryptoKey_();
   var response = UrlFetchApp.fetch(url, {
     method: "get",
     muteHttpExceptions: true,
@@ -1879,7 +1908,10 @@ function fetchRegistroAtividadesPayloadFromGit_() {
   }
 
   var envelope = JSON.parse(response.getContentText() || "{}");
-  return decryptPayloadEnvelope_(envelope, cryptoKey);
+  return decryptPayloadEnvelope_(
+    envelope,
+    envelope && envelope.algorithm === "xor-sha256-stream" ? getJsonCryptoKey_() : ""
+  );
 }
 
 function getAllActivitiesForPublicJson_(ss) {
@@ -1951,8 +1983,7 @@ function getUsersSummaryForJson_(values, header) {
 
 function publishEncryptedJsonToGithub_(fileName, payloadObj) {
   var cfg = getGithubPublisherConfig_();
-  var envelope = encryptPayloadEnvelope_(payloadObj, cfg.cryptoKey);
-  var body = JSON.stringify(envelope, null, 2);
+  var body = JSON.stringify(payloadObj, null, 2);
   var url = buildGithubContentsUrl_(cfg.githubApi, PUBLIC_JSON_FOLDER, fileName);
   writeGithubFile_(url, body, cfg.githubToken, cfg.githubBranch, "Atualiza " + PUBLIC_JSON_FOLDER + "/" + fileName);
 }
@@ -1961,7 +1992,6 @@ function getGithubPublisherConfig_() {
   var props = PropertiesService.getScriptProperties();
   var githubApi = String(props.getProperty("github_api") || "").trim();
   var githubToken = String(props.getProperty("github_token") || "").trim();
-  var cryptoKey = getJsonCryptoKey_();
   var githubBranch = String(props.getProperty("github_branch") || "main").trim();
 
   if (!githubApi) throw new Error('Propriedade "github_api" nao configurada.');
@@ -1970,7 +2000,6 @@ function getGithubPublisherConfig_() {
   return {
     githubApi: githubApi,
     githubToken: githubToken,
-    cryptoKey: cryptoKey,
     githubBranch: githubBranch
   };
 }
@@ -2056,6 +2085,10 @@ function encryptPayloadEnvelope_(payloadObj, cryptoKey) {
 }
 
 function decryptPayloadEnvelope_(envelope, cryptoKey) {
+  if (envelope && typeof envelope === "object" && !envelope.algorithm && envelope.data !== undefined) {
+    return envelope;
+  }
+
   if (!envelope || envelope.algorithm !== "xor-sha256-stream") {
     throw new Error("Formato de JSON criptografado nao suportado.");
   }

@@ -400,8 +400,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
 
   const selectedContract = useMemo(() => contracts.find((c) => c.codigo === formData.contratoCodigo), [contracts, formData.contratoCodigo]);
   const filteredOs = useMemo(() => {
-    const children = childrenByParent[formData.contratoCodigo] || [];
-    if (children.length > 0) return children.filter((item) => item.tipo === 'os' && isOrderServiceName(item.nome || item.codigo));
     return osOptions.filter((item) => item.contratoCodigo === formData.contratoCodigo).map((item) => ({
       ...item,
       tipo: 'os' as const,
@@ -409,11 +407,9 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       parentCodigo: item.contratoCodigo,
       osCodigo: item.codigo,
     })).filter((item) => isOrderServiceName(item.nome || item.codigo));
-  }, [childrenByParent, osOptions, formData.contratoCodigo]);
+  }, [osOptions, formData.contratoCodigo]);
   const selectedOs = useMemo(() => filteredOs.find((item) => item.codigo === formData.osCodigo), [filteredOs, formData.osCodigo]);
   const filteredItems = useMemo(() => {
-    const children = childrenByParent[formData.osCodigo] || [];
-    if (children.length > 0) return children.filter((item) => item.tipo === 'item');
     return itemOptions.filter((item) => item.osCodigo === formData.osCodigo).map((item) => ({
       ...item,
       tipo: 'item' as const,
@@ -421,7 +417,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       parentCodigo: item.osCodigo,
       contratoCodigo: item.osCodigo.split('.')[0] || '',
     }));
-  }, [childrenByParent, itemOptions, formData.osCodigo]);
+  }, [itemOptions, formData.osCodigo]);
 
   const filteredActivities = useMemo(() => {
     const term = searchText.trim().toLowerCase();

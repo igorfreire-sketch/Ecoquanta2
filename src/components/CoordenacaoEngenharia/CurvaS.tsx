@@ -78,8 +78,8 @@ function formatLabel(dateObj: Date | null, viewMode: string): string {
   if (!dateObj || Number.isNaN(dateObj.getTime())) return '-';
   const d = String(dateObj.getDate()).padStart(2, '0');
   const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const y = String(dateObj.getFullYear()).slice(-2);
-  return viewMode === 'semanal' ? `${d}/${m}` : `${m}/${y}`;
+  const y = String(dateObj.getFullYear());
+  return `${d}/${m}/${y}`;
 }
 
 function normalizeKey(value: any) {

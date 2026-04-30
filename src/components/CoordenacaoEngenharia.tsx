@@ -27,7 +27,6 @@ interface CoordenacaoEngenhariaProps {
 function formatLatestEapDate(value?: string) {
   const raw = String(value || '').trim();
   if (!raw) return 'Nao publicada';
-  if (/^(atual|eap|reajustado)$/i.test(raw)) return 'Nao publicada';
 
   const parsedDate = new Date(raw);
   if (raw.includes('T') && !Number.isNaN(parsedDate.getTime())) {
@@ -55,13 +54,13 @@ function getLatestEapDisplayDate(eap?: any) {
     ? resolvedEap.dates[resolvedEap.dates.length - 1]
     : '';
   const candidates = [
-    lastSnapshotSheet,
-    resolvedEap?.latestEapSheet,
     resolvedEap?.latestEapDate,
+    resolvedEap?.latestEapSheet,
+    lastSnapshotSheet,
     resolvedEap?.latestEapPublishedAt,
     resolvedEap?.publishedAt,
-    eap?.latestEapSheet,
     eap?.latestEapDate,
+    eap?.latestEapSheet,
     eap?.latestEapPublishedAt,
     eap?.publishedAt,
   ];

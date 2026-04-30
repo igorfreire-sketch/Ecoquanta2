@@ -109,6 +109,9 @@ function applyUnifiedEapData(data: GlobalData, eapData: any): GlobalData {
       contracts: Array.isArray(eapData.registro.contracts) ? eapData.registro.contracts : next.registro?.contracts,
       osOptions: Array.isArray(eapData.registro.osOptions) ? eapData.registro.osOptions : next.registro?.osOptions,
       itemOptions: Array.isArray(eapData.registro.itemOptions) ? eapData.registro.itemOptions : next.registro?.itemOptions,
+      hierarchyNodes: Array.isArray(eapData.registro.hierarchyNodes) ? eapData.registro.hierarchyNodes : next.registro?.hierarchyNodes,
+      childrenByParent: eapData.registro.childrenByParent && typeof eapData.registro.childrenByParent === 'object' ? eapData.registro.childrenByParent : next.registro?.childrenByParent,
+      rootCodes: Array.isArray(eapData.registro.rootCodes) ? eapData.registro.rootCodes : next.registro?.rootCodes,
     };
   }
 

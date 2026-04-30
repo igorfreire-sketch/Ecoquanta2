@@ -7,10 +7,7 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
-    .addItem('Sincronizar tudo agora', 'syncAllPublicJsonNow')
-    .addItem('Sincronizar Curva S agora', 'publishCompressedDataToPublicJsonNow')
-    .addItem('Agendar sincronizacao completa', 'scheduleFullPublicJsonRefresh')
-    .addItem('Configurar Triggers', 'setupProjectTriggers')
+    .addItem('Atualizar', 'syncAllPublicJsonNow')
     .addToUi();
 }
 
@@ -38,6 +35,11 @@ function getAppVersion_() {
 // --- TRIGGERS ---
 
 function handleSpreadsheetEdit(e) {
+  updateVersion_();
+  scheduleCompressedDataPublicJson_(30 * 1000);
+}
+
+function handleSpreadsheetChange(e) {
   updateVersion_();
   scheduleCompressedDataPublicJson_(30 * 1000);
 }
@@ -114,6 +116,7 @@ function publishCompressedDataToPublicJsonNow() {
 }
 
 function syncAllPublicJsonNow() {
+  ensureProjectTriggers_();
   cleanupCompressedDataPublishTriggers_();
   cleanupFullPublicJsonRefreshTriggers_();
   PropertiesService.getScriptProperties().deleteProperty('pending_eap_publish_at');
@@ -124,22 +127,45 @@ function syncAllPublicJsonNow() {
 }
 
 function setupProjectTriggers() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  deleteAllProjectTriggers_();
-
-  // Trigger instalavel: publica quando a planilha for editada.
-  ScriptApp.newTrigger("handleSpreadsheetEdit")
-    .forSpreadsheet(ss)
-    .onEdit()
-    .create();
-
-  // Trigger automatico: republica a cada 30 minutos.
-  ScriptApp.newTrigger("publishCompressedDataToPublicJson")
-    .timeBased()
-    .everyMinutes(5)
-    .create();
-
+  ensureProjectTriggers_();
   return "Triggers configurados com sucesso.";
+}
+
+function ensureProjectTriggers_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var triggers = ScriptApp.getProjectTriggers();
+  var hasEdit = false;
+  var hasChange = false;
+  var hasPeriodic = false;
+
+  for (var i = 0; i < triggers.length; i++) {
+    var trigger = triggers[i];
+    var handler = trigger.getHandlerFunction();
+    if (handler === "handleSpreadsheetEdit") hasEdit = true;
+    if (handler === "handleSpreadsheetChange") hasChange = true;
+    if (handler === "publishCompressedDataToPublicJson") hasPeriodic = true;
+  }
+
+  if (!hasEdit) {
+    ScriptApp.newTrigger("handleSpreadsheetEdit")
+      .forSpreadsheet(ss)
+      .onEdit()
+      .create();
+  }
+
+  if (!hasChange) {
+    ScriptApp.newTrigger("handleSpreadsheetChange")
+      .forSpreadsheet(ss)
+      .onChange()
+      .create();
+  }
+
+  if (!hasPeriodic) {
+    ScriptApp.newTrigger("publishCompressedDataToPublicJson")
+      .timeBased()
+      .everyMinutes(5)
+      .create();
+  }
 }
 
 function deleteAllProjectTriggers() {
@@ -623,14 +649,14 @@ function getEapStructuredDataFromRows_(rows) {
 
   for (var os = 0; os < hierarchy.nodes.length; os++) {
     var osNode = hierarchy.nodes[os];
-    if (osNode.tipo === 'os' && osNode.contratoCodigo && osNode.parentCodigo === osNode.contratoCodigo) {
+    if (osNode.tipo === 'os' && osNode.contratoCodigo) {
       osOptions.push({ codigo: osNode.codigo, nome: osNode.nome, contratoCodigo: osNode.contratoCodigo });
     }
   }
 
   for (var j = 0; j < hierarchy.nodes.length; j++) {
     var itemNode = hierarchy.nodes[j];
-    if (itemNode.tipo === 'item' && itemNode.osCodigo && itemNode.parentCodigo === itemNode.osCodigo) {
+    if (itemNode.tipo === 'item' && itemNode.osCodigo) {
       itemOptions.push({ codigo: itemNode.codigo, nome: itemNode.nome, osCodigo: itemNode.osCodigo });
     }
   }
@@ -932,9 +958,7 @@ function parseSimpleDate_(name) {
 
 function publishEncryptedJsonToGithub_(fileName, payloadObj) {
   var cfg = getGithubPublisherConfig_();
-
-  var envelope = encryptPayloadEnvelope_(payloadObj, cfg.cryptoKey);
-  var body = JSON.stringify(envelope, null, 2);
+  var body = JSON.stringify(payloadObj, null, 2);
 
   var url = buildGithubContentsUrl_(
     cfg.githubApi,
@@ -956,12 +980,6 @@ function getGithubPublisherConfig_() {
 
   var githubApi = String(props.getProperty("github_api") || "").trim();
   var githubToken = String(props.getProperty("github_token") || "").trim();
-  var cryptoKey = String(
-    props.getProperty("json_crypto_key") ||
-    props.getProperty("crypto_key") ||
-    ""
-  ).trim();
-
   var githubBranch = String(props.getProperty("github_branch") || "main").trim();
 
   if (!githubApi) {
@@ -972,14 +990,9 @@ function getGithubPublisherConfig_() {
     throw new Error('Propriedade "github_token" nao configurada.');
   }
 
-  if (!cryptoKey) {
-    throw new Error('Propriedade "json_crypto_key" nao configurada.');
-  }
-
   return {
     githubApi: githubApi,
     githubToken: githubToken,
-    cryptoKey: cryptoKey,
     githubBranch: githubBranch
   };
 }

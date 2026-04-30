@@ -103,7 +103,19 @@ async function decryptEnvelope<T>(envelope: EncryptedJsonEnvelope): Promise<T> {
   return JSON.parse(plainText) as T;
 }
 
+function isEncryptedEnvelope(value: unknown): value is EncryptedJsonEnvelope {
+  if (!value || typeof value !== 'object') return false;
+  const envelope = value as Partial<EncryptedJsonEnvelope>;
+  return envelope.algorithm === 'xor-sha256-stream' && typeof envelope.payload === 'string';
+}
+
+const publicJsonPromiseCache = new Map<string, Promise<any>>();
+
 export async function fetchPublicJson<T>(fileName: string): Promise<T> {
+  const cachedPromise = publicJsonPromiseCache.get(fileName);
+  if (cachedPromise) return cachedPromise as Promise<T>;
+
+  const requestPromise = (async () => {
   const errors: string[] = [];
 
   for (const url of getPublicJsonUrls(fileName)) {
@@ -114,14 +126,25 @@ export async function fetchPublicJson<T>(fileName: string): Promise<T> {
         continue;
       }
 
-      const envelope = await response.json() as EncryptedJsonEnvelope;
-      return await decryptEnvelope<T>(envelope);
+      const payload = await response.json();
+      if (isEncryptedEnvelope(payload)) {
+        return await decryptEnvelope<T>(payload);
+      }
+      return payload as T;
     } catch (error) {
       errors.push(`${url}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   throw new Error(`Falha ao carregar ${fileName}. Tentativas: ${errors.join(' | ')}`);
+  })();
+
+  publicJsonPromiseCache.set(fileName, requestPromise);
+  try {
+    return await requestPromise as T;
+  } finally {
+    publicJsonPromiseCache.delete(fileName);
+  }
 }
 
 export async function fetchRegistroPublicData<T>() {

@@ -1,6 +1,6 @@
 {
   "source": "Registrodeatividades",
-  "publishedAt": "2026-04-30T17:57:34.948Z",
+  "publishedAt": "2026-04-30T17:58:35.454Z",
   "data": {
     "admin": {
       "usersByEmail": {
@@ -144,14 +144,14 @@
           "nome": "Banco de Dados Controle Sudeste",
           "link": "https://docs.google.com/spreadsheets/d/1k9ivrT6A5DsWGLJx3mzfMgbm_zn3YxSoZT7-beI0Pyg/edit?usp=sharing",
           "descricao": "Banco de dados utilizado nesse site",
-          "atualizadoEm": "Tue Mar 10 2026 13:13:32 GMT-0300 (Hora padrão de Brasília)"
+          "atualizadoEm": "Tue Mar 10 2026 13:13:32 GMT-0300 (Horário Padrão de Brasília)"
         },
         {
           "id": "6cd7460c-0d2b-482c-9b23-609e8d8acc95",
           "nome": "EAP Unificada",
           "link": "https://docs.google.com/spreadsheets/d/1MdHIEnGx3vpLlEPxy8hfayqgrLkNREpLa7lH5K71EwY/edit?usp=sharing",
           "descricao": "EAPS Unificadas",
-          "atualizadoEm": "Tue Mar 10 2026 14:26:08 GMT-0300 (Hora padrão de Brasília)"
+          "atualizadoEm": "Tue Mar 10 2026 14:26:08 GMT-0300 (Horário Padrão de Brasília)"
         }
       ],
       "roleTabPermissions": {

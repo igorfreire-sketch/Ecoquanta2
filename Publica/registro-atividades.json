@@ -1,6 +1,6 @@
 {
   "source": "Registrodeatividades",
-  "publishedAt": "2026-04-30T16:58:36.728Z",
+  "publishedAt": "2026-04-30T17:27:22.916Z",
   "data": {
     "admin": {
       "usersByEmail": {
@@ -99,8 +99,8 @@
           "data": "2026-03-11T20:27:27.000Z",
           "nome": "Vinícius Delgado",
           "email": "vinicius.delgado@quantaconsultoria.com",
-          "cargo": "",
-          "role": "",
+          "cargo": "Coordenador",
+          "role": "Coordenador",
           "disciplina": "",
           "status": "approved",
           "alocacao": "",
@@ -108,6 +108,7 @@
           "allowedTabs": [
             "registro",
             "controle",
+            "alocacoes",
             "contratos",
             "nc",
             "cronograma",
@@ -116,13 +117,14 @@
           "abas": [
             "registro",
             "controle",
+            "alocacoes",
             "contratos",
             "nc",
             "cronograma",
             "administracao"
           ],
           "isAdmin": true,
-          "online": false
+          "online": true
         }
       },
       "cargos": [
@@ -221,7 +223,7 @@
           {
             "nome": "Vinícius Delgado",
             "email": "vinicius.delgado@quantaconsultoria.com",
-            "cargo": "",
+            "cargo": "Coordenador",
             "disciplina": "",
             "alocacao": ""
           }
@@ -261,7 +263,7 @@
         {
           "nome": "Vinícius Delgado",
           "email": "vinicius.delgado@quantaconsultoria.com",
-          "role": "",
+          "role": "Coordenador",
           "disciplina": "",
           "alocacao": "",
           "contrato": "",

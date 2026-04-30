@@ -7,8 +7,9 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
-    .addItem('Atualizar todos os JSONs', 'scheduleFullPublicJsonRefresh')
-    .addItem('Publicar Curva S em JSON', 'publishCompressedDataToPublicJson')
+    .addItem('Sincronizar tudo agora', 'syncAllPublicJsonNow')
+    .addItem('Sincronizar Curva S agora', 'publishCompressedDataToPublicJsonNow')
+    .addItem('Agendar sincronizacao completa', 'scheduleFullPublicJsonRefresh')
     .addItem('Configurar Triggers', 'setupProjectTriggers')
     .addToUi();
 }
@@ -47,20 +48,15 @@ function scheduleCompressedDataPublicJson() {
 }
 
 function scheduleCompressedDataPublicJson_(delayMs) {
-  var cache = CacheService.getScriptCache();
   var waitMs = delayMs || 30 * 1000;
-  var lockTtlSeconds = Math.max(30, Math.ceil(waitMs / 1000) + 30);
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('pending_eap_publish_at', String(Date.now() + waitMs));
+  cleanupCompressedDataPublishTriggers_();
 
-  // Evita varias publicacoes em sequencia quando houver muitas edicoes.
-  if (!cache.get("isPublishingPublicJson")) {
-    cache.put("isPublishingPublicJson", "true", lockTtlSeconds);
-    cleanupCompressedDataPublishTriggers_();
-
-    ScriptApp.newTrigger("publishCompressedDataToPublicJsonByTrigger")
-      .timeBased()
-      .after(waitMs)
-      .create();
-  }
+  ScriptApp.newTrigger("publishCompressedDataToPublicJsonByTrigger")
+    .timeBased()
+    .after(waitMs)
+    .create();
 }
 
 function scheduleFullPublicJsonRefresh() {
@@ -89,11 +85,42 @@ function runFullPublicJsonRefreshByTrigger() {
 }
 
 function publishCompressedDataToPublicJsonByTrigger() {
+  var props = PropertiesService.getScriptProperties();
+  var dueAt = Number(props.getProperty('pending_eap_publish_at') || 0);
+  var remainingMs = dueAt - Date.now();
+
+  if (remainingMs > 5000) {
+    cleanupCompressedDataPublishTriggers_();
+    ScriptApp.newTrigger("publishCompressedDataToPublicJsonByTrigger")
+      .timeBased()
+      .after(remainingMs)
+      .create();
+    return "Publicacao da EAP reagendada.";
+  }
+
+  props.deleteProperty('pending_eap_publish_at');
   try {
     return publishCompressedDataToPublicJson();
   } finally {
     cleanupCompressedDataPublishTriggers_();
   }
+}
+
+function publishCompressedDataToPublicJsonNow() {
+  cleanupCompressedDataPublishTriggers_();
+  PropertiesService.getScriptProperties().deleteProperty('pending_eap_publish_at');
+  var version = publishCompressedDataToPublicJson();
+  return "EAP publicada agora. Versao: " + version;
+}
+
+function syncAllPublicJsonNow() {
+  cleanupCompressedDataPublishTriggers_();
+  cleanupFullPublicJsonRefreshTriggers_();
+  PropertiesService.getScriptProperties().deleteProperty('pending_eap_publish_at');
+
+  var version = publishCompressedDataToPublicJson();
+  var registroResult = requestRegistroImmediateSync_();
+  return "EAP publicada agora (" + version + "). " + registroResult;
 }
 
 function setupProjectTriggers() {
@@ -109,7 +136,7 @@ function setupProjectTriggers() {
   // Trigger automatico: republica a cada 30 minutos.
   ScriptApp.newTrigger("publishCompressedDataToPublicJson")
     .timeBased()
-    .everyMinutes(30)
+    .everyMinutes(5)
     .create();
 
   return "Triggers configurados com sucesso.";
@@ -172,6 +199,33 @@ function scheduleRegistroPublicJsonPublish_() {
     return "Publicacao do Registro agendada.";
   } catch (err) {
     return "Registro nao agendado: " + String(err);
+  }
+}
+
+function requestRegistroImmediateSync_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var url = String(props.getProperty("registro_apps_script_url") || DEFAULT_REGISTRO_APPS_SCRIPT_URL || "").trim();
+
+    if (!url) {
+      return "Registro nao sincronizado: URL do Apps Script nao configurada.";
+    }
+
+    var response = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      payload: JSON.stringify({ action: "publishFullDatabaseToPublicJsonNow" })
+    });
+
+    var status = response.getResponseCode();
+    if (status < 200 || status >= 300) {
+      return "Registro nao sincronizado (" + status + "): " + response.getContentText().slice(0, 200);
+    }
+
+    return "Registro sincronizado agora.";
+  } catch (err) {
+    return "Registro nao sincronizado: " + String(err);
   }
 }
 
@@ -272,6 +326,23 @@ function doPost(e) {
       });
     }
 
+    if (payload.action === 'publishCompressedDataToPublicJsonNow') {
+      var publishedNowVersion = publishCompressedDataToPublicJson();
+      return json_({
+        success: true,
+        message: 'Publicacao imediata da EAP concluida.',
+        newVersion: publishedNowVersion
+      });
+    }
+
+    if (payload.action === 'syncAllPublicJsonNow') {
+      var syncNowMessage = syncAllPublicJsonNow();
+      return json_({
+        success: true,
+        message: syncNowMessage
+      });
+    }
+
     if (payload.action === 'salvarReajuste') {
       var sheet = ss.getSheetByName('Reajustado');
 
@@ -332,7 +403,10 @@ function getCompressedData_(ss) {
     registro: {
       contracts: [],
       osOptions: [],
-      itemOptions: []
+      itemOptions: [],
+      hierarchyNodes: [],
+      childrenByParent: {},
+      rootCodes: []
     },
     cronograma: []
   };
@@ -535,47 +609,150 @@ function getRawEapRows_(sheet) {
 }
 
 function getEapStructuredDataFromRows_(rows) {
+  var hierarchy = buildEapHierarchyPayloadFromRows_(rows);
   var contracts = [];
   var osOptions = [];
   var itemOptions = [];
 
+  for (var i = 0; i < hierarchy.nodes.length; i++) {
+    var node = hierarchy.nodes[i];
+    if (node.tipo === 'contrato') {
+      contracts.push({ codigo: node.codigo, nome: node.nome });
+    }
+  }
+
+  for (var os = 0; os < hierarchy.nodes.length; os++) {
+    var osNode = hierarchy.nodes[os];
+    if (osNode.tipo === 'os' && osNode.contratoCodigo && osNode.parentCodigo === osNode.contratoCodigo) {
+      osOptions.push({ codigo: osNode.codigo, nome: osNode.nome, contratoCodigo: osNode.contratoCodigo });
+    }
+  }
+
+  for (var j = 0; j < hierarchy.nodes.length; j++) {
+    var itemNode = hierarchy.nodes[j];
+    if (itemNode.tipo === 'item' && itemNode.osCodigo && itemNode.parentCodigo === itemNode.osCodigo) {
+      itemOptions.push({ codigo: itemNode.codigo, nome: itemNode.nome, osCodigo: itemNode.osCodigo });
+    }
+  }
+
+  return {
+    contracts: contracts,
+    osOptions: osOptions,
+    itemOptions: itemOptions,
+    hierarchyNodes: hierarchy.nodes,
+    childrenByParent: hierarchy.childrenByParent,
+    rootCodes: hierarchy.rootCodes
+  };
+}
+
+function buildEapHierarchyPayloadFromRows_(rows) {
+  var rawNodes = [];
+  var nodeMap = {};
+
   for (var i = 0; i < rows.length; i++) {
-    var item = rows[i];
+    var item = rows[i] || {};
     var codigo = String(item.code || '').trim();
     var nome = String(item.name || '').trim();
-    var dotCount = (codigo.match(/\./g) || []).length;
-
     if (!codigo || !nome) continue;
 
-    if (dotCount === 0) {
-      contracts.push({ codigo: codigo, nome: nome });
-    }
+    rawNodes.push({
+      codigo: codigo,
+      nome: nome,
+      dotCount: (codigo.match(/\./g) || []).length,
+      isOs: isOsItemName_(nome)
+    });
+    nodeMap[codigo] = true;
   }
 
-  for (var os = 0; os < rows.length; os++) {
-    var osRow = rows[os];
-    var osCodigo = String(osRow.code || '').trim();
-    var osNome = String(osRow.name || '').trim();
-    var contratoParent = findContractParentCode_(osCodigo, contracts);
+  rawNodes.sort(function(a, b) {
+    if (a.dotCount !== b.dotCount) return a.dotCount - b.dotCount;
+    return a.codigo < b.codigo ? -1 : (a.codigo > b.codigo ? 1 : 0);
+  });
 
-    if (contratoParent && isOsItemName_(osNome)) {
-      osOptions.push({ codigo: osCodigo, nome: osNome, contratoCodigo: contratoParent });
+  var nodes = [];
+  var rootCodes = [];
+  var contractCodeByNode = {};
+  var nearestOsByNode = {};
+
+  for (var j = 0; j < rawNodes.length; j++) {
+    var raw = rawNodes[j];
+    var parentCodigo = inferDirectParentCode_(raw.codigo, nodeMap);
+    var contratoCodigo = '';
+    var osCodigo = '';
+    var tipo = 'item';
+
+    if (!parentCodigo) {
+      tipo = 'contrato';
+      contratoCodigo = raw.codigo;
+      rootCodes.push(raw.codigo);
+    } else {
+      contratoCodigo = contractCodeByNode[parentCodigo] || getContractRootFromCode_(raw.codigo);
+      if (raw.isOs) {
+        tipo = 'os';
+        osCodigo = raw.codigo;
+      } else {
+        tipo = 'item';
+        osCodigo = nearestOsByNode[parentCodigo] || '';
+      }
     }
+
+    if (tipo === 'os' && !osCodigo) osCodigo = raw.codigo;
+
+    contractCodeByNode[raw.codigo] = contratoCodigo;
+    nearestOsByNode[raw.codigo] = tipo === 'os' ? raw.codigo : osCodigo;
+
+    nodes.push({
+      codigo: raw.codigo,
+      nome: raw.nome,
+      tipo: tipo,
+      nivel: raw.dotCount,
+      parentCodigo: parentCodigo,
+      contratoCodigo: contratoCodigo,
+      osCodigo: osCodigo
+    });
   }
 
-  for (var j = 0; j < rows.length; j++) {
-    var itemRow = rows[j];
-    var itemCodigo = String(itemRow.code || '').trim();
-    var itemNome = String(itemRow.name || '').trim();
-    if (!itemCodigo || !itemNome) continue;
+  return {
+    nodes: nodes,
+    childrenByParent: buildChildrenByParentMap_(nodes),
+    rootCodes: rootCodes
+  };
+}
 
-    var osParent = findOsParentCode_(itemCodigo, osOptions);
-    if (osParent && itemCodigo !== osParent) {
-      itemOptions.push({ codigo: itemCodigo, nome: itemNome, osCodigo: osParent });
-    }
+function inferDirectParentCode_(codigo, nodeMap) {
+  var parts = String(codigo || '').trim().split('.');
+  if (parts.length <= 1) return '';
+
+  for (var i = parts.length - 1; i > 0; i--) {
+    var candidate = parts.slice(0, i).join('.');
+    if (nodeMap[candidate]) return candidate;
   }
 
-  return { contracts: contracts, osOptions: osOptions, itemOptions: itemOptions };
+  return '';
+}
+
+function getContractRootFromCode_(codigo) {
+  var parts = String(codigo || '').trim().split('.');
+  return parts.length ? parts[0] : '';
+}
+
+function buildChildrenByParentMap_(nodes) {
+  var out = {};
+  for (var i = 0; i < nodes.length; i++) {
+    var node = nodes[i];
+    var key = node.parentCodigo || 'ROOT';
+    if (!out[key]) out[key] = [];
+    out[key].push({
+      codigo: node.codigo,
+      nome: node.nome,
+      tipo: node.tipo,
+      nivel: node.nivel,
+      parentCodigo: node.parentCodigo,
+      contratoCodigo: node.contratoCodigo,
+      osCodigo: node.osCodigo
+    });
+  }
+  return out;
 }
 
 function findContractParentCode_(codigo, contracts) {

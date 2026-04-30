@@ -27,6 +27,15 @@ type EvaluationType =
 interface EapContractOption { codigo: string; nome: string; }
 interface EapOsOption { codigo: string; nome: string; contratoCodigo: string; }
 interface EapItemOption { codigo: string; nome: string; osCodigo: string; }
+interface EapHierarchyNode {
+  codigo: string;
+  nome: string;
+  tipo: 'contrato' | 'os' | 'item';
+  nivel: number;
+  parentCodigo: string;
+  contratoCodigo: string;
+  osCodigo: string;
+}
 interface ProfessionalOption { nome: string; email: string; cargo: string; disciplina: string; }
 
 interface RegistroAtividade {
@@ -39,7 +48,8 @@ interface RegistroAtividade {
 
 interface RegistroDataResponse {
   success: boolean; error?: string; contracts: EapContractOption[]; osOptions: EapOsOption[];
-  itemOptions: EapItemOption[]; professionals: ProfessionalOption[]; activeActivities: RegistroAtividade[]; completedActivities: RegistroAtividade[];
+  itemOptions: EapItemOption[]; hierarchyNodes?: EapHierarchyNode[]; childrenByParent?: Record<string, EapHierarchyNode[]>; rootCodes?: string[];
+  professionals: ProfessionalOption[]; activeActivities: RegistroAtividade[]; completedActivities: RegistroAtividade[];
 }
 
 interface PublicRegistroEnvelope {
@@ -50,6 +60,9 @@ interface PublicRegistroEnvelope {
       contracts?: EapContractOption[];
       osOptions?: EapOsOption[];
       itemOptions?: EapItemOption[];
+      hierarchyNodes?: EapHierarchyNode[];
+      childrenByParent?: Record<string, EapHierarchyNode[]>;
+      rootCodes?: string[];
       professionalsByDisciplina?: Record<string, ProfessionalOption[]>;
       activitiesList?: any[];
     };
@@ -65,6 +78,9 @@ interface PublicEapEnvelope {
       contracts?: EapContractOption[];
       osOptions?: EapOsOption[];
       itemOptions?: EapItemOption[];
+      hierarchyNodes?: EapHierarchyNode[];
+      childrenByParent?: Record<string, EapHierarchyNode[]>;
+      rootCodes?: string[];
     };
     cronograma?: any[];
   };
@@ -99,6 +115,9 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser) {
     contracts: [] as EapContractOption[],
     osOptions: [] as EapOsOption[],
     itemOptions: [] as EapItemOption[],
+    hierarchyNodes: [] as EapHierarchyNode[],
+    childrenByParent: {} as Record<string, EapHierarchyNode[]>,
+    rootCodes: [] as string[],
     professionals: [] as ProfessionalOption[],
     activeActivities: [] as RegistroAtividade[],
     completedActivities: [] as RegistroAtividade[],
@@ -111,6 +130,9 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser) {
       contracts: preloadedData.contracts || [],
       osOptions: preloadedData.osOptions || [],
       itemOptions: preloadedData.itemOptions || [],
+      hierarchyNodes: preloadedData.hierarchyNodes || [],
+      childrenByParent: preloadedData.childrenByParent || {},
+      rootCodes: preloadedData.rootCodes || [],
       professionals: preloadedData.professionals || [],
       activeActivities: preloadedData.activeActivities || [],
       completedActivities: preloadedData.completedActivities || [],
@@ -153,6 +175,9 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser) {
     contracts: preloadedData.contracts || [],
     osOptions: preloadedData.osOptions || [],
     itemOptions: preloadedData.itemOptions || [],
+    hierarchyNodes: preloadedData.hierarchyNodes || [],
+    childrenByParent: preloadedData.childrenByParent || {},
+    rootCodes: preloadedData.rootCodes || [],
     professionals: preloadedData.professionalsByDisciplina?.[disciplinaKey] || [],
     activeActivities: mappedActivities.filter((item) => item.status !== 'concluida'),
     completedActivities: mappedActivities.filter((item) => item.status === 'concluida'),
@@ -168,7 +193,71 @@ function applyUnifiedEapToRegistro(registro: any, eapPayload: PublicEapEnvelope 
     contracts: Array.isArray(eapRegistro.contracts) ? eapRegistro.contracts : registro?.contracts,
     osOptions: Array.isArray(eapRegistro.osOptions) ? eapRegistro.osOptions : registro?.osOptions,
     itemOptions: Array.isArray(eapRegistro.itemOptions) ? eapRegistro.itemOptions : registro?.itemOptions,
+    hierarchyNodes: Array.isArray(eapRegistro.hierarchyNodes) ? eapRegistro.hierarchyNodes : registro?.hierarchyNodes,
+    childrenByParent: eapRegistro.childrenByParent && typeof eapRegistro.childrenByParent === 'object' ? eapRegistro.childrenByParent : registro?.childrenByParent,
+    rootCodes: Array.isArray(eapRegistro.rootCodes) ? eapRegistro.rootCodes : registro?.rootCodes,
   };
+}
+
+function normalizeHierarchyNodes(hierarchyNodes?: EapHierarchyNode[], contracts?: EapContractOption[], osOptions?: EapOsOption[], itemOptions?: EapItemOption[]) {
+  if (Array.isArray(hierarchyNodes) && hierarchyNodes.length > 0) return hierarchyNodes;
+
+  const fallbackNodes: EapHierarchyNode[] = [];
+  const seen = new Set<string>();
+
+  (contracts || []).forEach((item) => {
+    if (!item?.codigo || seen.has(item.codigo)) return;
+    seen.add(item.codigo);
+    fallbackNodes.push({
+      codigo: item.codigo,
+      nome: item.nome,
+      tipo: 'contrato',
+      nivel: 0,
+      parentCodigo: '',
+      contratoCodigo: item.codigo,
+      osCodigo: '',
+    });
+  });
+
+  (osOptions || []).forEach((item) => {
+    if (!item?.codigo || seen.has(item.codigo)) return;
+    seen.add(item.codigo);
+    fallbackNodes.push({
+      codigo: item.codigo,
+      nome: item.nome,
+      tipo: 'os',
+      nivel: (item.codigo.match(/\./g) || []).length,
+      parentCodigo: item.contratoCodigo,
+      contratoCodigo: item.contratoCodigo,
+      osCodigo: item.codigo,
+    });
+  });
+
+  (itemOptions || []).forEach((item) => {
+    if (!item?.codigo || seen.has(item.codigo)) return;
+    seen.add(item.codigo);
+    fallbackNodes.push({
+      codigo: item.codigo,
+      nome: item.nome,
+      tipo: 'item',
+      nivel: (item.codigo.match(/\./g) || []).length,
+      parentCodigo: item.osCodigo,
+      contratoCodigo: item.osCodigo.split('.')[0] || '',
+      osCodigo: item.osCodigo,
+    });
+  });
+
+  return fallbackNodes;
+}
+
+function buildChildrenMapFromNodes(nodes: EapHierarchyNode[]) {
+  const out: Record<string, EapHierarchyNode[]> = {};
+  nodes.forEach((node) => {
+    const key = node.parentCodigo || 'ROOT';
+    if (!out[key]) out[key] = [];
+    out[key].push(node);
+  });
+  return out;
 }
 
 const difficultyColorMap: Record<DifficultyLevel, string> = {
@@ -256,6 +345,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const [contracts, setContracts] = useState<EapContractOption[]>(initialRegistroData.contracts);
   const [osOptions, setOsOptions] = useState<EapOsOption[]>(initialRegistroData.osOptions);
   const [itemOptions, setItemOptions] = useState<EapItemOption[]>(initialRegistroData.itemOptions);
+  const [hierarchyNodes, setHierarchyNodes] = useState<EapHierarchyNode[]>(initialRegistroData.hierarchyNodes);
+  const [childrenByParent, setChildrenByParent] = useState<Record<string, EapHierarchyNode[]>>(initialRegistroData.childrenByParent);
   const [professionals, setProfessionals] = useState<ProfessionalOption[]>(initialRegistroData.professionals);
   const [activeActivities, setActiveActivities] = useState<RegistroAtividade[]>(initialRegistroData.activeActivities);
   const [completedActivities, setCompletedActivities] = useState<RegistroAtividade[]>(initialRegistroData.completedActivities);
@@ -285,6 +376,10 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       setContracts(nextData.contracts);
       setOsOptions(nextData.osOptions);
       setItemOptions(nextData.itemOptions);
+      setHierarchyNodes(normalizeHierarchyNodes(nextData.hierarchyNodes, nextData.contracts, nextData.osOptions, nextData.itemOptions));
+      setChildrenByParent(Object.keys(nextData.childrenByParent || {}).length > 0
+        ? nextData.childrenByParent
+        : buildChildrenMapFromNodes(normalizeHierarchyNodes(nextData.hierarchyNodes, nextData.contracts, nextData.osOptions, nextData.itemOptions)));
       setProfessionals(nextData.professionals);
       setActiveActivities(nextData.activeActivities);
       setCompletedActivities(nextData.completedActivities);
@@ -298,9 +393,29 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   }, [professionals, currentUser.disciplina]);
 
   const selectedContract = useMemo(() => contracts.find((c) => c.codigo === formData.contratoCodigo), [contracts, formData.contratoCodigo]);
-  const filteredOs = useMemo(() => osOptions.filter((item) => item.contratoCodigo === formData.contratoCodigo), [osOptions, formData.contratoCodigo]);
+  const filteredOs = useMemo(() => {
+    const children = childrenByParent[formData.contratoCodigo] || [];
+    if (children.length > 0) return children.filter((item) => item.tipo === 'os');
+    return osOptions.filter((item) => item.contratoCodigo === formData.contratoCodigo).map((item) => ({
+      ...item,
+      tipo: 'os' as const,
+      nivel: (item.codigo.match(/\./g) || []).length,
+      parentCodigo: item.contratoCodigo,
+      osCodigo: item.codigo,
+    }));
+  }, [childrenByParent, osOptions, formData.contratoCodigo]);
   const selectedOs = useMemo(() => filteredOs.find((item) => item.codigo === formData.osCodigo), [filteredOs, formData.osCodigo]);
-  const filteredItems = useMemo(() => itemOptions.filter((item) => item.osCodigo === formData.osCodigo), [itemOptions, formData.osCodigo]);
+  const filteredItems = useMemo(() => {
+    const children = childrenByParent[formData.osCodigo] || [];
+    if (children.length > 0) return children.filter((item) => item.tipo === 'item');
+    return itemOptions.filter((item) => item.osCodigo === formData.osCodigo).map((item) => ({
+      ...item,
+      tipo: 'item' as const,
+      nivel: (item.codigo.match(/\./g) || []).length,
+      parentCodigo: item.osCodigo,
+      contratoCodigo: item.osCodigo.split('.')[0] || '',
+    }));
+  }, [childrenByParent, itemOptions, formData.osCodigo]);
 
   const filteredActivities = useMemo(() => {
     const term = searchText.trim().toLowerCase();
@@ -364,6 +479,11 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       setContracts(registro.contracts || []);
       setOsOptions(registro.osOptions || []);
       setItemOptions(registro.itemOptions || []);
+      const nextHierarchyNodes = normalizeHierarchyNodes(registro.hierarchyNodes, registro.contracts, registro.osOptions, registro.itemOptions);
+      setHierarchyNodes(nextHierarchyNodes);
+      setChildrenByParent(registro.childrenByParent && Object.keys(registro.childrenByParent).length > 0
+        ? registro.childrenByParent
+        : buildChildrenMapFromNodes(nextHierarchyNodes));
       setProfessionals(registro.professionalsByDisciplina?.[disciplinaKey] || []);
       setActiveActivities(mappedActivities.filter((item) => item.status !== 'concluida'));
       setCompletedActivities(mappedActivities.filter((item) => item.status === 'concluida'));
@@ -373,6 +493,11 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
         setContracts(fallback.contracts || []);
         setOsOptions(fallback.osOptions || []);
         setItemOptions(fallback.itemOptions || []);
+        const fallbackHierarchyNodes = normalizeHierarchyNodes(fallback.hierarchyNodes, fallback.contracts, fallback.osOptions, fallback.itemOptions);
+        setHierarchyNodes(fallbackHierarchyNodes);
+        setChildrenByParent(fallback.childrenByParent && Object.keys(fallback.childrenByParent).length > 0
+          ? fallback.childrenByParent
+          : buildChildrenMapFromNodes(fallbackHierarchyNodes));
         setProfessionals(fallback.professionals || []);
         setActiveActivities(fallback.activeActivities || []);
         setCompletedActivities(fallback.completedActivities || []);

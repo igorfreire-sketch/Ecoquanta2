@@ -10,8 +10,9 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
-    .addItem('Atualizar todos os JSONs', 'scheduleFullPublicJsonRefresh')
-    .addItem('Atualizar JSON do Registro', 'schedulePublicJsonPublish')
+    .addItem('Sincronizar tudo agora', 'syncAllPublicJsonNow')
+    .addItem('Sincronizar Registro agora', 'publishFullDatabaseToPublicJsonNow')
+    .addItem('Agendar sincronizacao completa', 'scheduleFullPublicJsonRefresh')
     .addItem('Configurar Triggers', 'setupPublicJsonAutoPublishTriggers')
     .addToUi();
 }
@@ -25,6 +26,16 @@ function doPost(e) {
     if (action === 'schedulePublicJsonPublish') {
       schedulePublicJsonPublish_();
       return json_({ success: true, message: 'Publicacao do Registro agendada.' });
+    }
+
+    if (action === 'publishFullDatabaseToPublicJsonNow') {
+      var publishNowMessage = publishFullDatabaseToPublicJsonNow();
+      return json_({ success: true, message: publishNowMessage });
+    }
+
+    if (action === 'syncAllPublicJsonNow') {
+      var syncNowMessage = syncAllPublicJsonNow();
+      return json_({ success: true, message: syncNowMessage });
     }
 
     if (action === 'scheduleFullPublicJsonRefresh') {
@@ -381,6 +392,9 @@ function doGet(e) {
         contracts: eapData.contracts,
         osOptions: eapData.osOptions,
         itemOptions: eapData.itemOptions,
+        hierarchyNodes: eapData.hierarchyNodes,
+        childrenByParent: eapData.childrenByParent,
+        rootCodes: eapData.rootCodes,
         professionals: professionalsData,
         activeActivities: activitiesData.activeActivities,
         completedActivities: activitiesData.completedActivities
@@ -453,6 +467,9 @@ function doGet(e) {
       contracts: eapDataR.contracts,
       osOptions: eapDataR.osOptions,
       itemOptions: eapDataR.itemOptions,
+      hierarchyNodes: eapDataR.hierarchyNodes,
+      childrenByParent: eapDataR.childrenByParent,
+      rootCodes: eapDataR.rootCodes,
       professionals: profData,
       activeActivities: actData.activeActivities,
       completedActivities: actData.completedActivities
@@ -967,12 +984,15 @@ function getEapStructuredData_(ss) {
     return {
       contracts: Array.isArray(unifiedEap.registro.contracts) ? unifiedEap.registro.contracts : [],
       osOptions: Array.isArray(unifiedEap.registro.osOptions) ? unifiedEap.registro.osOptions : [],
-      itemOptions: Array.isArray(unifiedEap.registro.itemOptions) ? unifiedEap.registro.itemOptions : []
+      itemOptions: Array.isArray(unifiedEap.registro.itemOptions) ? unifiedEap.registro.itemOptions : [],
+      hierarchyNodes: Array.isArray(unifiedEap.registro.hierarchyNodes) ? unifiedEap.registro.hierarchyNodes : [],
+      childrenByParent: unifiedEap.registro.childrenByParent && typeof unifiedEap.registro.childrenByParent === 'object' ? unifiedEap.registro.childrenByParent : {},
+      rootCodes: Array.isArray(unifiedEap.registro.rootCodes) ? unifiedEap.registro.rootCodes : []
     };
   }
 
-  var sh = ss.getSheetByName('EAP');
-  if (!sh) return { contracts: [], osOptions: [], itemOptions: [] };
+  var sh = ss.getSheetByName('EAP') || ss.getSheetByName('Atual');
+  if (!sh) return { contracts: [], osOptions: [], itemOptions: [], hierarchyNodes: [], childrenByParent: {}, rootCodes: [] };
 
   var values = sh.getDataRange().getValues();
   var displayValues = sh.getDataRange().getDisplayValues();
@@ -985,37 +1005,146 @@ function getEapStructuredData_(ss) {
     rows.push({ codigo: codigo, nome: nome });
   }
 
+  return buildEapStructuredDataFromSimpleRows_(rows);
+}
+
+function buildEapStructuredDataFromSimpleRows_(rows) {
+  var hierarchy = buildEapHierarchyPayloadFromRows_(rows);
   var contracts = [];
   var osOptions = [];
   var itemOptions = [];
 
-  for (var j = 0; j < rows.length; j++) {
-    var item = rows[j];
-    var dotCount = (item.codigo.match(/\./g) || []).length;
-
-    if (dotCount === 0) {
-      contracts.push({ codigo: item.codigo, nome: item.nome });
+  for (var i = 0; i < hierarchy.nodes.length; i++) {
+    var node = hierarchy.nodes[i];
+    if (node.tipo === 'contrato') {
+      contracts.push({ codigo: node.codigo, nome: node.nome });
+    }
+    if (node.tipo === 'os' && node.contratoCodigo && node.parentCodigo === node.contratoCodigo) {
+      osOptions.push({ codigo: node.codigo, nome: node.nome, contratoCodigo: node.contratoCodigo });
+    }
+    if (node.tipo === 'item' && node.osCodigo && node.parentCodigo === node.osCodigo) {
+      itemOptions.push({ codigo: node.codigo, nome: node.nome, osCodigo: node.osCodigo });
     }
   }
 
-  for (var os = 0; os < rows.length; os++) {
-    var osRow = rows[os];
-    var osParentContrato = findContractParentCode_(osRow.codigo, contracts);
+  return {
+    contracts: contracts,
+    osOptions: osOptions,
+    itemOptions: itemOptions,
+    hierarchyNodes: hierarchy.nodes,
+    childrenByParent: hierarchy.childrenByParent,
+    rootCodes: hierarchy.rootCodes
+  };
+}
 
-    if (osParentContrato && isOsItemName_(osRow.nome)) {
-      osOptions.push({ codigo: osRow.codigo, nome: osRow.nome, contratoCodigo: osParentContrato });
-    }
+function buildEapHierarchyPayloadFromRows_(rows) {
+  var rawNodes = [];
+  var nodeMap = {};
+
+  for (var i = 0; i < rows.length; i++) {
+    var item = rows[i] || {};
+    var codigo = String(item.codigo || item.code || '').trim();
+    var nome = String(item.nome || item.name || '').trim();
+    if (!codigo || !nome) continue;
+
+    rawNodes.push({
+      codigo: codigo,
+      nome: nome,
+      dotCount: (codigo.match(/\./g) || []).length,
+      isOs: isOsItemName_(nome)
+    });
+    nodeMap[codigo] = true;
   }
 
-  for (var k = 0; k < rows.length; k++) {
-    var itemK = rows[k];
-    var osParent = findOsParentCode_(itemK.codigo, osOptions);
-    if (osParent && itemK.codigo !== osParent) {
-      itemOptions.push({ codigo: itemK.codigo, nome: itemK.nome, osCodigo: osParent });
+  rawNodes.sort(function(a, b) {
+    if (a.dotCount !== b.dotCount) return a.dotCount - b.dotCount;
+    return a.codigo < b.codigo ? -1 : (a.codigo > b.codigo ? 1 : 0);
+  });
+
+  var nodes = [];
+  var rootCodes = [];
+  var contractCodeByNode = {};
+  var nearestOsByNode = {};
+
+  for (var j = 0; j < rawNodes.length; j++) {
+    var raw = rawNodes[j];
+    var parentCodigo = inferDirectParentCode_(raw.codigo, nodeMap);
+    var contratoCodigo = '';
+    var osCodigo = '';
+    var tipo = 'item';
+
+    if (!parentCodigo) {
+      tipo = 'contrato';
+      contratoCodigo = raw.codigo;
+      rootCodes.push(raw.codigo);
+    } else {
+      contratoCodigo = contractCodeByNode[parentCodigo] || getContractRootFromCode_(raw.codigo);
+      if (raw.isOs) {
+        tipo = 'os';
+        osCodigo = raw.codigo;
+      } else {
+        tipo = 'item';
+        osCodigo = nearestOsByNode[parentCodigo] || '';
+      }
     }
+
+    if (tipo === 'os' && !osCodigo) osCodigo = raw.codigo;
+
+    contractCodeByNode[raw.codigo] = contratoCodigo;
+    nearestOsByNode[raw.codigo] = tipo === 'os' ? raw.codigo : osCodigo;
+
+    nodes.push({
+      codigo: raw.codigo,
+      nome: raw.nome,
+      tipo: tipo,
+      nivel: raw.dotCount,
+      parentCodigo: parentCodigo,
+      contratoCodigo: contratoCodigo,
+      osCodigo: osCodigo
+    });
   }
 
-  return { contracts: contracts, osOptions: osOptions, itemOptions: itemOptions };
+  return {
+    nodes: nodes,
+    childrenByParent: buildChildrenByParentMap_(nodes),
+    rootCodes: rootCodes
+  };
+}
+
+function inferDirectParentCode_(codigo, nodeMap) {
+  var parts = String(codigo || '').trim().split('.');
+  if (parts.length <= 1) return '';
+
+  for (var i = parts.length - 1; i > 0; i--) {
+    var candidate = parts.slice(0, i).join('.');
+    if (nodeMap[candidate]) return candidate;
+  }
+
+  return '';
+}
+
+function getContractRootFromCode_(codigo) {
+  var parts = String(codigo || '').trim().split('.');
+  return parts.length ? parts[0] : '';
+}
+
+function buildChildrenByParentMap_(nodes) {
+  var out = {};
+  for (var i = 0; i < nodes.length; i++) {
+    var node = nodes[i];
+    var key = node.parentCodigo || 'ROOT';
+    if (!out[key]) out[key] = [];
+    out[key].push({
+      codigo: node.codigo,
+      nome: node.nome,
+      tipo: node.tipo,
+      nivel: node.nivel,
+      parentCodigo: node.parentCodigo,
+      contratoCodigo: node.contratoCodigo,
+      osCodigo: node.osCodigo
+    });
+  }
+  return out;
 }
 
 function findContractParentCode_(codigo, contracts) {
@@ -1424,20 +1553,14 @@ function schedulePublicJsonPublish() {
 }
 
 function schedulePublicJsonPublish_(delayMs) {
-  try {
-    var cache = CacheService.getScriptCache();
-    var waitMs = delayMs || 10 * 1000;
-    var lockTtlSeconds = Math.max(30, Math.ceil(waitMs / 1000) + 30);
-
-    if (!cache.get("isPublishingPublicDatabaseJson")) {
-      cache.put("isPublishingPublicDatabaseJson", "true", lockTtlSeconds);
-      cleanupPublicJsonPublishTriggers_();
-      ScriptApp.newTrigger("publishFullDatabaseToPublicJsonByTrigger")
-        .timeBased()
-        .after(waitMs)
-        .create();
-    }
-  } catch (e) {}
+  var waitMs = delayMs || 10 * 1000;
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('pending_registro_publish_at', String(Date.now() + waitMs));
+  cleanupPublicJsonPublishTriggers_();
+  ScriptApp.newTrigger("publishFullDatabaseToPublicJsonByTrigger")
+    .timeBased()
+    .after(waitMs)
+    .create();
 }
 
 function scheduleFullPublicJsonRefresh() {
@@ -1495,6 +1618,23 @@ function handlePublicJsonSpreadsheetEdit(e) {
   schedulePublicJsonPublish_();
 }
 
+function publishFullDatabaseToPublicJsonNow() {
+  cleanupPublicJsonPublishTriggers_();
+  PropertiesService.getScriptProperties().deleteProperty('pending_registro_publish_at');
+  publishFullDatabaseToPublicJson();
+  return "Registro publicado agora.";
+}
+
+function syncAllPublicJsonNow() {
+  cleanupPublicJsonPublishTriggers_();
+  cleanupFullPublicJsonRefreshTriggers_();
+  PropertiesService.getScriptProperties().deleteProperty('pending_registro_publish_at');
+
+  var eapResult = requestEapImmediateSync_();
+  publishFullDatabaseToPublicJson();
+  return eapResult + " Registro publicado agora.";
+}
+
 function setupPublicJsonAutoPublishTriggers() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   deleteAllProjectTriggers_();
@@ -1506,7 +1646,7 @@ function setupPublicJsonAutoPublishTriggers() {
 
   ScriptApp.newTrigger("publishFullDatabaseToPublicJson")
     .timeBased()
-    .everyMinutes(30)
+    .everyMinutes(5)
     .create();
 
   return "Publicacao automatica configurada.";
@@ -1546,10 +1686,51 @@ function cleanupFullPublicJsonRefreshTriggers_() {
 }
 
 function publishFullDatabaseToPublicJsonByTrigger() {
+  var props = PropertiesService.getScriptProperties();
+  var dueAt = Number(props.getProperty('pending_registro_publish_at') || 0);
+  var remainingMs = dueAt - Date.now();
+
+  if (remainingMs > 5000) {
+    cleanupPublicJsonPublishTriggers_();
+    ScriptApp.newTrigger("publishFullDatabaseToPublicJsonByTrigger")
+      .timeBased()
+      .after(remainingMs)
+      .create();
+    return "Publicacao do Registro reagendada.";
+  }
+
+  props.deleteProperty('pending_registro_publish_at');
   try {
     return publishFullDatabaseToPublicJson();
   } finally {
     cleanupPublicJsonPublishTriggers_();
+  }
+}
+
+function requestEapImmediateSync_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var url = String(props.getProperty("eap_apps_script_url") || DEFAULT_EAP_APPS_SCRIPT_URL || "").trim();
+
+    if (!url) {
+      return "EAP nao sincronizada: URL do Apps Script nao configurada.";
+    }
+
+    var response = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      payload: JSON.stringify({ action: "publishCompressedDataToPublicJsonNow" })
+    });
+
+    var status = response.getResponseCode();
+    if (status < 200 || status >= 300) {
+      return "EAP nao sincronizada (" + status + "): " + response.getContentText().slice(0, 200);
+    }
+
+    return "EAP sincronizada agora.";
+  } catch (err) {
+    return "EAP nao sincronizada: " + String(err);
   }
 }
 
@@ -1598,6 +1779,9 @@ function publishFullDatabaseToPublicJson() {
             contracts: eapDataR.contracts,
             osOptions: eapDataR.osOptions,
             itemOptions: eapDataR.itemOptions,
+            hierarchyNodes: eapDataR.hierarchyNodes,
+            childrenByParent: eapDataR.childrenByParent,
+            rootCodes: eapDataR.rootCodes,
             activitiesList: activities,
             professionalsByDisciplina: getProfessionalsIndexForJson_(ss),
             usersSummary: getUsersSummaryForJson_(values, header)

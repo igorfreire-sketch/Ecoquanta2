@@ -43,12 +43,27 @@ function formatLatestEapDate(value?: string) {
   return raw;
 }
 
+function extractResolvedEapData(eap?: any) {
+  if (!eap || typeof eap !== 'object') return null;
+  if (eap.data && typeof eap.data === 'object') return eap.data;
+  return eap;
+}
+
 function getLatestEapDisplayDate(eap?: any) {
+  const resolvedEap = extractResolvedEapData(eap);
+  const lastSnapshotSheet = Array.isArray(resolvedEap?.dates) && resolvedEap.dates.length > 0
+    ? resolvedEap.dates[resolvedEap.dates.length - 1]
+    : '';
   const candidates = [
+    lastSnapshotSheet,
+    resolvedEap?.latestEapSheet,
+    resolvedEap?.latestEapDate,
+    resolvedEap?.latestEapPublishedAt,
+    resolvedEap?.publishedAt,
+    eap?.latestEapSheet,
     eap?.latestEapDate,
     eap?.latestEapPublishedAt,
     eap?.publishedAt,
-    eap?.latestEapSheet,
   ];
 
   for (const candidate of candidates) {

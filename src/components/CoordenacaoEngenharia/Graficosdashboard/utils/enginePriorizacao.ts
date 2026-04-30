@@ -37,40 +37,34 @@ export function processarAtividades(dados: RegistroOriginal[]): AtividadeConsoli
   if (!dados || dados.length === 0) return [];
 
   const grupos: Record<string, RegistroOriginal[]> = {};
-  dados.forEach(reg => {
+  dados.forEach((reg) => {
     const chave = `${reg.os}-${reg.descricao}`;
     if (!grupos[chave]) grupos[chave] = [];
     grupos[chave].push(reg);
   });
 
-  return Object.keys(grupos).map(chave => {
+  return Object.keys(grupos).map((chave) => {
     const registros = grupos[chave];
     const principal = registros[0];
 
-    const alocacaoTotal = registros.reduce((sum, r) => sum + (r.alocacao || 0), 0);
-    const progressoMedio = registros.reduce((sum, r) => sum + r.percentualConcluido, 0) / registros.length;
-    const pendencia = 100 - progressoMedio;
-    const difMaxima = Math.max(...registros.map(r => r.dificuldade || 1));
-    const avaliacoesOrdenadas = registros.map(r => r.avaliacao).sort((a, b) => PESO_AVALIACAO[b] - PESO_AVALIACAO[a]);
+    const alocacaoTotal = registros.reduce((sum, item) => sum + (item.alocacao || 0), 0);
+    const progressoMedio = registros.reduce((sum, item) => sum + item.percentualConcluido, 0) / registros.length;
+    const dificuldadeMaxima = Math.max(...registros.map((item) => item.dificuldade || 1));
+    const importanciaMaxima = Math.max(...registros.map((item) => item.importancia || 1));
+    const avaliacoesOrdenadas = registros.map((item) => item.avaliacao).sort((a, b) => PESO_AVALIACAO[b] - PESO_AVALIACAO[a]);
     const piorAvaliacao = avaliacoesOrdenadas[0];
-    const scoreAvaliacao = PESO_AVALIACAO[piorAvaliacao];
-
-    // Motor central de scores dinâmicos de esforço e impacto
-    const impacto = (scoreAvaliacao * 0.45) + (pendencia * 0.30) + (Math.min(alocacaoTotal, 100) * 0.25);
-    const complexidadeEquipe = Math.min((registros.length / 5) * 100, 100);
-    const esforco = ((difMaxima * 20) * 0.50) + (pendencia * 0.30) + (complexidadeEquipe * 0.20);
 
     return {
       id: chave,
       descricao: principal.descricao,
       os: principal.os,
       disciplina: principal.disciplina,
-      piorAvaliacao: piorAvaliacao,
-      impacto,
-      esforco,
+      piorAvaliacao,
+      impacto: (importanciaMaxima / 3) * 100,
+      esforco: ((4 - dificuldadeMaxima) / 3) * 100,
       alocacaoTotal,
       progressoMedio,
       profissionaisEnvolvidos: registros.length
     };
-  }).filter(a => a.progressoMedio < 100);
+  }).filter((item) => item.progressoMedio < 100);
 }

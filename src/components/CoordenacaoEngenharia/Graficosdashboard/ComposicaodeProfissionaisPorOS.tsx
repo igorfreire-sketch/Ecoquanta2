@@ -32,6 +32,9 @@ interface ComposicaoDeProfissionaisPorOSProps {
   dados: DadoOS[];
   disciplinas?: string[];
   filtros?: Filtros;
+  contractOptions?: Array<{ codigo: string; nome: string }>;
+  osOptions?: Array<{ codigo: string; nome: string }>;
+  onFiltroChange?: (key: 'contrato' | 'os' | 'importancia' | 'dificuldade', value: string) => void;
 }
 
 const COLORS = ['#F05D28', '#1E40AF', '#10B981', '#F59E0B', '#8B5CF6', '#3B82F6', '#71717A', '#EF4444', '#14B8A6', '#A855F7'];
@@ -73,7 +76,7 @@ function buildDisciplinaMetas(disciplinas: string[] | undefined, dados: DadoOS[]
   }));
 }
 
-export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, filtros }: ComposicaoDeProfissionaisPorOSProps) {
+export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, filtros, contractOptions = [], osOptions = [], onFiltroChange }: ComposicaoDeProfissionaisPorOSProps) {
   const disciplinaMetas = useMemo(() => buildDisciplinaMetas(disciplinas, dados || []), [disciplinas, dados]);
 
   const disciplinaMeta = useMemo(() => {
@@ -147,10 +150,6 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
     });
   }, [dadosProcessados, modoDisciplina, disciplinaMeta, totalDisciplinaRecorte]);
 
-  const subtitulo = modoDisciplina && disciplinaMeta
-    ? `Distribuicao da equipe de ${disciplinaMeta.label} entre as OS`
-    : 'Quantidade de profissionais por disciplina e participacao percentual dentro da OS';
-
   const minWidthChart = Math.max(800, chartData.length * (modoDisciplina ? 100 : Math.max(180, disciplinaMetas.length * 42)));
 
   const FixedCustomLegend = () => (
@@ -167,15 +166,40 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
   return (
     <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8 flex flex-col min-h-[460px] h-full">
       <div className="mb-6 border-b-0">
-        <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
+        <div className="flex flex-col gap-4">
           <div>
             <h3 className="text-base font-bold text-[#2D2D2D] uppercase tracking-tight mb-1">
               COMPOSICAO DE PROFISSIONAIS POR OS
             </h3>
-            <p className="text-xs text-[#757575] font-medium">{subtitulo}</p>
           </div>
 
-          {!modoDisciplina && <FixedCustomLegend />}
+          <div className="flex flex-col items-stretch gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+              <select
+                value={filtros?.contrato || 'Todos'}
+                onChange={(event) => onFiltroChange?.('contrato', event.target.value)}
+                className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+              >
+                <option value="Todos">Todos os contratos</option>
+                {contractOptions.map((contract) => (
+                  <option key={contract.codigo} value={contract.codigo}>{contract.codigo} - {contract.nome}</option>
+                ))}
+              </select>
+
+              <select
+                value={filtros?.os || 'Todos'}
+                onChange={(event) => onFiltroChange?.('os', event.target.value)}
+                className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+              >
+                <option value="Todos">Todas as OS</option>
+                {osOptions.map((os) => (
+                  <option key={os.codigo} value={os.codigo}>{os.codigo} - {os.nome}</option>
+                ))}
+              </select>
+            </div>
+
+            {!modoDisciplina && <FixedCustomLegend />}
+          </div>
         </div>
       </div>
 

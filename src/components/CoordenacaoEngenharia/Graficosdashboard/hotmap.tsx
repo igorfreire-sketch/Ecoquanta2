@@ -1,137 +1,130 @@
 import React, { useMemo } from 'react';
 
-// --- INTERFACES E MOCK DATA ---
 interface Atividade {
   os: string;
+  osNome?: string;
   disciplina: string;
-  alocacao: number;
 }
 
-const mockAtividades: Atividade[] = [
-  { os: 'Jan', disciplina: 'Translator', alocacao: 120 },
-  { os: 'Jan', disciplina: 'Data Architect', alocacao: 50 },
-  { os: 'Mar', disciplina: 'I/O Psychologist', alocacao: 90 },
-  { os: 'Mar', disciplina: 'Data Scientist', alocacao: 20 },
-  { os: 'May', disciplina: 'Translator', alocacao: 150 },
-  { os: 'May', disciplina: 'Data Analyst', alocacao: 30 },
-  { os: 'Jul', disciplina: 'Data Architect', alocacao: 45 },
-  { os: 'Sep', disciplina: 'I/O Psychologist', alocacao: 100 },
-  { os: 'Sep', disciplina: 'Data Scientist', alocacao: 15 },
-  { os: 'Nov', disciplina: 'Data Analyst', alocacao: 80 },
-];
+interface HeatmapAlocacaoProps {
+  dados?: Atividade[];
+}
 
-const DISCIPLINAS = [
-  'D&I Specialist',
-  'Data Analyst',
-  'Data Architect',
-  'Data Scientist',
-  'I/O Psychologist',
-  'People Analytics Intern',
-  'People Analytics Manager',
-  'Translator'
-];
+function normalizeText(value?: string) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
 
-// Eixo X simulado igual à sua referência (meses/períodos ao invés de OSs numéricas, mas mantendo a lógica)
-const MESES_REFERENCIA = ['Jan', 'Mar', 'May', 'Jul', 'Sep', 'Nov'];
+function getHeatmapColor(valor: number, maxValor: number) {
+  if (valor <= 0 || maxValor <= 0) return 'bg-[#E2E8F0]';
+  const ratio = valor / maxValor;
+  if (ratio <= 0.25) return 'bg-[#BFDBFE]';
+  if (ratio <= 0.5) return 'bg-[#60A5FA]';
+  if (ratio <= 0.75) return 'bg-[#F59E0B]';
+  return 'bg-[#F05D28]';
+}
 
-// --- MOTOR DE CORES DO HEATMAP ---
-// Cores ajustadas para formar um bloco sólido. O 0 (vazio) ganha uma cor cinza/azulada base.
-const getHeatmapColor = (valor: number) => {
-  if (valor === 0) return 'bg-[#94A3B8]'; // Cinza Slate (Base sólida para 0)
-  if (valor <= 30) return 'bg-[#7DA5D3]'; // Azul Claro
-  if (valor <= 60) return 'bg-[#5B8CBF]'; // Azul Médio
-  if (valor <= 90) return 'bg-[#F2A65A]'; // Laranja Claro
-  if (valor <= 110) return 'bg-[#EA842A]'; // Laranja Forte
-  return 'bg-[#C2541B]'; // Vermelho Escuro / Laranja Queimado (Sobrecarga)
-};
+export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
+  const { matriz, disciplinas, osLabels, maxValor } = useMemo(() => {
+    const disciplinasSet = new Set<string>();
+    const osMap = new Map<string, string>();
+    const matrix: Record<string, Record<string, number>> = {};
 
-export default function HeatmapAlocacao() {
+    dados.forEach((atividade) => {
+      const disciplina = String(atividade?.disciplina || '').trim() || 'Sem disciplina';
+      const osCodigo = String(atividade?.os || '').trim() || 'Sem OS';
+      const osNome = String(atividade?.osNome || atividade?.os || '').trim() || osCodigo;
 
-  // --- LÓGICA DE AGREGAÇÃO ---
-  const { matriz, ossUnicas } = useMemo(() => {
-    // Usando a ordem exata da referência para o eixo X
-    const ossArray = MESES_REFERENCIA;
+      disciplinasSet.add(disciplina);
+      if (!osMap.has(osCodigo)) osMap.set(osCodigo, osNome);
+      if (!matrix[disciplina]) matrix[disciplina] = {};
+      matrix[disciplina][osCodigo] = (matrix[disciplina][osCodigo] || 0) + 1;
+    });
 
-    const m: Record<string, Record<string, number>> = {};
+    const disciplinasArray = Array.from(disciplinasSet);
+    const osEntries = Array.from(osMap.entries()).map(([codigo, nome]) => ({ codigo, nome }));
 
-    DISCIPLINAS.forEach(disc => {
-      m[disc] = {};
-      ossArray.forEach(os => {
-        m[disc][os] = 0;
+    disciplinasArray.forEach((disciplina) => {
+      if (!matrix[disciplina]) matrix[disciplina] = {};
+      osEntries.forEach((os) => {
+        if (matrix[disciplina][os.codigo] === undefined) matrix[disciplina][os.codigo] = 0;
       });
     });
 
-    mockAtividades.forEach(ativ => {
-      if (m[ativ.disciplina] && m[ativ.disciplina][ativ.os] !== undefined) {
-        m[ativ.disciplina][ativ.os] += ativ.alocacao;
-      }
-    });
+    const max = Math.max(
+      0,
+      ...disciplinasArray.flatMap((disciplina) => osEntries.map((os) => matrix[disciplina][os.codigo] || 0))
+    );
 
-    return { matriz: m, ossUnicas: ossArray };
-  }, []);
+    return {
+      matriz: matrix,
+      disciplinas: disciplinasArray,
+      osLabels: osEntries,
+      maxValor: max,
+    };
+  }, [dados]);
+
+  if (!disciplinas.length || !osLabels.length) {
+    return (
+      <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8 flex flex-col w-full font-['Montserrat']">
+        <h3 className="text-base font-bold text-[#2D2D2D] tracking-tight mb-4">Alocacao por OS e Disciplina</h3>
+        <div className="rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] py-12 px-6 text-center text-[13px] font-medium text-[#64748B]">
+          Nenhuma atividade encontrada para montar o mapa de alocacao.
+        </div>
+      </div>
+    );
+  }
+
+  const minWidth = Math.max(780, osLabels.length * 140);
 
   return (
     <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8 flex flex-col w-full font-['Montserrat']">
-
-      {/* CABEÇALHO E LEGENDA */}
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
         <div>
-          <h3 className="text-base font-bold text-[#2D2D2D] tracking-tight">Utilization by Role</h3>
+          <h3 className="text-base font-bold text-[#2D2D2D] tracking-tight">Alocacao por OS e Disciplina</h3>
         </div>
 
-        {/* LEGENDA DE CORES */}
         <div className="flex items-center gap-2 text-[11px] font-semibold text-[#757575]">
-          <span>0%</span>
-          <div className="flex h-3 w-32 overflow-hidden">
-            <div className="flex-1 bg-[#94A3B8]"></div>
-            <div className="flex-1 bg-[#7DA5D3]"></div>
-            <div className="flex-1 bg-[#5B8CBF]"></div>
-            <div className="flex-1 bg-[#F2A65A]"></div>
-            <div className="flex-1 bg-[#EA842A]"></div>
-            <div className="flex-1 bg-[#C2541B]"></div>
+          <span>0</span>
+          <div className="flex h-3 w-32 overflow-hidden rounded-sm">
+            <div className="flex-1 bg-[#E2E8F0]" />
+            <div className="flex-1 bg-[#BFDBFE]" />
+            <div className="flex-1 bg-[#60A5FA]" />
+            <div className="flex-1 bg-[#F59E0B]" />
+            <div className="flex-1 bg-[#F05D28]" />
           </div>
-          <span>352%</span>
+          <span>{maxValor}</span>
         </div>
       </div>
 
-      {/* =================== ÁREA DA MATRIZ (BLOCO CONTÍNUO) =================== */}
       <div className="w-full overflow-x-auto no-scrollbar">
-        <div className="flex min-w-[800px]">
-
-          {/* EIXO Y: LATERAL ESQUERDA (Disciplinas) */}
+        <div className="flex" style={{ minWidth: `${minWidth}px` }}>
           <div className="flex flex-col pr-4 shrink-0 justify-between">
-            {DISCIPLINAS.map(disciplina => (
+            {disciplinas.map((disciplina) => (
               <div
                 key={disciplina}
-                className="h-12 flex items-center justify-end text-[11px] text-[#757575] font-medium text-right w-36"
+                className="h-14 flex items-center justify-end text-[11px] text-[#757575] font-medium text-right w-40"
               >
                 {disciplina}
               </div>
             ))}
           </div>
 
-          {/* ÁREA DO GRÁFICO E EIXO X */}
           <div className="flex flex-col flex-1">
-
-            {/* CORPO DO HEATMAP (Blocos de cor colados) */}
             <div className="flex flex-col w-full">
-              {DISCIPLINAS.map((disciplina, index) => (
+              {disciplinas.map((disciplina, index) => (
                 <div
                   key={disciplina}
-                  className={`flex w-full h-12 ${index !== DISCIPLINAS.length - 1 ? 'border-b border-white/30' : ''}`}
+                  className={`flex w-full h-14 ${index !== disciplinas.length - 1 ? 'border-b border-white/30' : ''}`}
                 >
-                  {ossUnicas.map(os => {
-                    const valor = matriz[disciplina][os];
-                    const colorClass = getHeatmapColor(valor);
-
+                  {osLabels.map((os) => {
+                    const valor = matriz[disciplina][os.codigo] || 0;
                     return (
                       <div
-                        key={`${disciplina}-${os}`}
-                        className={`flex-1 transition-opacity hover:opacity-80 cursor-pointer ${colorClass}`}
-                        title={`${disciplina} em ${os}: ${valor}% Alocado`}
+                        key={`${disciplina}-${os.codigo}`}
+                        className={`flex-1 flex items-center justify-center text-[12px] font-bold text-[#1F2937] transition-opacity hover:opacity-85 cursor-default ${getHeatmapColor(valor, maxValor)}`}
+                        title={`${disciplina} em ${os.nome}: ${valor} profissional(is)`}
                       >
-                        {/* Omitindo os números dentro dos blocos para ficar idêntico à referência. 
-                            Caso queira o número, basta adicionar {valor > 0 ? `${valor}%` : ''} aqui. */}
+                        {valor > 0 ? valor : ''}
                       </div>
                     );
                   })}
@@ -139,19 +132,16 @@ export default function HeatmapAlocacao() {
               ))}
             </div>
 
-            {/* EIXO X: RODAPÉ (OSs / Meses) */}
-            <div className="flex w-full mt-2">
-              {ossUnicas.map(os => (
-                <div key={os} className="flex-1 text-left text-[11px] text-[#757575] font-medium pl-1">
-                  {os}
+            <div className="flex w-full mt-3">
+              {osLabels.map((os) => (
+                <div key={os.codigo} className="flex-1 text-center text-[11px] text-[#757575] font-medium px-2">
+                  {normalizeText(os.nome) === normalizeText(os.codigo) ? os.codigo : `${os.codigo} - ${os.nome}`}
                 </div>
               ))}
             </div>
-
           </div>
         </div>
       </div>
-
     </div>
   );
 }

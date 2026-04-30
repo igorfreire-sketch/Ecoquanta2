@@ -167,6 +167,7 @@ function doPost(e) {
       row[header.resetexpires] = '';
       row[header.isadmin] = 'false';
       row[header.lastseen] = '';
+      row[header.sessionversion] = newSessionVersion_();
 
       loginSheet.appendRow(row);
       logAuth_(ss, 'INFO', 'registerUser ok', email);
@@ -207,6 +208,13 @@ function doPost(e) {
         return json_({ success: false, error: 'Seu acesso está bloqueado. Procure um administrador.' });
       }
 
+      var authSessionVersion = String(row2[header.sessionversion] || '').trim();
+      if (!authSessionVersion) {
+        authSessionVersion = newSessionVersion_();
+        setLoginRowPatch_(loginSheet, idx + 1, header, { sessionversion: authSessionVersion });
+        row2[header.sessionversion] = authSessionVersion;
+      }
+
       loginSheet.getRange(idx + 1, header.lastseen + 1).setValue(Date.now());
       var user = normalizeUserResponse_(row2, header);
 
@@ -221,8 +229,14 @@ function doPost(e) {
       var idxHb = findUserRowByEmail_(values, header, emailHb);
       if (idxHb < 0) return json_({ success: false, error: 'Usuário não encontrado.' });
 
+      var heartbeatVersion = String(data.sessionVersion || '').trim();
+      var currentVersion = String(values[idxHb][header.sessionversion] || '').trim();
+      if (currentVersion && heartbeatVersion !== currentVersion) {
+        return json_({ success: false, forceLogout: true, error: 'Sessao invalidada.' });
+      }
+
       loginSheet.getRange(idxHb + 1, header.lastseen + 1).setValue(Date.now());
-      return json_({ success: true });
+      return json_({ success: true, sessionVersion: currentVersion });
     }
 
     if (action === 'forgotPassword') {
@@ -284,7 +298,8 @@ function doPost(e) {
         passwordhash: newHash,
         resetcode: '',
         resetexpires: '',
-        lastseen: ''
+        lastseen: '',
+        sessionversion: newSessionVersion_()
       });
 
       logRecovery_(ss, email4, 'concluido', 'senha redefinida');
@@ -308,6 +323,8 @@ function doPost(e) {
       if (data.allocation !== undefined) approvePatch.alocacao = String(data.allocation || '');
       if (data.contract !== undefined) approvePatch.contrato = String(data.contract || '');
       if (data.isAdmin !== undefined) approvePatch.isadmin = boolToSheet_(data.isAdmin);
+      approvePatch.lastseen = '';
+      approvePatch.sessionversion = newSessionVersion_();
       setLoginRowPatch_(loginSheet, idxA + 1, header, approvePatch);
       logAuth_(ss, 'INFO', 'approveUser ok', emailA);
       flushAndSchedulePublicJsonPublish_(); return json_({ success: true });
@@ -322,7 +339,8 @@ function doPost(e) {
 
       setLoginRowPatch_(loginSheet, idxB + 1, header, {
         status: 'blocked',
-        lastseen: ''
+        lastseen: '',
+        sessionversion: newSessionVersion_()
       });
       logAuth_(ss, 'INFO', 'blockUser ok', emailB);
       flushAndSchedulePublicJsonPublish_(); return json_({ success: true });
@@ -344,6 +362,8 @@ function doPost(e) {
       if (data.contract !== undefined) saveUserPatch.contrato = String(data.contract || '');
       if (data.isAdmin !== undefined) saveUserPatch.isadmin = boolToSheet_(data.isAdmin);
       if (data.status !== undefined) saveUserPatch.status = String(data.status || 'pending');
+      saveUserPatch.lastseen = '';
+      saveUserPatch.sessionversion = newSessionVersion_();
       setLoginRowPatch_(loginSheet, idxS + 1, header, saveUserPatch);
 
       logAuth_(ss, 'INFO', 'saveUserAccess ok', emailS);
@@ -364,7 +384,8 @@ function doPost(e) {
         passwordhash: hashTemp,
         resetcode: '',
         resetexpires: '',
-        lastseen: ''
+        lastseen: '',
+        sessionversion: newSessionVersion_()
       });
 
       try {
@@ -1409,7 +1430,7 @@ function getHeaderMapSafe_(sheet) {
     role: ensure('Role'), disciplina: ensure('Disciplina'), status: ensure('Status'),
     abas: ensure('Abas'), passwordhash: ensure('PasswordHash'), resetcode: ensure('ResetCode'),
     resetexpires: ensure('ResetExpires'), isadmin: ensure('IsAdmin'), lastseen: ensure('LastSeen'),
-    alocacao: ensure('Alocacao'), contrato: ensure('Contrato')
+    alocacao: ensure('Alocacao'), contrato: ensure('Contrato'), sessionversion: ensure('SessionVersion')
   };
 }
 
@@ -1463,8 +1484,13 @@ function normalizeUserResponse_(row, header) {
     alocacao: String(row[header.alocacao] || ''),
     contrato: String(row[header.contrato] || ''),
     allowedTabs: parseAllowedTabs_(row[header.abas]), abas: parseAllowedTabs_(row[header.abas]),
-    isAdmin: parseBool_(row[header.isadmin]), online: online
+    isAdmin: parseBool_(row[header.isadmin]), online: online,
+    sessionVersion: String(row[header.sessionversion] || '')
   };
+}
+
+function newSessionVersion_() {
+  return String(Date.now()) + '-' + Utilities.getUuid().slice(0, 8);
 }
 
 function normalizeAllowedTabs_(value) {

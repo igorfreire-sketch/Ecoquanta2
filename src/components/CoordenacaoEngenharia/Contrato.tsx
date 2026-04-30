@@ -15,6 +15,8 @@ import {
   X
 } from 'lucide-react';
 
+const CONTRACT_PRIORITY_STORAGE_KEY = 'quanta_contract_priorities';
+
 interface ContratoProps {
   preloadedData?: {
     registro?: any;
@@ -46,6 +48,19 @@ interface Interferencia {
   data: string;
   observacao: string;
   osImpactada: string;
+}
+
+function readStoredPriorities() {
+  try {
+    const raw = localStorage.getItem(CONTRACT_PRIORITY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return {
+      values: parsed?.values && typeof parsed.values === 'object' ? parsed.values as Record<string, string> : {},
+      confirmed: parsed?.confirmed && typeof parsed.confirmed === 'object' ? parsed.confirmed as Record<string, boolean> : {},
+    };
+  } catch (error) {
+    return { values: {}, confirmed: {} };
+  }
 }
 
 const FLOW_STEPS = [
@@ -123,17 +138,24 @@ function getCronogramaMap(cronograma: any) {
 }
 
 function buildActivities(preloadedData?: ContratoProps['preloadedData']): ActivityRow[] {
-  const activities = Array.isArray(preloadedData?.registro?.activitiesList) ? preloadedData.registro.activitiesList : [];
+  const activitiesList = Array.isArray(preloadedData?.registro?.activitiesList) ? preloadedData.registro.activitiesList : [];
+  const activeActivities = Array.isArray(preloadedData?.registro?.activeActivities) ? preloadedData.registro.activeActivities : [];
+  const completedActivities = Array.isArray(preloadedData?.registro?.completedActivities) ? preloadedData.registro.completedActivities : [];
+  const sourceActivities = activitiesList.length > 0
+    ? activitiesList
+    : [...activeActivities, ...completedActivities];
   const cronogramaByCode = getCronogramaMap(preloadedData?.cronograma);
+  const seenIds = new Set<string>();
 
-  return activities
+  return sourceActivities
     .filter((activity: any) => String(activity?.status || '').trim().toLowerCase() !== 'concluida')
     .map((activity: any, index: number) => {
       const itemCodigo = String(activity?.itemCodigo || '').trim();
       const cronograma = cronogramaByCode[itemCodigo] || {};
+      const activityId = String(activity?.activityId || activity?.id || `${itemCodigo}-${index}`);
 
       return {
-        id: String(activity?.activityId || activity?.id || `${itemCodigo}-${index}`),
+        id: activityId,
         contratoCodigo: String(activity?.contratoCodigo || '').trim(),
         contratoNome: String(activity?.contratoNome || activity?.contratoCodigo || '').trim(),
         criadoPorNome: String(activity?.criadoPorNome || activity?.registradoPorNome || activity?.userName || '').trim(),
@@ -147,6 +169,11 @@ function buildActivities(preloadedData?: ContratoProps['preloadedData']): Activi
         dataFim: formatDateBR(cronograma?.plannedEnd || activity?.data100 || activity?.dataConclusaoEfetiva),
         status: String(activity?.status || '').trim()
       };
+    })
+    .filter((activity) => {
+      if (!activity.id || seenIds.has(activity.id)) return false;
+      seenIds.add(activity.id);
+      return true;
     });
 }
 
@@ -254,8 +281,9 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
-  const [prioridades, setPrioridades] = useState<Record<string, string>>({});
-  const [prioridadesConfirmadas, setPrioridadesConfirmadas] = useState<Record<string, boolean>>({});
+  const storedPriorities = readStoredPriorities();
+  const [prioridades, setPrioridades] = useState<Record<string, string>>(storedPriorities.values);
+  const [prioridadesConfirmadas, setPrioridadesConfirmadas] = useState<Record<string, boolean>>(storedPriorities.confirmed);
   const [observacoes, setObservacoes] = useState<Record<string, string>>({});
   const [showInterferenciaForm, setShowInterferenciaForm] = useState(false);
   const [interferencias, setInterferencias] = useState<Interferencia[]>([]);
@@ -264,6 +292,25 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
   React.useEffect(() => {
     setSelectedContract(getContractInitialValue(activeContractCode, lockedContractCode));
   }, [activeContractCode, lockedContractCode]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(CONTRACT_PRIORITY_STORAGE_KEY, JSON.stringify({
+        values: prioridades,
+        confirmed: prioridadesConfirmadas,
+      }));
+    } catch (error) {}
+  }, [prioridades, prioridadesConfirmadas]);
+
+  React.useEffect(() => {
+    setPrioridades((prev) => {
+      const next = { ...prev };
+      activities.forEach((activity) => {
+        if (!next[activity.id]) next[activity.id] = '1';
+      });
+      return next;
+    });
+  }, [activities]);
 
   const locked = Boolean(String(lockedContractCode || '').trim());
 
@@ -338,14 +385,6 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowInterferenciaForm(true)}
-              className="h-11 self-end px-4 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold inline-flex items-center justify-center gap-2 hover:bg-[#D94E1F] transition-colors"
-            >
-              <AlertTriangle size={16} />
-              Interferencias
-            </button>
           </div>
         </div>
       </section>
@@ -374,64 +413,66 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
                 onClick={() => setSelectedActivityId(activity.id)}
                 className={`w-full text-left px-5 py-4 transition-colors ${selectedActivity?.id === activity.id ? 'bg-[#FFF7ED]' : 'hover:bg-[#F9FAFB]'}`}
               >
-                <div className="grid grid-cols-1 xl:grid-cols-[minmax(170px,0.75fr)_minmax(260px,1.25fr)_120px_150px_190px] gap-5 items-center">
-                  <div>
-                    <p className="text-[12px] font-bold text-[#2D2D2D]">{activity.osCodigo}</p>
+                <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_120px_170px_130px] gap-4 items-center">
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-bold text-[#2D2D2D] truncate">{activity.osCodigo}</p>
                     {activity.osNome && normalizeText(activity.osNome) !== normalizeText(activity.osCodigo) && (
                       <p className="text-[10px] text-[#757575] uppercase tracking-wider mt-1 truncate">{activity.osNome}</p>
                     )}
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="text-[13px] font-bold text-[#2D2D2D] truncate">{getActivityDisplayName(activity)}</p>
-                    {(activity.criadoPorNome || activity.criadoPorDisciplina) && (
-                      <p className="text-[10px] font-semibold text-[#4B5563] mt-1 truncate">
-                        Registrado por {activity.criadoPorNome || 'Sem nome'}
-                        {activity.criadoPorDisciplina ? ` - ${activity.criadoPorDisciplina}` : ''}
-                      </p>
-                    )}
+                    <p className="text-[13px] font-bold text-[#2D2D2D] truncate mt-2">{getActivityDisplayName(activity)}</p>
                     {activity.itemCodigo && !sameDisplayText(activity.itemCodigo, activity.osCodigo) && !sameDisplayText(activity.itemCodigo, activity.itemNome) && (
                       <p className="text-[11px] text-[#757575] mt-1 truncate">{activity.itemCodigo}</p>
                     )}
                   </div>
 
-                  <div>
+                  <div className="min-w-0">
                     <div className="h-2 rounded-full bg-[#F3F4F6] overflow-hidden">
                       <span className="block h-full bg-[#10B981]" style={{ width: `${activity.avancoAtual}%` }} />
                     </div>
                     <p className="text-[11px] font-bold text-[#2D2D2D] mt-1">{activity.avancoAtual}%</p>
+                    {(activity.criadoPorNome || activity.criadoPorDisciplina) && (
+                      <p className="text-[10px] font-semibold text-[#4B5563] mt-2 leading-tight">
+                        {activity.criadoPorNome || 'Sem nome'}
+                        {activity.criadoPorDisciplina ? (
+                          <>
+                            <br />
+                            {activity.criadoPorDisciplina}
+                          </>
+                        ) : null}
+                      </p>
+                    )}
                   </div>
+
+                  <div onClick={(event) => event.stopPropagation()} className="max-w-[170px]">
+                  <label className="text-[9px] font-bold text-[#92400E] uppercase tracking-widest">Prioridade do contrato</label>
+                  <div className={`mt-1.5 grid grid-cols-[minmax(0,1fr)_42px] gap-1.5 rounded-xl ${prioridadesConfirmadas[activity.id] ? '' : 'ring-2 ring-[#EF4444] ring-offset-2 animate-pulse'}`}>
+                    <select
+                      value={prioridades[activity.id] || '1'}
+                      disabled={Boolean(prioridadesConfirmadas[activity.id])}
+                      onChange={(event) => setPrioridades((prev) => ({ ...prev, [activity.id]: event.target.value }))}
+                      className="w-full min-w-0 h-10 rounded-xl border border-[#FDE68A] bg-[#FEF3C7] px-2 text-[11px] font-bold text-[#92400E] outline-none disabled:opacity-80"
+                    >
+                      <option value="1">1 - Baixa</option>
+                      <option value="2">2 - Media</option>
+                      <option value="3">3 - Alta</option>
+                    </select>
+                    <button
+                      type="button"
+                      disabled={Boolean(prioridadesConfirmadas[activity.id])}
+                      onClick={() => {
+                        setPrioridades((prev) => ({ ...prev, [activity.id]: prev[activity.id] || '1' }));
+                        setPrioridadesConfirmadas((prev) => ({ ...prev, [activity.id]: true }));
+                      }}
+                      className="h-10 rounded-xl bg-[#F05D28] text-white text-[10px] font-black uppercase tracking-wide hover:bg-[#D94E1F] disabled:bg-[#10B981] disabled:opacity-100"
+                    >
+                      OK
+                    </button>
+                  </div>
+                </div>
 
                   <div className="inline-flex items-center gap-2 text-[12px] font-semibold text-[#757575]">
                     <CalendarDays size={15} />
                     {activity.dataFim}
-                  </div>
-
-                  <div onClick={(event) => event.stopPropagation()}>
-                    <label className="text-[9px] font-bold text-[#92400E] uppercase tracking-widest">Importancia</label>
-                    <div className={`mt-2 grid grid-cols-[minmax(0,1fr)_48px] gap-2 rounded-xl ${prioridadesConfirmadas[activity.id] ? '' : 'ring-2 ring-[#EF4444] ring-offset-2 animate-pulse'}`}>
-                      <select
-                        value={prioridades[activity.id] || '1'}
-                        disabled={Boolean(prioridadesConfirmadas[activity.id])}
-                        onChange={(event) => setPrioridades((prev) => ({ ...prev, [activity.id]: event.target.value }))}
-                        className="w-full min-w-0 h-12 rounded-xl border border-[#FDE68A] bg-[#FEF3C7] px-3 text-[12px] font-bold text-[#92400E] outline-none disabled:opacity-80"
-                      >
-                        <option value="1">1 - Baixa</option>
-                        <option value="2">2 - Media</option>
-                        <option value="3">3 - Alta</option>
-                      </select>
-                      <button
-                        type="button"
-                        disabled={Boolean(prioridadesConfirmadas[activity.id])}
-                        onClick={() => {
-                          setPrioridades((prev) => ({ ...prev, [activity.id]: prev[activity.id] || '1' }));
-                          setPrioridadesConfirmadas((prev) => ({ ...prev, [activity.id]: true }));
-                        }}
-                        className="h-12 rounded-xl bg-[#F05D28] text-white text-[11px] font-black uppercase tracking-wide hover:bg-[#D94E1F] disabled:bg-[#10B981] disabled:opacity-100"
-                      >
-                        OK
-                      </button>
-                    </div>
                   </div>
                 </div>
               </button>

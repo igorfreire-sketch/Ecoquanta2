@@ -11,6 +11,7 @@ export interface AuthUser {
   abas: string[];
   isAdmin: boolean;
   online?: boolean;
+  sessionVersion?: string;
 }
 
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset';

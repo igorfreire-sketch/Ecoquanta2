@@ -1,5 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { Mail, Send, X } from 'lucide-react';
+import {
+  buildProfessionalDisciplineMaps,
+  extractParticipantAssignments,
+  getRegistroActivities,
+  isAllContract,
+  normalizeText,
+} from './utils/registroAtividades';
 
 interface Professional {
   name: string;
@@ -28,21 +35,20 @@ interface AlocacoesProps {
   activeContractCode?: string;
 }
 
-function normalizeText(value?: string) {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
-}
+type Assignment = {
+  key: string;
+  nome: string;
+  email: string;
+  disciplina: string;
+  contrato: string;
+};
 
 function formatPercent(value: number) {
   return `${Math.round(value * 10) / 10}`.replace('.', ',') + '%';
 }
 
-function isAllContract(value?: string) {
-  const normalized = normalizeText(value);
-  return !normalized || normalized === 'todos' || normalized === 'todos os contratos';
-}
-
 function getVisibleActivities(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string) {
-  const activities = Array.isArray(preloadedData?.registro?.activitiesList) ? preloadedData.registro.activitiesList : [];
+  const activities = getRegistroActivities(preloadedData?.registro);
   if (isAllContract(activeContractCode)) return activities;
 
   const target = normalizeText(activeContractCode);
@@ -112,76 +118,90 @@ const DisciplineCard: React.FC<DisciplineCardProps> = ({ title, professionals, c
   );
 };
 
-function getDisciplinas(preloadedData?: AlocacoesProps['preloadedData']) {
+function buildAssignments(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string): Assignment[] {
+  const maps = buildProfessionalDisciplineMaps(preloadedData?.registro, preloadedData?.admin);
+  const activities = getVisibleActivities(preloadedData, activeContractCode);
+
+  return activities.flatMap((activity: any, index: number) => {
+    if (String(activity?.status || '').trim().toLowerCase() === 'concluida') return [];
+    const contrato = String(activity?.contratoCodigo || '').trim();
+    return extractParticipantAssignments(activity, maps).map((participant, participantIndex) => ({
+      key: `${String(activity?.activityId || activity?.id || activity?.itemCodigo || index)}-${participant.email || participant.nome}-${participantIndex}`,
+      nome: participant.nome,
+      email: participant.email,
+      disciplina: participant.disciplina,
+      contrato,
+    }));
+  });
+}
+
+function getDisciplinas(preloadedData?: AlocacoesProps['preloadedData'], assignments: Assignment[] = []) {
   const fromAdmin = Array.isArray(preloadedData?.admin?.disciplinas) ? preloadedData.admin.disciplinas : [];
   const fromRegistro = Array.isArray(preloadedData?.registro?.usersSummary)
     ? preloadedData.registro.usersSummary.map((user: any) => String(user?.disciplina || '').trim()).filter(Boolean)
     : [];
-  return Array.from(new Set([...fromAdmin, ...fromRegistro].map(String).map((item) => item.trim()).filter(Boolean)));
+  const fromAssignments = assignments.map((item) => String(item.disciplina || '').trim()).filter(Boolean);
+  return Array.from(new Set([...fromAdmin, ...fromRegistro, ...fromAssignments].map(String).map((item) => item.trim()).filter(Boolean)));
 }
 
-function getProfessionalsByDisciplina(preloadedData?: AlocacoesProps['preloadedData']) {
+function getProfessionalsByDisciplina(preloadedData?: AlocacoesProps['preloadedData'], assignments: Assignment[] = []) {
   const out: Record<string, Array<{ nome: string; email: string; disciplina: string }>> = {};
+  const seen = new Set<string>();
   const professionalsByDisciplina = preloadedData?.registro?.professionalsByDisciplina || {};
 
   Object.keys(professionalsByDisciplina).forEach((disciplina) => {
     const list = Array.isArray(professionalsByDisciplina[disciplina]) ? professionalsByDisciplina[disciplina] : [];
-    out[normalizeText(disciplina)] = list.map((prof: any) => ({
-      nome: String(prof?.nome || '').trim(),
-      email: String(prof?.email || '').trim(),
-      disciplina: String(prof?.disciplina || disciplina || '').trim()
-    })).filter((prof: any) => prof.nome);
+    list.forEach((prof: any) => {
+      const nome = String(prof?.nome || '').trim();
+      const email = String(prof?.email || '').trim();
+      const disciplinaAtual = String(prof?.disciplina || disciplina || '').trim();
+      const key = `${normalizeText(nome)}|${normalizeText(email)}`;
+      if (!nome || seen.has(key)) return;
+      seen.add(key);
+
+      const bucket = normalizeText(disciplinaAtual);
+      if (!out[bucket]) out[bucket] = [];
+      out[bucket].push({ nome, email, disciplina: disciplinaAtual });
+    });
+  });
+
+  assignments.forEach((assignment) => {
+    const key = `${normalizeText(assignment.nome)}|${normalizeText(assignment.email)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    const bucket = normalizeText(assignment.disciplina);
+    if (!out[bucket]) out[bucket] = [];
+    out[bucket].push({
+      nome: assignment.nome,
+      email: assignment.email,
+      disciplina: assignment.disciplina,
+    });
   });
 
   return out;
 }
 
-function buildActivityCountByEmail(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string) {
-  const activities = getVisibleActivities(preloadedData, activeContractCode);
-  const counts: Record<string, number> = {};
-
-  activities.forEach((activity: any) => {
-    if (String(activity?.status || '').trim().toLowerCase() === 'concluida') return;
-    String(activity?.profissionaisEmails || '').split(' | ').map((email) => normalizeText(email)).filter(Boolean).forEach((email) => {
-      counts[email] = (counts[email] || 0) + 1;
-    });
-  });
-
-  return counts;
-}
-
-function getContratosAtivos(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string) {
-  const activities = getVisibleActivities(preloadedData, activeContractCode);
-  return Array.from(new Set(activities
-    .filter((activity: any) => String(activity?.status || '').trim().toLowerCase() !== 'concluida')
-    .map((activity: any) => String(activity?.contratoCodigo || '').trim())
-    .filter(Boolean)));
-}
-
-function buildContractCountsByEmail(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string) {
-  const activities = getVisibleActivities(preloadedData, activeContractCode);
-  const counts: Record<string, Record<string, number>> = {};
-
-  activities.forEach((activity: any) => {
-    if (String(activity?.status || '').trim().toLowerCase() === 'concluida') return;
-    const contrato = String(activity?.contratoCodigo || '').trim();
-    if (!contrato) return;
-
-    String(activity?.profissionaisEmails || '').split(' | ').map((email) => normalizeText(email)).filter(Boolean).forEach((email) => {
-      if (!counts[email]) counts[email] = {};
-      counts[email][contrato] = (counts[email][contrato] || 0) + 1;
-    });
-  });
-
-  return counts;
+function getContratosAtivos(assignments: Assignment[]) {
+  return Array.from(new Set(assignments.map((item) => item.contrato).filter(Boolean)));
 }
 
 function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contratos: string[] = [], activeContractCode?: string): AlocacaoData[] {
-  const disciplinas = getDisciplinas(preloadedData);
-  const professionalsByDisciplina = getProfessionalsByDisciplina(preloadedData);
-  const activityCountByEmail = buildActivityCountByEmail(preloadedData, activeContractCode);
-  const contractCountsByEmail = buildContractCountsByEmail(preloadedData, activeContractCode);
-  const maxCount = Math.max(...Object.values(activityCountByEmail), 1);
+  const assignments = buildAssignments(preloadedData, activeContractCode);
+  const disciplinas = getDisciplinas(preloadedData, assignments);
+  const professionalsByDisciplina = getProfessionalsByDisciplina(preloadedData, assignments);
+  const countByPerson: Record<string, number> = {};
+  const countByContractAndPerson: Record<string, Record<string, number>> = {};
+
+  assignments.forEach((assignment) => {
+    const personKey = normalizeText(assignment.email) || normalizeText(assignment.nome);
+    if (!personKey) return;
+    countByPerson[personKey] = (countByPerson[personKey] || 0) + 1;
+    if (!countByContractAndPerson[personKey]) countByContractAndPerson[personKey] = {};
+    countByContractAndPerson[personKey][assignment.contrato] = (countByContractAndPerson[personKey][assignment.contrato] || 0) + 1;
+  });
+
+  const maxCount = Math.max(...Object.values(countByPerson), 1);
 
   return disciplinas.map((disciplina) => {
     const profissionais = professionalsByDisciplina[normalizeText(disciplina)] || [];
@@ -191,33 +211,34 @@ function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contrat
       disciplina,
       tituloCard: disciplina,
       profissionais: profissionais.map((prof) => {
-        const emailKey = normalizeText(prof.email);
-        const count = activityCountByEmail[emailKey] || 0;
+        const personKey = normalizeText(prof.email) || normalizeText(prof.nome);
+        const count = countByPerson[personKey] || 0;
         const total = count > 0 ? Math.min(100, (count / maxCount) * 100) : 0;
-        const contratoCounts = contractCountsByEmail[emailKey] || {};
+        const contractCounts = countByContractAndPerson[personKey] || {};
         const contratosPercentuais = contratos.reduce((acc, contrato) => {
-          acc[contrato] = count > 0 ? formatPercent(((contratoCounts[contrato] || 0) / count) * 100) : '0,0%';
+          acc[contrato] = count > 0 ? formatPercent(((contractCounts[contrato] || 0) / count) * 100) : '0,0%';
           return acc;
         }, {} as Record<string, string>);
 
         return {
           name: prof.nome,
           total: formatPercent(total),
-          contratos: contratosPercentuais
+          contratos: contratosPercentuais,
         };
-      })
+      }),
     };
   });
 }
 
 const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode }) => {
   const [filtroAtivo, setFiltroAtivo] = useState<string | null>(null);
-  const contratos = useMemo(() => getContratosAtivos(preloadedData, activeContractCode), [preloadedData, activeContractCode]);
+  const assignments = useMemo(() => buildAssignments(preloadedData, activeContractCode), [preloadedData, activeContractCode]);
+  const contratos = useMemo(() => getContratosAtivos(assignments), [assignments]);
   const dadosAlocacoes = useMemo(() => buildAlocacoes(preloadedData, contratos, activeContractCode), [preloadedData, contratos, activeContractCode]);
   const disciplinasLista = dadosAlocacoes.map((item) => item.disciplina);
 
   const cardsFiltrados = filtroAtivo
-    ? dadosAlocacoes.filter(d => d.disciplina === filtroAtivo)
+    ? dadosAlocacoes.filter((d) => d.disciplina === filtroAtivo)
     : dadosAlocacoes;
 
   return (

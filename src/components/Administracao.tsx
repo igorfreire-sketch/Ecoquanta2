@@ -65,6 +65,8 @@ interface AdministracaoProps {
   onUpdateUsuario: (userId: string, patch: Partial<UserAccessRecord>) => void;
   onToggleAdmin: (userId: string, checked: boolean) => void;
   onToggleTabPermission: (userId: string, tabKey: AppTabKey) => void;
+  onSavePendingUsers: () => Promise<void>;
+  dirtyUserIds: string[];
   onAcceptUser: (userId: string) => Promise<void>;
   onBlockUser: (userId: string) => Promise<void>;
   onPasswordReset: (user: UserAccessRecord) => Promise<void>;
@@ -270,7 +272,7 @@ function RoleTabPermissionsManager({
       <div className="px-8 py-6 border-b border-[#E5E7EB]">
         <h2 className="text-[18px] font-bold text-[#2D2D2D]">Abas por Cargo</h2>
         <p className="text-[13px] text-[#757575] mt-1">
-          Cargos novos nascem com todas as abas marcadas. A organizacao pode ser feita desmarcando manualmente o que cada cargo nao deve visualizar.
+          Esta matriz agora funciona somente como pre-selecao. Quando um usuario recebe um cargo, essas abas sao marcadas automaticamente em "Abas permitidas".
         </p>
       </div>
 
@@ -280,7 +282,7 @@ function RoleTabPermissionsManager({
         )}
 
         {cargos.map((cargo) => {
-          const allowed = roleTabPermissions[cargo] || visibleTabs.map((tab) => tab.key);
+          const allowed = roleTabPermissions[cargo] || [];
 
           return (
             <div key={cargo} className="border border-[#E5E7EB] bg-[#F9FAFB] rounded-2xl p-5">
@@ -419,6 +421,8 @@ export default function Administracao({
   onUpdateUsuario,
   onToggleAdmin,
   onToggleTabPermission,
+  onSavePendingUsers,
+  dirtyUserIds,
   onAcceptUser,
   onBlockUser,
   onPasswordReset,
@@ -436,6 +440,7 @@ export default function Administracao({
   const deferredSearch = React.useDeferredValue(search);
   const [disciplinaFiltro, setDisciplinaFiltro] = React.useState('Todas');
   const [cargoFiltro, setCargoFiltro] = React.useState('Todos');
+  const [savingUsers, setSavingUsers] = React.useState(false);
 
   const totalUsuarios = usuarios.length;
   const usuariosOnline = usuarios.filter((user) => user.online).length;
@@ -460,6 +465,18 @@ export default function Administracao({
       return matchesSearch && matchesDisciplina && matchesCargo;
     });
   }, [usuarios, deferredSearch, disciplinaFiltro, cargoFiltro]);
+
+  const hasPendingChanges = dirtyUserIds.length > 0;
+
+  const handleSavePendingUsers = async () => {
+    if (!hasPendingChanges || savingUsers) return;
+    setSavingUsers(true);
+    try {
+      await onSavePendingUsers();
+    } finally {
+      setSavingUsers(false);
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-full">
@@ -540,6 +557,10 @@ export default function Administracao({
             <RefreshCcw size={16} />
             Atualizar
           </button>
+
+          <p className="text-[12px] text-[#C2410C] mt-2">
+            O cargo agora apenas preenche automaticamente as abas permitidas. O acesso real depende somente das abas marcadas para cada usuario.
+          </p>
         </div>
       </section>
 
@@ -554,7 +575,7 @@ export default function Administracao({
         <div className="p-4 lg:p-6 space-y-4">
           {usuariosFiltrados.map((user) => (
             <div key={user.id} className="border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] p-5">
-              <div className="grid grid-cols-1 2xl:grid-cols-[minmax(240px,1.1fr)_minmax(140px,180px)_minmax(160px,200px)_minmax(160px,200px)_minmax(160px,200px)_minmax(180px,220px)_minmax(150px,180px)_minmax(220px,1fr)] gap-4 items-start">
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(260px,1fr)_minmax(0,1.5fr)] gap-5 items-start">
                 <div className="min-w-0">
                   <div className="flex items-center gap-3">
                     <div className="w-11 h-11 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm shrink-0">
@@ -572,6 +593,12 @@ export default function Administracao({
                       {statusLabel(user.status)}
                     </span>
 
+                    {dirtyUserIds.includes(user.id) && (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#FED7AA] bg-[#FFF7ED] text-[#C2410C] text-[11px] font-bold">
+                        Alteracoes pendentes
+                      </span>
+                    )}
+
                     {user.isAdmin ? (
                       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-[#FED7AA] bg-[#FFF7ED] text-[#C2410C] text-[11px] font-bold">
                         <ShieldCheck size={12} />
@@ -586,6 +613,8 @@ export default function Administracao({
                   </div>
                 </div>
 
+                <div className="min-w-0 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="bentham-label">Status</label>
                   <div className="h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center">
@@ -672,7 +701,9 @@ export default function Administracao({
                   </label>
                 </div>
 
-                <div className="flex flex-col gap-1.5 min-w-0 2xl:col-span-1 2xl:row-span-2">
+                </div>
+
+                <div className="flex flex-col gap-1.5 min-w-0">
                   <label className="bentham-label">Abas permitidas</label>
                   <MultiTabSelector
                     user={user}
@@ -681,7 +712,7 @@ export default function Administracao({
                   />
                 </div>
 
-                <div className="flex flex-col gap-2 2xl:col-start-1 2xl:col-end-7">
+                <div className="flex flex-col gap-2">
                   <label className="bentham-label">Ações</label>
                   <div className="flex flex-wrap gap-3">
                   {user.status === 'pending' ? (
@@ -708,6 +739,7 @@ export default function Administracao({
                     Bloquear
                   </button>
                   </div>
+                </div>
                 </div>
               </div>
             </div>
@@ -802,6 +834,20 @@ export default function Administracao({
           ))}
         </div>
       </section>
+
+      {hasPendingChanges && (
+        <div className="fixed right-8 bottom-8 z-30 flex">
+          <button
+            type="button"
+            onClick={() => void handleSavePendingUsers()}
+            disabled={savingUsers}
+            className="h-14 px-6 bg-[#F05D28] text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-[#F05D28]/25 disabled:opacity-70"
+          >
+            <Save size={18} />
+            {savingUsers ? 'Enviando...' : `Enviar informacoes (${dirtyUserIds.length})`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

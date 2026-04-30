@@ -275,13 +275,31 @@ const difficultyColorMap: Record<DifficultyLevel, string> = {
 
 function parsePtBrDateTime(text?: string) {
   if (!text) return null;
-  const parts = String(text).trim().split(' ');
-  if (parts.length < 2) return null;
-  const [datePart, timePart] = parts;
-  const d = datePart.split('/'); const t = timePart.split(':');
-  if (d.length !== 3 || t.length < 2) return null;
-  const result = new Date(Number(d[2]), Number(d[1]) - 1, Number(d[0]), Number(t[0]), Number(t[1]), t[2] ? Number(t[2]) : 0);
-  return Number.isNaN(result.getTime()) ? null : result;
+  const normalized = String(text).trim();
+  if (!normalized) return null;
+
+  const parts = normalized.split(' ');
+  if (parts.length >= 2) {
+    const [datePart, timePart] = parts;
+    const d = datePart.split('/');
+    const t = timePart.split(':');
+    if (d.length === 3 && t.length >= 2) {
+      const result = new Date(
+        Number(d[2]),
+        Number(d[1]) - 1,
+        Number(d[0]),
+        Number(t[0]),
+        Number(t[1]),
+        t[2] ? Number(t[2]) : 0
+      );
+      if (!Number.isNaN(result.getTime())) return result;
+    }
+  }
+
+  const nativeDate = new Date(normalized);
+  if (!Number.isNaN(nativeDate.getTime())) return nativeDate;
+
+  return null;
 }
 
 function getDaysWithoutUpdate(value?: string) {
@@ -289,6 +307,15 @@ function getDaysWithoutUpdate(value?: string) {
   if (!dt) return '-';
   const diffDays = Math.floor((new Date().getTime() - dt.getTime()) / (1000 * 60 * 60 * 24));
   return String(Math.max(0, diffDays));
+}
+
+function formatShortPtBrDate(value?: string) {
+  const dt = parsePtBrDateTime(value);
+  if (!dt) return '';
+  const day = String(dt.getDate()).padStart(2, '0');
+  const month = String(dt.getMonth() + 1).padStart(2, '0');
+  const year = String(dt.getFullYear()).slice(-2);
+  return `${day}/${month}/${year}`;
 }
 
 function createLocalId() {
@@ -809,13 +836,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
               </div>
             </div>
 
-            <div className="max-w-[220px]">
-              <label className="bentham-label">8. % INICIAL</label>
-              <div className="relative">
-                <input type="number" min={0} max={100} value={formData.avancoInicial} onChange={(e) => setFormData((prev) => ({ ...prev, avancoInicial: normalizePercentage(Number(e.target.value)) }))} className="bentham-input pr-10" />
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[12px] font-bold text-bentham-gray">%</span>
-              </div>
-            </div>
           </div>
         )}
 
@@ -831,7 +851,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
               </select>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6">
               <div>
                 <label className="bentham-label">2. OS</label>
                 <select className="bentham-select" value={formData.osCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, osCodigo: e.target.value, itemCodigo: '' }))}>
@@ -853,6 +873,13 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
                   <option value="">Selecione...</option><option value="Facil">Fácil</option><option value="Moderada">Moderada</option><option value="Dificil">Difícil</option>
                 </select>
               </div>
+              <div>
+                <label className="bentham-label">8. % INICIAL</label>
+                <div className="relative">
+                  <input type="number" min={0} max={100} value={formData.avancoInicial} onChange={(e) => setFormData((prev) => ({ ...prev, avancoInicial: normalizePercentage(Number(e.target.value)) }))} className="bentham-input pr-10" />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[12px] font-bold text-bentham-gray">%</span>
+                </div>
+              </div>
             </div>
 
             <div>
@@ -865,6 +892,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
               <textarea placeholder="Descreva a atividade com no mínimo 50 caracteres..." className="bentham-textarea min-h-[100px]" value={formData.descricao} onChange={(e) => setFormData((prev) => ({ ...prev, descricao: e.target.value }))} />
               <div className="absolute bottom-3 right-3 text-[10px] font-medium text-bentham-gray">{formData.descricao.length} caracteres</div>
             </div>
+
           </div>
 
           <div className="flex flex-col lg:flex-row gap-4 lg:items-center">
@@ -920,8 +948,13 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
                         {activity.osNome}
                       </div>
                       <div className="text-[13px] font-bold text-bentham-dark truncate">
-                        {activity.itemCodigo} - {activity.itemNome}
+                        {activity.itemNome}
                       </div>
+                      {formatShortPtBrDate(activity.dataRegistro) ? (
+                        <div className="mt-1 text-[11px] font-medium text-bentham-gray">
+                          registrado dia {formatShortPtBrDate(activity.dataRegistro)}
+                        </div>
+                      ) : null}
                       <div className="mt-2 flex flex-wrap gap-3 text-[12px] text-bentham-gray">
                         <span>Profissionais: {draft.profissionaisNomes.join(', ') || '-'}</span>
                         <span>Dias sem atualização: {getDaysWithoutUpdate(activity.ultimaAtualizacao)}</span>

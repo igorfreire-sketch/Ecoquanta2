@@ -111,6 +111,19 @@ interface LocalDraftPayload {
   draftQueue: NewActivityDraft[]; pendingChanges: Record<string, ActivityUpdateDraft>; expandedActivities: Record<string, boolean>;
 }
 
+interface RegistroViewCachePayload {
+  contracts?: EapContractOption[];
+  osOptions?: EapOsOption[];
+  itemOptions?: EapItemOption[];
+  hierarchyNodes?: EapHierarchyNode[];
+  childrenByParent?: Record<string, EapHierarchyNode[]>;
+  rootCodes?: string[];
+  professionals?: ProfessionalOption[];
+  activeActivities?: RegistroAtividade[];
+  completedActivities?: RegistroAtividade[];
+  updatedAt?: string;
+}
+
 function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser) {
   const empty = {
     contracts: [] as EapContractOption[],
@@ -324,7 +337,34 @@ function createLocalId() {
 }
 
 function getDraftStorageKey(email: string) { return `quanta_registro_atividade_${String(email || '').trim().toLowerCase()}`; }
-function getActivitiesCacheKey(email: string) { return `quanta_registro_atividade_cache_${String(email || '').trim().toLowerCase()}`; }
+function getRegistroCacheKey(email: string) { return `quanta_registro_atividade_cache_${String(email || '').trim().toLowerCase()}`; }
+
+function readRegistroCache(email: string): RegistroViewCachePayload | null {
+  try {
+    const raw = localStorage.getItem(getRegistroCacheKey(email));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RegistroViewCachePayload;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function mergeRegistroViewData(serverData: ReturnType<typeof buildRegistroViewModel>, cachedData: RegistroViewCachePayload | null) {
+  if (!cachedData) return serverData;
+
+  return {
+    contracts: serverData.contracts.length ? serverData.contracts : cachedData.contracts || [],
+    osOptions: serverData.osOptions.length ? serverData.osOptions : cachedData.osOptions || [],
+    itemOptions: serverData.itemOptions.length ? serverData.itemOptions : cachedData.itemOptions || [],
+    hierarchyNodes: serverData.hierarchyNodes.length ? serverData.hierarchyNodes : cachedData.hierarchyNodes || [],
+    childrenByParent: Object.keys(serverData.childrenByParent || {}).length ? serverData.childrenByParent : cachedData.childrenByParent || {},
+    rootCodes: serverData.rootCodes.length ? serverData.rootCodes : cachedData.rootCodes || [],
+    professionals: serverData.professionals.length ? serverData.professionals : cachedData.professionals || [],
+    activeActivities: mergeActivitiesWithCache(serverData.activeActivities, cachedData.activeActivities || []),
+    completedActivities: mergeActivitiesWithCache(serverData.completedActivities, cachedData.completedActivities || []),
+  };
+}
 
 function hasLocalDraftPayload(payload: LocalDraftPayload) {
   const draftQueue = Array.isArray(payload?.draftQueue) ? payload.draftQueue : [];
@@ -430,12 +470,13 @@ function MultiProfessionalSelector({ value, options, onChange }: { value: string
 }
 
 export default function RegistroDeAtividade({ currentUser, preloadedData }: RegistroDeAtividadeProps) {
-  const initialRegistroData = buildRegistroViewModel(preloadedData, currentUser);
+  const initialRegistroData = mergeRegistroViewData(buildRegistroViewModel(preloadedData, currentUser), readRegistroCache(currentUser.email));
   const [contracts, setContracts] = useState<EapContractOption[]>(initialRegistroData.contracts);
   const [osOptions, setOsOptions] = useState<EapOsOption[]>(initialRegistroData.osOptions);
   const [itemOptions, setItemOptions] = useState<EapItemOption[]>(initialRegistroData.itemOptions);
   const [hierarchyNodes, setHierarchyNodes] = useState<EapHierarchyNode[]>(initialRegistroData.hierarchyNodes);
   const [childrenByParent, setChildrenByParent] = useState<Record<string, EapHierarchyNode[]>>(initialRegistroData.childrenByParent);
+  const [rootCodes, setRootCodes] = useState<string[]>(initialRegistroData.rootCodes);
   const [professionals, setProfessionals] = useState<ProfessionalOption[]>(initialRegistroData.professionals);
   const [activeActivities, setActiveActivities] = useState<RegistroAtividade[]>(initialRegistroData.activeActivities);
   const [completedActivities, setCompletedActivities] = useState<RegistroAtividade[]>(initialRegistroData.completedActivities);
@@ -463,11 +504,10 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
     contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [] as string[], dificuldade: '' as DifficultyLevel | '', descricao: '', avancoInicial: 0,
   });
 
-  const persistActivitiesCache = (nextActiveActivities: RegistroAtividade[], nextCompletedActivities: RegistroAtividade[]) => {
+  const persistRegistroCache = (payload: RegistroViewCachePayload) => {
     try {
-      localStorage.setItem(getActivitiesCacheKey(currentUser.email), JSON.stringify({
-        activeActivities: nextActiveActivities,
-        completedActivities: nextCompletedActivities,
+      localStorage.setItem(getRegistroCacheKey(currentUser.email), JSON.stringify({
+        ...payload,
         updatedAt: new Date().toISOString(),
       }));
     } catch (error) {}
@@ -476,7 +516,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const applyActivitiesState = (nextActiveActivities: RegistroAtividade[], nextCompletedActivities: RegistroAtividade[]) => {
     setActiveActivities(nextActiveActivities);
     setCompletedActivities(nextCompletedActivities);
-    persistActivitiesCache(nextActiveActivities, nextCompletedActivities);
   };
 
   const applyRegistroSnapshot = (snapshot?: Partial<RegistroDataResponse>) => {
@@ -484,6 +523,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
     if (Array.isArray(snapshot.contracts)) setContracts(snapshot.contracts);
     if (Array.isArray(snapshot.osOptions)) setOsOptions(snapshot.osOptions);
     if (Array.isArray(snapshot.itemOptions)) setItemOptions(snapshot.itemOptions);
+    if (Array.isArray(snapshot.rootCodes)) setRootCodes(snapshot.rootCodes);
     const nextHierarchyNodes = normalizeHierarchyNodes(snapshot.hierarchyNodes, snapshot.contracts, snapshot.osOptions, snapshot.itemOptions);
     if (nextHierarchyNodes.length) {
       setHierarchyNodes(nextHierarchyNodes);
@@ -499,12 +539,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
 
   useEffect(() => {
     if (preloadedData && Object.keys(preloadedData).length > 0) {
-      const nextData = buildRegistroViewModel(preloadedData, currentUser);
-      let cachedActivities: { activeActivities?: RegistroAtividade[]; completedActivities?: RegistroAtividade[] } | null = null;
-      try {
-        const raw = localStorage.getItem(getActivitiesCacheKey(currentUser.email));
-        cachedActivities = raw ? JSON.parse(raw) as { activeActivities?: RegistroAtividade[]; completedActivities?: RegistroAtividade[] } : null;
-      } catch (error) {}
+      const nextData = mergeRegistroViewData(buildRegistroViewModel(preloadedData, currentUser), readRegistroCache(currentUser.email));
       setContracts(nextData.contracts);
       setOsOptions(nextData.osOptions);
       setItemOptions(nextData.itemOptions);
@@ -512,13 +547,28 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       setChildrenByParent(Object.keys(nextData.childrenByParent || {}).length > 0
         ? nextData.childrenByParent
         : buildChildrenMapFromNodes(normalizeHierarchyNodes(nextData.hierarchyNodes, nextData.contracts, nextData.osOptions, nextData.itemOptions)));
+      setRootCodes(nextData.rootCodes);
       setProfessionals(nextData.professionals);
       applyActivitiesState(
-        mergeActivitiesWithCache(nextData.activeActivities, cachedActivities?.activeActivities || []),
-        mergeActivitiesWithCache(nextData.completedActivities, cachedActivities?.completedActivities || []),
+        nextData.activeActivities,
+        nextData.completedActivities,
       );
     }
   }, [preloadedData, currentUser]);
+
+  useEffect(() => {
+    persistRegistroCache({
+      contracts,
+      osOptions,
+      itemOptions,
+      hierarchyNodes,
+      childrenByParent,
+      rootCodes,
+      professionals,
+      activeActivities,
+      completedActivities,
+    });
+  }, [contracts, osOptions, itemOptions, hierarchyNodes, childrenByParent, rootCodes, professionals, activeActivities, completedActivities]);
 
   useEffect(() => {
     const lockedContract = String(currentUser.contrato || '').trim();
@@ -570,11 +620,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
 
   const fetchFreshData = async () => {
     try {
-      let cachedActivities: { activeActivities?: RegistroAtividade[]; completedActivities?: RegistroAtividade[] } | null = null;
-      try {
-        const rawCache = localStorage.getItem(getActivitiesCacheKey(currentUser.email));
-        cachedActivities = rawCache ? JSON.parse(rawCache) as { activeActivities?: RegistroAtividade[]; completedActivities?: RegistroAtividade[] } : null;
-      } catch (error) {}
+      const cachedData = readRegistroCache(currentUser.email);
 
       const [payload, eapPayload] = await Promise.all([
         fetchRegistroPublicData<PublicRegistroEnvelope>(),
@@ -624,6 +670,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       setContracts(registro.contracts || []);
       setOsOptions(registro.osOptions || []);
       setItemOptions(registro.itemOptions || []);
+      setRootCodes(registro.rootCodes || []);
       const nextHierarchyNodes = normalizeHierarchyNodes(registro.hierarchyNodes, registro.contracts, registro.osOptions, registro.itemOptions);
       setHierarchyNodes(nextHierarchyNodes);
       setChildrenByParent(registro.childrenByParent && Object.keys(registro.childrenByParent).length > 0
@@ -631,8 +678,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
         : buildChildrenMapFromNodes(nextHierarchyNodes));
       setProfessionals(registro.professionalsByDisciplina?.[disciplinaKey] || []);
       applyActivitiesState(
-        mergeActivitiesWithCache(mappedActivities.filter((item) => item.status !== 'concluida'), cachedActivities?.activeActivities || []),
-        mergeActivitiesWithCache(mappedActivities.filter((item) => item.status === 'concluida'), cachedActivities?.completedActivities || []),
+        mergeActivitiesWithCache(mappedActivities.filter((item) => item.status !== 'concluida'), cachedData?.activeActivities || []),
+        mergeActivitiesWithCache(mappedActivities.filter((item) => item.status === 'concluida'), cachedData?.completedActivities || []),
       );
     } catch {
       try {
@@ -640,6 +687,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
         setContracts(fallback.contracts || []);
         setOsOptions(fallback.osOptions || []);
         setItemOptions(fallback.itemOptions || []);
+        setRootCodes(fallback.rootCodes || []);
         const fallbackHierarchyNodes = normalizeHierarchyNodes(fallback.hierarchyNodes, fallback.contracts, fallback.osOptions, fallback.itemOptions);
         setHierarchyNodes(fallbackHierarchyNodes);
         setChildrenByParent(fallback.childrenByParent && Object.keys(fallback.childrenByParent).length > 0

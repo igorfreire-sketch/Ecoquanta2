@@ -163,6 +163,18 @@ export async function fetchCronogramaModulePublicData<T>() {
   return fetchPublicJson<T>('app-cronograma.json');
 }
 
+export async function fetchControleModulePublicData<T>() {
+  return fetchPublicJson<T>('app-controle.json');
+}
+
+export async function fetchContratoModulePublicData<T>() {
+  return fetchPublicJson<T>('app-contrato.json');
+}
+
+export async function fetchNaoConformidadesModulePublicData<T>() {
+  return fetchPublicJson<T>('app-nc.json');
+}
+
 export async function fetchEapPublicData<T>() {
   return fetchPublicJson<T>('eap-unificada.json');
 }

@@ -28,8 +28,11 @@ import type {
 import LoginScreen, { AuthUser } from './components/LoginScreen';
 import {
   fetchAdminModulePublicData,
+  fetchContratoModulePublicData,
+  fetchControleModulePublicData,
   fetchCronogramaModulePublicData,
   fetchEapPublicData,
+  fetchNaoConformidadesModulePublicData,
   fetchRegistroModulePublicData,
   fetchRegistroPublicData,
 } from './lib/publicJson';
@@ -224,15 +227,29 @@ function hasAnyGlobalData(data: GlobalData) {
 }
 
 async function fetchGlobalPublicDataFromJson() {
-  const [registroPayload, adminPayload, cronogramaPayload, eapPayload] = await Promise.all([
+  const [
+    registroPayload,
+    controlePayload,
+    contratoPayload,
+    ncPayload,
+    cronogramaPayload,
+    adminPayload,
+    eapPayload,
+  ] = await Promise.all([
     fetchRegistroModulePublicData<PublicModulePayload>().catch(() => null),
-    fetchAdminModulePublicData<PublicModulePayload>().catch(() => null),
+    fetchControleModulePublicData<PublicModulePayload>().catch(() => null),
+    fetchContratoModulePublicData<PublicModulePayload>().catch(() => null),
+    fetchNaoConformidadesModulePublicData<PublicModulePayload>().catch(() => null),
     fetchCronogramaModulePublicData<PublicModulePayload>().catch(() => null),
+    fetchAdminModulePublicData<PublicModulePayload>().catch(() => null),
     fetchEapPublicData<PublicEapPayload>().catch(() => null),
   ]);
 
   let fullData: GlobalData = {};
   fullData = mergeGlobalData(fullData, registroPayload?.data);
+  fullData = mergeGlobalData(fullData, controlePayload?.data);
+  fullData = mergeGlobalData(fullData, contratoPayload?.data);
+  fullData = mergeGlobalData(fullData, ncPayload?.data);
   fullData = mergeGlobalData(fullData, adminPayload?.data);
   fullData = mergeGlobalData(fullData, cronogramaPayload?.data);
 

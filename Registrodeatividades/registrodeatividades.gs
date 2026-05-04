@@ -2140,6 +2140,7 @@ function publishAppModuleJsons_(payloadData) {
       module: "cronograma",
       publishedAt: publishedAt,
       data: {
+        registro: payloadData.registro,
         cronograma: payloadData.cronograma
       }
     }
@@ -2166,7 +2167,8 @@ function publishAppModuleJsons_(payloadData) {
       module: "contrato",
       publishedAt: publishedAt,
       data: {
-        registro: payloadData.registro
+        registro: payloadData.registro,
+        cronograma: payloadData.cronograma
       }
     }
   );

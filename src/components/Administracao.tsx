@@ -14,7 +14,9 @@ import {
   Database,
   ExternalLink,
   Save,
+  ChevronRight,
 } from 'lucide-react';
+import TerceirizadasCadastro from './TerceirizadasCadastro';
 
 export type AppTabKey =
   | 'registro'
@@ -52,21 +54,30 @@ export interface DatabaseLinkRecord {
   atualizadoEm?: string;
 }
 
+export interface TerceirizadaRecord {
+  id: string;
+  nome: string;
+  disciplina: string;
+}
+
 interface AdministracaoProps {
   usuarios: UserAccessRecord[];
   disciplinas: DisciplinaOption[];
   cargos: CargoOption[];
   alocacoes: string[];
+  terceirizadas: TerceirizadaRecord[];
   contratos: Array<{ id: string; nome: string }>;
   roleTabPermissions: RoleTabPermissions;
   databaseLinks: DatabaseLinkRecord[];
   appTabs: Array<{ key: AppTabKey; label: string }>;
+  activeSection?: 'usuarios' | 'terceirizadas' | 'gerenciamento';
   onRefresh: () => Promise<void>;
   onUpdateUsuario: (userId: string, patch: Partial<UserAccessRecord>) => void;
   onToggleAdmin: (userId: string, checked: boolean) => void;
   onToggleTabPermission: (userId: string, tabKey: AppTabKey) => void;
   onSavePendingUsers: () => Promise<void>;
   dirtyUserIds: string[];
+  pendingTerceirizadaIds: string[];
   onAcceptUser: (userId: string) => Promise<void>;
   onBlockUser: (userId: string) => Promise<void>;
   onPasswordReset: (user: UserAccessRecord) => Promise<void>;
@@ -76,6 +87,8 @@ interface AdministracaoProps {
   onRemoveCargo: (value: string) => Promise<void>;
   onAddAlocacao: (value: string) => Promise<void>;
   onRemoveAlocacao: (value: string) => Promise<void>;
+  onSaveTerceirizada: (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => Promise<void>;
+  onDeleteTerceirizada: (id: string) => Promise<void>;
   onToggleRoleTabPermission: (cargo: string, tabKey: AppTabKey) => Promise<void>;
   onSaveDatabaseLink: (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => Promise<void>;
   onDeleteDatabaseLink: (id: string) => Promise<void>;
@@ -285,15 +298,19 @@ function RoleTabPermissionsManager({
           const allowed = roleTabPermissions[cargo] || [];
 
           return (
-            <div key={cargo} className="border border-[#E5E7EB] bg-[#F9FAFB] rounded-2xl p-5">
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(180px,240px)_1fr] gap-4">
-                <div className="min-w-0">
+            <details key={cargo} className="group border border-[#E5E7EB] bg-[#F9FAFB] rounded-2xl overflow-hidden">
+              <summary className="min-h-[60px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-white transition-colors [&::-webkit-details-marker]:hidden">
+                <div className="min-w-0 flex-1">
                   <p className="text-[14px] font-bold text-[#2D2D2D] truncate">{cargo}</p>
-                  <p className="text-[12px] text-[#757575] mt-1">
+                  <p className="text-[12px] text-[#757575]">
                     {allowed.length} aba(s) liberada(s)
                   </p>
                 </div>
 
+                <ChevronRight size={20} className="shrink-0 text-[#757575] transition-transform group-open:rotate-90" />
+              </summary>
+
+              <div className="border-t border-[#E5E7EB] p-5">
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                   {visibleTabs.map((tab) => {
                     const checked = allowed.includes(tab.key);
@@ -315,7 +332,7 @@ function RoleTabPermissionsManager({
                   })}
                 </div>
               </div>
-            </div>
+            </details>
           );
         })}
       </div>
@@ -408,21 +425,167 @@ function DatabaseForm({
   );
 }
 
+function TerceirizadasManager({
+  terceirizadas,
+  disciplinas,
+  onSave,
+  onDelete,
+  pendingIds,
+}: {
+  terceirizadas: TerceirizadaRecord[];
+  disciplinas: string[];
+  onSave: (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  pendingIds: string[];
+}) {
+  const [nome, setNome] = React.useState('');
+  const [disciplina, setDisciplina] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = nome.trim();
+    const cleanDisciplina = disciplina.trim();
+    if (!cleanName || !cleanDisciplina) return;
+
+    setLoading(true);
+    try {
+      await onSave({ nome: cleanName, disciplina: cleanDisciplina });
+      setNome('');
+      setDisciplina('');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
+      <div className="px-8 py-6 border-b border-[#E5E7EB]">
+        <div className="flex items-center gap-3">
+          <Users size={18} className="text-[#F05D28]" />
+          <h2 className="text-[18px] font-bold text-[#2D2D2D]">Terceirizadas por Disciplina</h2>
+        </div>
+        <p className="text-[13px] text-[#757575] mt-1">
+          Empresas cadastradas aparecem junto dos profissionais no registro de atividades, respeitando o filtro de disciplina.
+        </p>
+      </div>
+
+      <div className="p-6 space-y-5">
+        <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-[minmax(220px,1fr)_minmax(180px,260px)_auto] gap-4 items-end">
+          <div>
+            <label className="bentham-label">Nome da terceirizada</label>
+            <input
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              className="bentham-input"
+              placeholder="Ex.: Empresa parceira"
+            />
+          </div>
+
+          <div>
+            <label className="bentham-label">Disciplina</label>
+            <select
+              value={disciplina}
+              onChange={(e) => setDisciplina(e.target.value)}
+              className="bentham-select"
+            >
+              <option value="">Selecionar</option>
+              {disciplinas.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading || !nome.trim() || !disciplina.trim()}
+            className="h-11 px-5 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-70"
+          >
+            <Plus size={16} />
+            Registrar
+          </button>
+        </form>
+
+        <div className="space-y-4">
+          {terceirizadas.length === 0 && (
+            <p className="text-[13px] text-[#757575]">Nenhuma terceirizada cadastrada.</p>
+          )}
+
+          {terceirizadas.map((item) => (
+            <details key={item.id} className="group border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] overflow-hidden">
+              <summary className="min-h-[64px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-white transition-colors [&::-webkit-details-marker]:hidden">
+                <div className="w-10 h-10 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm shrink-0">
+                  {getUserInitials(item.nome)}
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <p className="text-[14px] font-bold text-[#2D2D2D] truncate">{item.nome}</p>
+                  <p className="text-[12px] text-[#757575] truncate">{item.disciplina}</p>
+                </div>
+
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-white text-[#757575] text-[11px] font-bold shrink-0">
+                  TERCEIRIZADA
+                </span>
+
+                {pendingIds.includes(item.id) && (
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#FED7AA] bg-[#FFF7ED] text-[#C2410C] text-[11px] font-bold shrink-0">
+                    Alteracoes pendentes
+                  </span>
+                )}
+
+                <ChevronRight size={20} className="shrink-0 text-[#757575] transition-transform group-open:rotate-90" />
+              </summary>
+
+              <div className="border-t border-[#E5E7EB] p-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="bentham-label">Disciplina</label>
+                    <div className="h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center text-[13px] font-medium text-[#2D2D2D]">
+                      {item.disciplina}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <label className="bentham-label">Ações</label>
+                    <button
+                      type="button"
+                      onClick={() => void onDelete(item.id)}
+                      className="h-11 px-4 rounded-xl bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] text-[13px] font-bold hover:bg-[#FEE2E2] transition-colors inline-flex items-center justify-center gap-2 w-fit"
+                    >
+                      <Trash2 size={16} />
+                      Excluir
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function Administracao({
   usuarios,
   disciplinas,
   cargos,
   alocacoes,
+  terceirizadas,
   contratos,
   roleTabPermissions,
   databaseLinks,
   appTabs,
+  activeSection = 'usuarios',
   onRefresh,
   onUpdateUsuario,
   onToggleAdmin,
   onToggleTabPermission,
   onSavePendingUsers,
   dirtyUserIds,
+  pendingTerceirizadaIds,
   onAcceptUser,
   onBlockUser,
   onPasswordReset,
@@ -432,6 +595,8 @@ export default function Administracao({
   onRemoveCargo,
   onAddAlocacao,
   onRemoveAlocacao,
+  onSaveTerceirizada,
+  onDeleteTerceirizada,
   onToggleRoleTabPermission,
   onSaveDatabaseLink,
   onDeleteDatabaseLink,
@@ -466,7 +631,8 @@ export default function Administracao({
     });
   }, [usuarios, deferredSearch, disciplinaFiltro, cargoFiltro]);
 
-  const hasPendingChanges = dirtyUserIds.length > 0;
+  const pendingChangesCount = dirtyUserIds.length + pendingTerceirizadaIds.length;
+  const hasPendingChanges = pendingChangesCount > 0;
 
   const handleSavePendingUsers = async () => {
     if (!hasPendingChanges || savingUsers) return;
@@ -480,6 +646,8 @@ export default function Administracao({
 
   return (
     <div className="space-y-6 max-w-full">
+      {activeSection === 'usuarios' && (
+        <>
       <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 lg:p-8">
         <div className="space-y-6">
           <div>
@@ -574,19 +742,24 @@ export default function Administracao({
 
         <div className="p-4 lg:p-6 space-y-4">
           {usuariosFiltrados.map((user) => (
-            <div key={user.id} className="border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] p-5">
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(260px,1fr)_minmax(0,1.5fr)] gap-5 items-start">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm shrink-0">
-                      {getUserInitials(user.nome)}
-                    </div>
+            <details key={user.id} className="group border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] overflow-hidden">
+              <summary className="min-h-[64px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-white transition-colors [&::-webkit-details-marker]:hidden">
+                <div className="w-10 h-10 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm shrink-0">
+                  {getUserInitials(user.nome)}
+                </div>
 
-                    <div className="min-w-0">
-                      <p className="text-[14px] font-bold text-[#2D2D2D] truncate">{user.nome}</p>
-                      <p className="text-[12px] text-[#757575] truncate">{user.email}</p>
-                    </div>
-                  </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[14px] font-bold text-[#2D2D2D] truncate">{user.nome}</p>
+                  <p className="text-[12px] text-[#757575] truncate">{user.email}</p>
+                </div>
+
+                <ChevronRight size={20} className="shrink-0 text-[#757575] transition-transform group-open:rotate-90" />
+              </summary>
+
+              <div className="border-t border-[#E5E7EB] p-5">
+                <div className="grid grid-cols-1 xl:grid-cols-[minmax(260px,1fr)_minmax(0,1.5fr)] gap-5 items-start">
+                  <div className="min-w-0">
+                    <p className="text-[12px] text-[#757575] truncate">{user.email}</p>
 
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] font-bold ${statusClasses(user.status)}`}>
@@ -742,11 +915,26 @@ export default function Administracao({
                 </div>
                 </div>
               </div>
-            </div>
+              </div>
+            </details>
           ))}
         </div>
       </section>
+        </>
+      )}
 
+      {activeSection === 'terceirizadas' && (
+      <TerceirizadasCadastro
+        terceirizadas={terceirizadas}
+        disciplinas={disciplinas}
+        onSave={onSaveTerceirizada}
+        onDelete={onDeleteTerceirizada}
+        pendingIds={pendingTerceirizadaIds}
+      />
+      )}
+
+      {activeSection === 'gerenciamento' && (
+        <>
       <section className="grid grid-cols-1 2xl:grid-cols-3 gap-6">
         <InlineListManager
           title="Gerenciar Cargos"
@@ -834,6 +1022,8 @@ export default function Administracao({
           ))}
         </div>
       </section>
+        </>
+      )}
 
       {hasPendingChanges && (
         <div className="fixed right-8 bottom-8 z-30 flex">
@@ -844,7 +1034,7 @@ export default function Administracao({
             className="h-14 px-6 bg-[#F05D28] text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-[#F05D28]/25 disabled:opacity-70"
           >
             <Save size={18} />
-            {savingUsers ? 'Enviando...' : `Enviar informacoes (${dirtyUserIds.length})`}
+            {savingUsers ? 'Enviando...' : `Enviar informacoes (${pendingChangesCount})`}
           </button>
         </div>
       )}

@@ -24,6 +24,7 @@ interface ContratoProps {
   };
   activeContractCode?: string;
   lockedContractCode?: string;
+  activeView?: 'dashboard' | 'interferencias' | 'prioridades';
 }
 
 interface ActivityRow {
@@ -239,7 +240,7 @@ function ActivityJourney({ activity }: { activity: ActivityRow }) {
     <div className="border border-[#E5E7EB] bg-white rounded-[12px] p-6 shadow-sm">
       <div className="flex flex-col gap-1 mb-6">
         <p className="text-[11px] font-bold uppercase tracking-widest text-[#757575]">{activity.osCodigo}</p>
-        <h3 className="text-[18px] font-bold text-[#2D2D2D] leading-tight">{activity.itemNome}</h3>
+        <h3 className="text-[18px] font-bold text-[#2D2D2D] leading-tight">{activity.osNome || activity.itemNome}</h3>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -274,7 +275,155 @@ function ActivityJourney({ activity }: { activity: ActivityRow }) {
   );
 }
 
-export default function Contrato({ preloadedData, activeContractCode, lockedContractCode }: ContratoProps) {
+function ActivitiesList({
+  activities,
+  selectedActivity,
+  onSelect,
+}: {
+  activities: ActivityRow[];
+  selectedActivity: ActivityRow | null;
+  onSelect: (activityId: string) => void;
+}) {
+  return (
+    <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
+      <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <ClipboardList size={18} className="text-[#F05D28]" />
+          <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Atividades sendo executadas</h3>
+        </div>
+        <span className="text-[11px] font-bold text-[#757575]">{activities.length} em execução</span>
+      </div>
+
+      <div className="divide-y divide-[#E5E7EB]">
+        {activities.length === 0 && (
+          <div className="py-12 px-6 text-center text-[13px] font-medium text-[#757575]">
+            Nenhuma atividade em execução para este contrato.
+          </div>
+        )}
+
+        {activities.map((activity) => (
+          <button
+            type="button"
+            key={activity.id}
+            onClick={() => onSelect(activity.id)}
+            className={`w-full text-left px-5 py-4 transition-colors ${selectedActivity?.id === activity.id ? 'bg-[#FFF7ED]' : 'hover:bg-[#F9FAFB]'}`}
+          >
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_120px_130px] gap-4 items-center">
+              <div className="min-w-0">
+                <p className="text-[12px] font-bold text-[#2D2D2D] truncate">{activity.osCodigo}</p>
+                {activity.osNome && normalizeText(activity.osNome) !== normalizeText(activity.osCodigo) && (
+                  <p className="text-[10px] text-[#757575] uppercase tracking-wider mt-1 truncate">{activity.osNome}</p>
+                )}
+                <p className="text-[13px] font-bold text-[#2D2D2D] truncate mt-2">{getActivityDisplayName(activity)}</p>
+                {activity.itemCodigo && !sameDisplayText(activity.itemCodigo, activity.osCodigo) && !sameDisplayText(activity.itemCodigo, activity.itemNome) && (
+                  <p className="text-[11px] text-[#757575] mt-1 truncate">{activity.itemCodigo}</p>
+                )}
+              </div>
+
+              <div className="min-w-0">
+                <div className="h-2 rounded-full bg-[#F3F4F6] overflow-hidden">
+                  <span className="block h-full bg-[#10B981]" style={{ width: `${activity.avancoAtual}%` }} />
+                </div>
+                <p className="text-[11px] font-bold text-[#2D2D2D] mt-1">{activity.avancoAtual}%</p>
+                {(activity.criadoPorNome || activity.criadoPorDisciplina) && (
+                  <p className="text-[10px] font-semibold text-[#4B5563] mt-2 leading-tight">
+                    {activity.criadoPorNome || 'Sem nome'}
+                    {activity.criadoPorDisciplina ? (
+                      <>
+                        <br />
+                        {activity.criadoPorDisciplina}
+                      </>
+                    ) : null}
+                  </p>
+                )}
+              </div>
+
+              <div className="inline-flex items-center gap-2 text-[12px] font-semibold text-[#757575]">
+                <CalendarDays size={15} />
+                {activity.dataFim}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PriorityDesk({
+  activity,
+  pendingCount,
+  priority,
+  confirmed,
+  onPriorityChange,
+  onConfirm,
+}: {
+  activity: ActivityRow | null;
+  pendingCount: number;
+  priority: string;
+  confirmed: boolean;
+  onPriorityChange: (value: string) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden min-h-[420px]">
+      <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Balcão unido</p>
+          <h3 className="text-[16px] font-bold text-[#2D2D2D] mt-1">Prioridades do contrato</h3>
+        </div>
+        <span className="rounded-full border border-[#FED7AA] bg-[#FFF7ED] px-3 py-1 text-[11px] font-bold text-[#C2410C]">
+          {pendingCount} pendentes
+        </span>
+      </div>
+
+      <div className="p-6 space-y-5">
+        {activity ? (
+          <>
+            <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+              <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">{activity.osCodigo}</p>
+              <p className="mt-2 text-[15px] font-bold text-[#2D2D2D] leading-snug">{getActivityDisplayName(activity)}</p>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-[#92400E] uppercase tracking-widest">Prioridade do contrato</label>
+              <div className={`mt-2 grid grid-cols-[minmax(0,1fr)_64px] gap-2 rounded-xl ${confirmed ? '' : 'ring-2 ring-[#EF4444] ring-offset-2'}`}>
+                <select
+                  value={priority || '1'}
+                  disabled={confirmed}
+                  onChange={(event) => onPriorityChange(event.target.value)}
+                  className="w-full min-w-0 h-11 rounded-xl border border-[#FDE68A] bg-[#FEF3C7] px-3 text-[12px] font-bold text-[#92400E] outline-none disabled:opacity-80"
+                >
+                  <option value="1">1 - Baixa</option>
+                  <option value="2">2 - Média</option>
+                  <option value="3">3 - Alta</option>
+                </select>
+                <button
+                  type="button"
+                  disabled={confirmed}
+                  onClick={onConfirm}
+                  className="h-11 rounded-xl bg-[#F05D28] text-white text-[11px] font-black uppercase tracking-wide hover:bg-[#D94E1F] disabled:bg-[#10B981] disabled:opacity-100"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+
+            <div className="min-h-[170px] rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] flex items-center justify-center px-5 text-center">
+              <p className="text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">Placeholder do balcão de prioridades</p>
+            </div>
+          </>
+        ) : (
+          <div className="min-h-[260px] rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] flex items-center justify-center text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">
+            Selecione uma atividade
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function Contrato({ preloadedData, activeContractCode, lockedContractCode, activeView = 'dashboard' }: ContratoProps) {
   const activities = useMemo(() => buildActivities(preloadedData), [preloadedData]);
   const contracts = useMemo(() => getContracts(preloadedData, activities), [preloadedData, activities]);
   const [selectedContract, setSelectedContract] = useState(() => getContractInitialValue(activeContractCode, lockedContractCode));
@@ -324,6 +473,18 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
   }, [activities, deferredSearch, selectedContract]);
 
   const selectedActivity = filteredActivities.find((activity) => activity.id === selectedActivityId) || filteredActivities[0] || null;
+  const selectedOsActivities = selectedActivity
+    ? filteredActivities.filter((activity) => normalizeText(activity.osCodigo) === normalizeText(selectedActivity.osCodigo))
+    : [];
+  const selectedOsJourney = selectedActivity
+    ? {
+        ...selectedActivity,
+        itemNome: selectedActivity.osNome || selectedActivity.itemNome,
+        avancoAtual: selectedOsActivities.length
+          ? Math.max(...selectedOsActivities.map((activity) => activity.avancoAtual))
+          : selectedActivity.avancoAtual,
+      }
+    : null;
   const osOptions = useMemo(() => getOsOptions(preloadedData, activities, selectedContract), [preloadedData, activities, selectedContract]);
   const observationMinLength = 35;
   const isInterferenciaValid =
@@ -331,6 +492,7 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
     interferenciaDraft.data &&
     interferenciaDraft.osImpactada &&
     interferenciaDraft.observacao.trim().length >= observationMinLength;
+  const pendingPrioritiesCount = filteredActivities.filter((activity) => !prioridadesConfirmadas[activity.id]).length;
 
   const handleAddInterferencia = () => {
     if (!isInterferenciaValid) return;
@@ -350,20 +512,20 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
 
   return (
     <div className="space-y-6 font-['Montserrat']">
-      <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 lg:p-7 shadow-sm">
-        <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-5">
+      <section className="bg-white border border-[#E5E7EB] rounded-[12px] px-5 py-4 shadow-sm">
+        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
           <div>
-            <h2 className="text-[22px] font-bold text-[#2D2D2D]">Contrato</h2>
+            <h2 className="text-[20px] font-bold text-[#2D2D2D]">Contrato</h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-[minmax(220px,280px)_minmax(240px,360px)_auto] gap-3 w-full xl:w-auto">
             <div>
-              <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Contrato</label>
+              <label className="text-[9px] font-bold text-[#757575] uppercase tracking-widest">Contrato</label>
               <select
                 value={selectedContract}
                 disabled={locked}
                 onChange={(event) => setSelectedContract(event.target.value)}
-                className="mt-1 w-full h-11 px-3 bg-[#F8F9FA] border border-[#E5E7EB] rounded-xl text-[13px] font-bold text-[#2D2D2D] disabled:opacity-70 outline-none focus:border-[#F05D28]"
+                className="mt-1 w-full h-10 px-3 bg-[#F8F9FA] border border-[#E5E7EB] rounded-xl text-[13px] font-bold text-[#2D2D2D] disabled:opacity-70 outline-none focus:border-[#F05D28]"
               >
                 {!locked && <option value="Todos">Todos os contratos</option>}
                 {contracts.map((contract) => (
@@ -373,13 +535,13 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
             </div>
 
             <div>
-              <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Pesquisar</label>
+              <label className="text-[9px] font-bold text-[#757575] uppercase tracking-widest">Pesquisar</label>
               <div className="relative mt-1">
                 <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#757575]" />
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  className="w-full h-11 pl-10 pr-3 bg-white border border-[#E5E7EB] rounded-xl text-[13px] font-medium outline-none focus:border-[#F05D28]"
+                  className="w-full h-10 pl-10 pr-3 bg-white border border-[#E5E7EB] rounded-xl text-[13px] font-medium outline-none focus:border-[#F05D28]"
                   placeholder="OS ou atividade"
                 />
               </div>
@@ -389,6 +551,70 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
         </div>
       </section>
 
+      {activeView === 'dashboard' && (
+        <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
+          <ActivitiesList
+            activities={filteredActivities}
+            selectedActivity={selectedActivity}
+            onSelect={setSelectedActivityId}
+          />
+
+          <div className="space-y-6">
+            {selectedOsJourney ? (
+              <ActivityJourney activity={selectedOsJourney} />
+            ) : (
+              <div className="border border-[#E5E7EB] bg-white rounded-[12px] p-6 shadow-sm min-h-[280px] flex items-center justify-center text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">
+                Selecione uma OS
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {false && activeView === 'dashboard' && (
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
+            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Atividades em execução</p>
+            <p className="mt-3 text-[28px] font-black text-[#2D2D2D]">{filteredActivities.length}</p>
+          </div>
+          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
+            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Prioridades pendentes</p>
+            <p className="mt-3 text-[28px] font-black text-[#F05D28]">{pendingPrioritiesCount}</p>
+          </div>
+          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
+            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Interferências</p>
+            <p className="mt-3 text-[28px] font-black text-[#2D2D2D]">{interferencias.length}</p>
+          </div>
+        </section>
+      )}
+
+      {activeView === 'prioridades' && (
+        <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
+          <ActivitiesList
+            activities={filteredActivities}
+            selectedActivity={selectedActivity}
+            onSelect={setSelectedActivityId}
+          />
+
+          <PriorityDesk
+            activity={selectedActivity}
+            pendingCount={pendingPrioritiesCount}
+            priority={selectedActivity ? prioridades[selectedActivity.id] || '1' : '1'}
+            confirmed={selectedActivity ? Boolean(prioridadesConfirmadas[selectedActivity.id]) : false}
+            onPriorityChange={(value) => {
+              if (!selectedActivity) return;
+              setPrioridades((prev) => ({ ...prev, [selectedActivity.id]: value }));
+            }}
+            onConfirm={() => {
+              if (!selectedActivity) return;
+              setPrioridades((prev) => ({ ...prev, [selectedActivity.id]: prev[selectedActivity.id] || '1' }));
+              setPrioridadesConfirmadas((prev) => ({ ...prev, [selectedActivity.id]: true }));
+            }}
+          />
+        </section>
+      )}
+
+      {false && activeView === 'prioridades' && (
       <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] gap-6">
         <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
           <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
@@ -499,7 +725,9 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
           )}
         </div>
       </section>
+      )}
 
+      {activeView === 'interferencias' && (
       <section className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
         <div className="px-6 py-5 border-b border-[#E5E7EB] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -537,6 +765,7 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
           ))}
         </div>
       </section>
+      )}
 
       {showInterferenciaForm && (
         <div className="fixed inset-0 bg-black/30 z-[80] flex items-center justify-center p-4">

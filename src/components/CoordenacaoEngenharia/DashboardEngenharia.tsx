@@ -40,6 +40,7 @@ type ConsultaAtividade = {
   profissionalEmail: string;
   descricao: string;
   contrato: string;
+  contratoNome?: string;
   os: string;
   osNome: string;
   disciplina: string;
@@ -94,6 +95,55 @@ function getOsDisplayName(osCodigo: string, osNome: string) {
   if (cleanName && !isDateLikeLabel(cleanName)) return cleanName;
   if (cleanCode && !isDateLikeLabel(cleanCode)) return cleanCode;
   return 'Sem OS';
+}
+
+function cleanHierarchyCode(value: any) {
+  const text = String(value || '').trim();
+  if (!text || isDateLikeLabel(text)) return '';
+  return text;
+}
+
+function buildItemOsMap(registro: any) {
+  const map: Record<string, string> = {};
+  const itemOptions = Array.isArray(registro?.itemOptions) ? registro.itemOptions : [];
+
+  itemOptions.forEach((item: any) => {
+    const itemCode = cleanHierarchyCode(item?.codigo || item?.code || item?.id);
+    const osCode = cleanHierarchyCode(item?.osCodigo || item?.osCode);
+    if (itemCode && osCode) map[itemCode] = osCode;
+  });
+
+  return map;
+}
+
+function buildOsContractMap(registro: any) {
+  const map: Record<string, string> = {};
+  const osOptions = Array.isArray(registro?.osOptions) ? registro.osOptions : [];
+
+  osOptions.forEach((item: any) => {
+    const osCode = cleanHierarchyCode(item?.codigo || item?.code || item?.id);
+    const contractCode = cleanHierarchyCode(item?.contratoCodigo || item?.contractCode);
+    if (osCode && contractCode) map[osCode] = contractCode;
+  });
+
+  return map;
+}
+
+function getContractFromOsCode(osCode: string) {
+  const parts = cleanHierarchyCode(osCode).split('.');
+  return parts.length > 1 ? parts[0] : '';
+}
+
+function looksLikeWeakCode(value: string) {
+  const text = cleanHierarchyCode(value);
+  return !text || /^\d+$/.test(text);
+}
+
+function getBestHierarchyLabel(code: string, name?: string, fallback = '') {
+  const cleanCode = cleanHierarchyCode(code);
+  const cleanName = cleanHierarchyCode(name);
+  if (cleanName && looksLikeWeakCode(cleanCode)) return cleanName;
+  return cleanCode || cleanName || fallback;
 }
 
 function formatDateBR(value?: string) {
@@ -242,6 +292,8 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
   const cronogramaByCode = buildCronogramaMap(cronograma);
   const contractNameByCode = buildContractNameMap(registro);
   const osNameByCode = buildOsNameMap(registro);
+  const osByItemCode = buildItemOsMap(registro);
+  const contractByOsCode = buildOsContractMap(registro);
   const priorityValues = readStoredPriorityValues();
 
   return activities.flatMap((activity: any) => {
@@ -255,7 +307,14 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
     const fallbackEmail = String(activity?.criadoPorEmail || activity?.createdByEmail || '').trim();
     const participantes = nomes.length > 0 ? nomes : [fallbackNome];
     const participantEmails = emails.length > 0 ? emails : [fallbackEmail];
-    const cronogramaItem = cronogramaByCode[String(activity?.itemCodigo || '').trim()] || {};
+    const itemCodigo = cleanHierarchyCode(activity?.itemCodigo);
+    const osCodigo = cleanHierarchyCode(activity?.osCodigo) || osByItemCode[itemCodigo] || '';
+    const contratoCodigo = cleanHierarchyCode(activity?.contratoCodigo)
+      || contractByOsCode[osCodigo]
+      || getContractFromOsCode(osCodigo);
+    const osNome = osNameByCode[osCodigo] || cleanHierarchyCode(activity?.osNome) || osCodigo || 'Sem OS';
+    const contratoNome = contractNameByCode[contratoCodigo] || cleanHierarchyCode(activity?.contratoNome) || contratoCodigo || 'Sem contrato';
+    const cronogramaItem = cronogramaByCode[itemCodigo] || {};
     const plannedStart = formatDateBR(cronogramaItem.plannedStart);
     const plannedEnd = formatDateBR(cronogramaItem.plannedEnd);
     const prazo = plannedStart && plannedEnd ? `${plannedStart} a ${plannedEnd}` : plannedEnd || plannedStart || 'Sem prazo';
@@ -278,9 +337,10 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
         profissional: nome,
         profissionalEmail: email,
         descricao: String(activity?.itemNome || activity?.descricao || ''),
-        contrato: String(activity?.contratoCodigo || ''),
-        os: String(activity?.osCodigo || ''),
-        osNome: osNameByCode[String(activity?.osCodigo || '').trim()] || String(activity?.osCodigo || ''),
+        contrato: getBestHierarchyLabel(contratoCodigo, contratoNome, 'Sem contrato'),
+        contratoNome,
+        os: getBestHierarchyLabel(osCodigo, osNome, 'Sem OS'),
+        osNome,
         disciplina,
         prazoAtual,
         dificuldade: difficultyToNumber(activity?.dificuldade),
@@ -290,7 +350,6 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
         termino: prazo,
         prazo,
         avaliacao: String(activity?.avaliacaoAtual || '').trim() || EMPTY_STATUS,
-        contratoNome: contractNameByCode[String(activity?.contratoCodigo || '').trim()] || String(activity?.contratoCodigo || ''),
       };
     });
   });
@@ -701,7 +760,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData }: Da
                     <td className="py-4 px-5">
                       <div className="flex flex-col">
                         <span className="text-[13px] text-[#2D2D2D] font-bold">{item.os}</span>
-                        <span className="text-[10px] text-[#757575] uppercase tracking-wider">{item.contrato}</span>
+                        <span className="text-[10px] text-[#757575] uppercase tracking-wider">{item.contratoNome || item.contrato}</span>
                       </div>
                     </td>
                     <td className="py-4 px-5 text-[13px] text-[#2D2D2D] font-medium">{item.descricao}</td>

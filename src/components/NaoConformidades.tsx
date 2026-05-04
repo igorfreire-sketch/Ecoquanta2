@@ -12,7 +12,9 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Save } from 'lucide-react';
+import TerceirizadasCadastro from './TerceirizadasCadastro';
+import type { TerceirizadaRecord } from './Administracao';
 
 type RegistroContract = {
   id?: string;
@@ -41,6 +43,13 @@ type NaoConformidadesProps = {
     };
   };
   lockedContractCode?: string;
+  disciplinas?: string[];
+  terceirizadas?: TerceirizadaRecord[];
+  pendingTerceirizadaIds?: string[];
+  onSaveTerceirizada?: (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => Promise<void>;
+  onDeleteTerceirizada?: (id: string) => Promise<void>;
+  onSavePendingInfo?: () => Promise<void>;
+  activeView?: 'dashboard' | 'terceirizadas';
 };
 
 const disciplinesData = [
@@ -83,10 +92,18 @@ const getOsContractCode = (os: RegistroOs) =>
 export default function NaoConformidades({
   preloadedData,
   lockedContractCode,
+  disciplinas = [],
+  terceirizadas = [],
+  pendingTerceirizadaIds = [],
+  onSaveTerceirizada,
+  onDeleteTerceirizada,
+  onSavePendingInfo,
+  activeView = 'dashboard',
 }: NaoConformidadesProps) {
   const [activeMonth, setActiveMonth] = useState('SETEMBRO');
   const [selectedContract, setSelectedContract] = useState(lockedContractCode || '');
   const [selectedOs, setSelectedOs] = useState('');
+  const [savingPending, setSavingPending] = useState(false);
 
   const contracts = useMemo(
     () => preloadedData?.registro?.contracts || [],
@@ -109,26 +126,64 @@ export default function NaoConformidades({
     return osOptions.filter((os) => getOsContractCode(os) === selectedContract);
   }, [osOptions, selectedContract]);
 
-  return (
-    <div className="flex flex-col md:flex-row gap-6 w-full animate-in fade-in duration-500">
-      <aside className="w-full md:w-72 flex flex-col gap-6 shrink-0">
-        <div className="bg-white border border-[#E5E7EB] rounded-xl py-2 shadow-sm">
-          {['SETEMBRO', 'OUTUBRO'].map((month) => (
-            <button
-              key={month}
-              onClick={() => setActiveMonth(month)}
-              className={`w-full text-left px-6 py-3 text-[14px] transition-all ${
-                activeMonth === month
-                  ? 'border-l-4 border-[#F05D28] text-[#F05D28] font-bold bg-[#F05D28]/5'
-                  : 'text-[#757575] font-medium hover:bg-[#F9FAFB]'
-              }`}
-            >
-              {month}
-            </button>
-          ))}
-        </div>
+  const hasPendingTerceirizadas = pendingTerceirizadaIds.length > 0;
 
-        <div className="bg-white border border-[#E5E7EB] rounded-xl p-5 shadow-sm space-y-4">
+  const handleSavePendingInfo = async () => {
+    if (!onSavePendingInfo || savingPending || !hasPendingTerceirizadas) return;
+    setSavingPending(true);
+    try {
+      await onSavePendingInfo();
+    } finally {
+      setSavingPending(false);
+    }
+  };
+
+  return (
+    <div className="w-full animate-in fade-in duration-500 space-y-6">
+      {activeView === 'terceirizadas' ? (
+        <>
+          <TerceirizadasCadastro
+            terceirizadas={terceirizadas}
+            disciplinas={disciplinas}
+            pendingIds={pendingTerceirizadaIds}
+            onSave={onSaveTerceirizada || (async () => {})}
+            onDelete={onDeleteTerceirizada || (async () => {})}
+          />
+
+          {hasPendingTerceirizadas && (
+            <div className="fixed right-8 bottom-8 z-30 flex">
+              <button
+                type="button"
+                onClick={() => void handleSavePendingInfo()}
+                disabled={savingPending}
+                className="h-14 px-6 bg-[#F05D28] text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-[#F05D28]/25 disabled:opacity-70"
+              >
+                <Save size={18} />
+                {savingPending ? 'Enviando...' : `Enviar informacoes (${pendingTerceirizadaIds.length})`}
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+      <div className="flex flex-col md:flex-row gap-6 w-full">
+        <aside className="w-full md:w-72 flex flex-col gap-6 shrink-0">
+          <div className="bg-white border border-[#E5E7EB] rounded-xl py-2 shadow-sm">
+            {['SETEMBRO', 'OUTUBRO'].map((month) => (
+              <button
+                key={month}
+                onClick={() => setActiveMonth(month)}
+                className={`w-full text-left px-6 py-3 text-[14px] transition-all ${
+                  activeMonth === month
+                    ? 'border-l-4 border-[#F05D28] text-[#F05D28] font-bold bg-[#F05D28]/5'
+                    : 'text-[#757575] font-medium hover:bg-[#F9FAFB]'
+                }`}
+              >
+                {month}
+              </button>
+            ))}
+          </div>
+
+          <div className="bg-white border border-[#E5E7EB] rounded-xl p-5 shadow-sm space-y-4">
           <div>
             <label className="block text-[11px] font-bold text-[#757575] uppercase tracking-[1px] mb-3">
               Filtrar por contrato
@@ -181,9 +236,9 @@ export default function NaoConformidades({
             </div>
           </div>
         </div>
-      </aside>
+        </aside>
 
-      <div className="flex-1 flex flex-col gap-6">
+        <div className="flex-1 flex flex-col gap-6">
         <div className="bg-white border border-[#E5E7EB] rounded-xl p-6 shadow-sm">
           <h3 className="text-[16px] font-bold text-[#2D2D2D] text-center mb-8">
             Nao Conformidades por disciplinas
@@ -296,7 +351,9 @@ export default function NaoConformidades({
             </div>
           </div>
         </div>
+        </div>
       </div>
+      )}
     </div>
   );
 }

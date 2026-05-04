@@ -22,6 +22,7 @@ import type {
   AppTabKey,
   UserAccessRecord,
   DatabaseLinkRecord,
+  TerceirizadaRecord,
   RoleTabPermissions,
 } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
@@ -45,6 +46,10 @@ const CORPORATE_DOMAIN = '@quantaconsultoria.com';
 const isCorporateEmail = (email: string) => email.toLowerCase().trim().endsWith(CORPORATE_DOMAIN);
 
 type AppTab = 'registro' | 'controle' | 'contrato' | 'nc' | 'cronograma' | 'administracao';
+type ControleSubTab = 'dashboard' | 'alocacoes' | 'curva-s' | 'matrix';
+type NcSubTab = 'dashboard' | 'terceirizadas';
+type ContratoSubTab = 'dashboard' | 'interferencias' | 'prioridades';
+type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Registro de Atividade' },
   { key: 'controle', label: 'Coordenação de Engenharia' },
@@ -84,6 +89,7 @@ interface PublicGlobalRegistroPayload {
       cargos?: string[];
       disciplinas?: string[];
       alocacoes?: string[];
+      terceirizadas?: TerceirizadaRecord[];
       databaseLinks?: DatabaseLinkRecord[];
       roleTabPermissions?: RoleTabPermissions;
     };
@@ -229,6 +235,13 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function createDraftId(prefix: string) {
+  try {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}:${crypto.randomUUID()}`;
+  } catch (error) {}
+  return `${prefix}:${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function TabLoadingFallback() {
   return (
     <div className="min-h-[320px] flex items-center justify-center">
@@ -321,6 +334,11 @@ function getAdminState(data: GlobalData) {
     disciplinas: Array.isArray(admin.disciplinas) ? admin.disciplinas : [],
     cargos: Array.isArray(admin.cargos) ? admin.cargos : [],
     alocacoes: Array.isArray(admin.alocacoes) ? admin.alocacoes : [],
+    terceirizadas: Array.isArray(admin.terceirizadas) ? admin.terceirizadas.map((item: any) => ({
+      id: String(item.id || ''),
+      nome: String(item.nome || item.name || ''),
+      disciplina: String(item.disciplina || item.discipline || ''),
+    })).filter((item: TerceirizadaRecord) => item.id && item.nome) : [],
     databaseLinks: Array.isArray(admin.databaseLinks) ? admin.databaseLinks : [],
     roleTabPermissions: admin.roleTabPermissions && typeof admin.roleTabPermissions === 'object' ? admin.roleTabPermissions as RoleTabPermissions : {},
   };
@@ -403,7 +421,10 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
 
   const [activeTab, setActiveTab] = React.useState<AppTab>('registro');
-  const [subTab, setSubTab] = React.useState<'dashboard' | 'alocacoes' | 'curva-s' | 'matrix'>('dashboard');
+  const [subTab, setSubTab] = React.useState<ControleSubTab>('dashboard');
+  const [ncSubTab, setNcSubTab] = React.useState<NcSubTab>('dashboard');
+  const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('dashboard');
+  const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [showFilters, setShowFilters] = React.useState(false);
 
@@ -414,6 +435,8 @@ export default function App() {
   const [disciplinas, setDisciplinas] = useState<string[]>([]);
   const [cargos, setCargos] = useState<string[]>([]);
   const [alocacoes, setAlocacoes] = useState<string[]>([]);
+  const [terceirizadas, setTerceirizadas] = useState<TerceirizadaRecord[]>([]);
+  const [pendingTerceirizadas, setPendingTerceirizadas] = useState<TerceirizadaRecord[]>([]);
   const [roleTabPermissions, setRoleTabPermissions] = useState<RoleTabPermissions>({});
   const [databaseLinks, setDatabaseLinks] = useState<DatabaseLinkRecord[]>([]);
   const [dirtyUserIds, setDirtyUserIds] = useState<string[]>([]);
@@ -428,6 +451,10 @@ export default function App() {
       nome: String(item.nome || item.codigo || '').trim(),
     })).filter((item: any) => item.id);
   }, [globalData.registro?.contracts]);
+
+  const adminTerceirizadas = React.useMemo(() => {
+    return [...terceirizadas, ...pendingTerceirizadas];
+  }, [pendingTerceirizadas, terceirizadas]);
 
   useEffect(() => {
     const lockedContract = String(currentUser?.contrato || '').trim();
@@ -448,6 +475,7 @@ export default function App() {
           setDisciplinas(adminState.disciplinas);
           setCargos(adminState.cargos);
           setAlocacoes(adminState.alocacoes);
+          setTerceirizadas(adminState.terceirizadas);
           setRoleTabPermissions(adminState.roleTabPermissions);
           setDatabaseLinks(adminState.databaseLinks);
         }
@@ -509,6 +537,7 @@ export default function App() {
           setDisciplinas(adminState.disciplinas);
           setCargos(adminState.cargos);
           setAlocacoes(adminState.alocacoes);
+          setTerceirizadas(adminState.terceirizadas);
           setRoleTabPermissions(adminState.roleTabPermissions);
           setDatabaseLinks(adminState.databaseLinks);
         }
@@ -559,6 +588,7 @@ export default function App() {
           setGlobalData({});
           setRoleTabPermissions({});
           setDirtyUserIds([]);
+          setPendingTerceirizadas([]);
           window.alert('Suas permissoes foram alteradas. Entre novamente para continuar.');
         }
       } catch (e) { }
@@ -593,6 +623,7 @@ export default function App() {
         setDisciplinas(adminState.disciplinas);
         setCargos(adminState.cargos);
         setAlocacoes(adminState.alocacoes);
+        setTerceirizadas(adminState.terceirizadas);
         setRoleTabPermissions(adminState.roleTabPermissions);
         setDatabaseLinks(adminState.databaseLinks);
       }
@@ -614,7 +645,7 @@ export default function App() {
     if (firstTab) setActiveTab(firstTab);
   };
 
-  const handleLogout = () => { clearSession(); setCurrentUser(null); setGlobalData({}); setRoleTabPermissions({}); setDirtyUserIds([]); };
+  const handleLogout = () => { clearSession(); setCurrentUser(null); setGlobalData({}); setRoleTabPermissions({}); setDirtyUserIds([]); setPendingTerceirizadas([]); };
 
   const handleRegister = async (name: string, email: string, password: string) => {
     // Apps Script registra o usuário e envia e-mail de confirmação
@@ -693,14 +724,25 @@ export default function App() {
 
   const savePendingUsers = useCallback(async () => {
     const pendingUsers = usuarios.filter((user) => dirtyUserIds.includes(user.id));
-    if (pendingUsers.length === 0) return;
+    if (pendingUsers.length === 0 && pendingTerceirizadas.length === 0) return;
 
     for (const user of pendingUsers) {
       await persistUser(user);
     }
 
+    for (const terceirizada of pendingTerceirizadas) {
+      const response = await postToAppsScript<GenericResponse & { id?: string }>({
+        action: 'saveTerceirizada',
+        nome: terceirizada.nome,
+        disciplina: terceirizada.disciplina,
+      });
+      assertSuccess(response, 'Falha ao salvar terceirizada.');
+    }
+
     setDirtyUserIds([]);
-  }, [dirtyUserIds, persistUser, usuarios]);
+    setPendingTerceirizadas([]);
+    await loadAdminData();
+  }, [dirtyUserIds, loadAdminData, pendingTerceirizadas, persistUser, usuarios]);
 
   const saveConfigOptions = useCallback(async (nextCargos: string[], nextDisciplinas: string[], nextAlocacoes: string[]) => {
     setCargos(nextCargos);
@@ -800,6 +842,33 @@ export default function App() {
     await loadAdminData();
   }, [loadAdminData]);
 
+  const saveTerceirizada = useCallback(async (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => {
+    const nome = String(payload.nome || '').trim();
+    const disciplina = String(payload.disciplina || '').trim();
+    if (!nome || !disciplina) return;
+
+    setPendingTerceirizadas((prev) => [
+      ...prev,
+      {
+        id: payload.id || createDraftId('draft-terceirizada'),
+        nome,
+        disciplina,
+      },
+    ]);
+  }, []);
+
+  const deleteTerceirizada = useCallback(async (id: string) => {
+    if (id.indexOf('draft-terceirizada:') === 0) {
+      setPendingTerceirizadas((prev) => prev.filter((item) => item.id !== id));
+      return;
+    }
+
+    const response = await postToAppsScript<GenericResponse>({ action: 'deleteTerceirizada', id });
+    assertSuccess(response);
+    setTerceirizadas((prev) => prev.filter((item) => item.id !== id));
+    await loadAdminData();
+  }, [loadAdminData]);
+
   const acceptUser = useCallback(async (userId: string) => {
     const user = usuarios.find((item) => item.id === userId);
     if (!user) return;
@@ -835,6 +904,54 @@ export default function App() {
   }, []);
 
   if (booting && !preloading) return null;
+
+  const headerTabs = (() => {
+    if (activeTab === 'controle') {
+      return [
+        { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: subTab === 'dashboard', onClick: () => setSubTab('dashboard') },
+        { key: 'alocacoes', label: 'Alocações', icon: <Users size={16} />, active: subTab === 'alocacoes', onClick: () => setSubTab('alocacoes') },
+        { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
+        { key: 'matrix', label: 'Matriz', icon: <LayoutGrid size={16} />, active: subTab === 'matrix', onClick: () => setSubTab('matrix') },
+      ];
+    }
+
+    if (activeTab === 'nc') {
+      return [
+        { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: ncSubTab === 'dashboard', onClick: () => setNcSubTab('dashboard') },
+        { key: 'terceirizadas', label: 'Terceirizadas', icon: <Users size={16} />, active: ncSubTab === 'terceirizadas', onClick: () => setNcSubTab('terceirizadas') },
+      ];
+    }
+
+    if (activeTab === 'contrato') {
+      return [
+        { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: contratoSubTab === 'dashboard', onClick: () => setContratoSubTab('dashboard') },
+        { key: 'interferencias', label: 'Interferências', icon: <AlertTriangle size={16} />, active: contratoSubTab === 'interferencias', onClick: () => setContratoSubTab('interferencias') },
+        { key: 'prioridades', label: 'Prioridades do contrato', icon: <ClipboardList size={16} />, active: contratoSubTab === 'prioridades', onClick: () => setContratoSubTab('prioridades') },
+      ];
+    }
+
+    if (activeTab === 'registro') {
+      return [
+        { key: 'registros', label: 'Registros', icon: <ClipboardList size={16} />, active: true, onClick: () => {} },
+      ];
+    }
+
+    if (activeTab === 'cronograma') {
+      return [
+        { key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: true, onClick: () => {} },
+      ];
+    }
+
+    if (activeTab === 'administracao') {
+      return [
+        { key: 'usuarios', label: 'Usuários', icon: <Users size={16} />, active: adminSubTab === 'usuarios', onClick: () => setAdminSubTab('usuarios') },
+        { key: 'terceirizadas', label: 'Terceirizadas', icon: <ShieldCheck size={16} />, active: adminSubTab === 'terceirizadas', onClick: () => setAdminSubTab('terceirizadas') },
+        { key: 'gerenciamento', label: 'Gerenciamento', icon: <Settings size={16} />, active: adminSubTab === 'gerenciamento', onClick: () => setAdminSubTab('gerenciamento') },
+      ];
+    }
+
+    return [];
+  })();
 
   if (!currentUser && !preloading) {
     return <LoginScreen onLogin={handleLogin} onRegister={handleRegister} onForgotPassword={handleForgotPassword} onResetPassword={handleResetPassword} />;
@@ -910,12 +1027,20 @@ export default function App() {
             </div>
           </div>
 
-          {activeTab === 'controle' && (
+          {false && activeTab === 'controle' && (
             <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-[#E5E7EB]">
               <HeaderTab active={subTab === 'dashboard'} onClick={() => setSubTab('dashboard')} icon={<LayoutDashboard size={16} />} label="Dashboard" />
               <HeaderTab active={subTab === 'alocacoes'} onClick={() => setSubTab('alocacoes')} icon={<Users size={16} />} label="Alocações" />
               <HeaderTab active={subTab === 'curva-s'} onClick={() => setSubTab('curva-s')} icon={<TrendingUp size={16} />} label="Curva S" />
               <HeaderTab active={subTab === 'matrix'} onClick={() => setSubTab('matrix')} icon={<LayoutGrid size={16} />} label="Matriz" />
+            </div>
+          )}
+
+          {headerTabs.length > 0 && (
+            <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-[#E5E7EB] max-w-[58vw] overflow-x-auto">
+              {headerTabs.map((tab) => (
+                <HeaderTab key={tab.key} active={tab.active} onClick={tab.onClick} icon={tab.icon} label={tab.label} />
+              ))}
             </div>
           )}
 
@@ -941,18 +1066,32 @@ export default function App() {
           <React.Suspense fallback={<TabLoadingFallback />}>
             {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && <RegistroDeAtividade currentUser={currentUser} preloadedData={globalData.registro} />}
             {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={globalData} lockedContractCode={currentUser.contrato} />}
-            {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato preloadedData={globalData} activeContractCode={String(currentUser.contrato || '').trim() || filtrosAtivos.contrato} lockedContractCode={currentUser.contrato} />}
-            {activeTab === 'nc' && currentUser && userHasTabAccess(currentUser, 'nc', roleTabPermissions) && <NaoConformidades preloadedData={globalData} lockedContractCode={currentUser.contrato} />}
+            {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato preloadedData={globalData} activeContractCode={String(currentUser.contrato || '').trim() || filtrosAtivos.contrato} lockedContractCode={currentUser.contrato} activeView={contratoSubTab} />}
+            {activeTab === 'nc' && currentUser && userHasTabAccess(currentUser, 'nc', roleTabPermissions) && (
+              <NaoConformidades
+                preloadedData={globalData}
+                lockedContractCode={currentUser.contrato}
+                disciplinas={disciplinas}
+                terceirizadas={adminTerceirizadas}
+                pendingTerceirizadaIds={pendingTerceirizadas.map((item) => item.id)}
+                onSaveTerceirizada={saveTerceirizada}
+                onDeleteTerceirizada={deleteTerceirizada}
+                onSavePendingInfo={savePendingUsers}
+                activeView={ncSubTab}
+              />
+            )}
             {activeTab === 'cronograma' && currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && <Cronograma preloadedData={globalData} lockedContractCode={currentUser.contrato} />}
             {activeTab === 'administracao' && currentUser?.isAdmin && (
               <Administracao
-                usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} alocacoes={alocacoes} contratos={contratos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
+                usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} alocacoes={alocacoes} terceirizadas={adminTerceirizadas} contratos={contratos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
                 onUpdateUsuario={updateUsuarioDraft}
                 onToggleAdmin={toggleUsuarioAdminDraft}
                 onToggleTabPermission={toggleUsuarioTabDraft}
                 onSavePendingUsers={savePendingUsers}
                 dirtyUserIds={dirtyUserIds}
-                onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onAddCargo={addCargo} onRemoveCargo={removeCargo} onAddAlocacao={addAlocacao} onRemoveAlocacao={removeAlocacao} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
+                pendingTerceirizadaIds={pendingTerceirizadas.map((item) => item.id)}
+                activeSection={adminSubTab}
+                onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onAddCargo={addCargo} onRemoveCargo={removeCargo} onAddAlocacao={addAlocacao} onRemoveAlocacao={removeAlocacao} onSaveTerceirizada={saveTerceirizada} onDeleteTerceirizada={deleteTerceirizada} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
               />
             )}
           </React.Suspense>
@@ -972,7 +1111,7 @@ function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode; labe
 
 function HeaderTab({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; }) {
   return (
-    <button onClick={onClick} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-bold transition-all ${active ? 'bg-[#F05D28] text-white shadow-sm' : 'text-[#757575] hover:bg-[#F0F1F2] hover:text-[#2D2D2D]'}`}>
+    <button onClick={onClick} className={`flex shrink-0 items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-bold whitespace-nowrap transition-all ${active ? 'bg-[#F05D28] text-white shadow-sm' : 'text-[#757575] hover:bg-[#F0F1F2] hover:text-[#2D2D2D]'}`}>
       {icon} {label}
     </button>
   );

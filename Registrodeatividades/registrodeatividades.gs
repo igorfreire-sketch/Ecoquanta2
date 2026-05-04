@@ -124,6 +124,55 @@ function doPost(e) {
       return json_({ success: false, error: 'Banco de dados não encontrado.' });
     }
 
+    if (action === 'saveTerceirizada') {
+      var idTerFast = String(data.id || '').trim();
+      var nomeTerFast = String(data.nome || data.name || '').trim();
+      var disciplinaTerFast = String(data.disciplina || data.discipline || '').trim();
+
+      if (!nomeTerFast) return json_({ success: false, error: 'Informe o nome da terceirizada.' });
+      if (!disciplinaTerFast) return json_({ success: false, error: 'Informe a disciplina da terceirizada.' });
+
+      var shTerFast = getOrCreateTerceirizadasSheet_(ss);
+      var rowsTerFast = shTerFast.getDataRange().getValues();
+      var nowTerFast = new Date().toLocaleString('pt-BR');
+
+      if (!idTerFast) {
+        idTerFast = Utilities.getUuid();
+        shTerFast.appendRow([idTerFast, nomeTerFast, disciplinaTerFast, nowTerFast]);
+      } else {
+        var foundTerFast = false;
+        for (var iTerFast = 1; iTerFast < rowsTerFast.length; iTerFast++) {
+          if (String(rowsTerFast[iTerFast][0]) === idTerFast) {
+            shTerFast.getRange(iTerFast + 1, 2, 1, 3).setValues([[nomeTerFast, disciplinaTerFast, nowTerFast]]);
+            foundTerFast = true;
+            break;
+          }
+        }
+        if (!foundTerFast) shTerFast.appendRow([idTerFast, nomeTerFast, disciplinaTerFast, nowTerFast]);
+      }
+
+      flushAndSchedulePublicJsonPublish_();
+      return json_({ success: true, id: idTerFast });
+    }
+
+    if (action === 'deleteTerceirizada') {
+      var idTerDelFast = String(data.id || '').trim();
+      if (!idTerDelFast) return json_({ success: false, error: 'ID invalido.' });
+
+      var shTerDelFast = getOrCreateTerceirizadasSheet_(ss);
+      var rowsTerDelFast = shTerDelFast.getDataRange().getValues();
+
+      for (var iTerDelFast = rowsTerDelFast.length - 1; iTerDelFast >= 1; iTerDelFast--) {
+        if (String(rowsTerDelFast[iTerDelFast][0]) === idTerDelFast) {
+          shTerDelFast.deleteRow(iTerDelFast + 1);
+          flushAndSchedulePublicJsonPublish_();
+          return json_({ success: true });
+        }
+      }
+
+      return json_({ success: false, error: 'Terceirizada nao encontrada.' });
+    }
+
     if (action === 'registerActivitiesBatch') {
       return registerActivitiesBatch_(ss, data);
     }
@@ -462,6 +511,7 @@ function doGet(e) {
       var values = loginSheet.getDataRange().getValues();
       var config = getConfigOptions_(ss);
       var databaseLinks = getDatabaseLinks_(ss);
+      var terceirizadas = getTerceirizadas_(ss);
       var roleTabPermissions = getRoleTabPermissions_(ss);
 
       var users = [];
@@ -475,6 +525,7 @@ function doGet(e) {
         cargos: config.cargos,
         disciplinas: config.disciplinas,
         alocacoes: config.alocacoes,
+        terceirizadas: terceirizadas,
         databaseLinks: databaseLinks,
         roleTabPermissions: roleTabPermissions
       };
@@ -489,10 +540,11 @@ function doGet(e) {
     var values = loginSheet.getDataRange().getValues();
     var config = getConfigOptions_(ss);
     var databaseLinks = getDatabaseLinks_(ss);
+    var terceirizadasAdmin = getTerceirizadas_(ss);
     var roleTabPermissionsAdmin = getRoleTabPermissions_(ss);
 
     var responseDataAdmin = {
-      users: [], cargos: config.cargos, disciplinas: config.disciplinas, alocacoes: config.alocacoes, databaseLinks: databaseLinks, roleTabPermissions: roleTabPermissionsAdmin
+      users: [], cargos: config.cargos, disciplinas: config.disciplinas, alocacoes: config.alocacoes, terceirizadas: terceirizadasAdmin, databaseLinks: databaseLinks, roleTabPermissions: roleTabPermissionsAdmin
     };
 
     for (var iA = 1; iA < values.length; iA++) {
@@ -887,6 +939,18 @@ function getOrCreateDatabaseLinksSheet_(ss) {
   return sh;
 }
 
+function getOrCreateTerceirizadasSheet_(ss) {
+  var sh = ss.getSheetByName('terceirizadas');
+  if (!sh) {
+    sh = ss.insertSheet('terceirizadas');
+    sh.getRange(1, 1, 1, 4).setValues([['ID', 'Nome', 'Disciplina', 'AtualizadoEm']]);
+  } else if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
+    sh.clear();
+    sh.getRange(1, 1, 1, 4).setValues([['ID', 'Nome', 'Disciplina', 'AtualizadoEm']]);
+  }
+  return sh;
+}
+
 function getOrCreateActivitiesSheet_(ss) {
   var sh = ss.getSheetByName('atividades_registro');
   if (!sh) {
@@ -1016,6 +1080,37 @@ function getDatabaseLinks_(ss) {
   }
 
   return out;
+}
+
+function getTerceirizadas_(ss) {
+  var sh = getOrCreateTerceirizadasSheet_(ss);
+  var values = sh.getDataRange().getValues();
+  var out = [];
+
+  for (var i = 1; i < values.length; i++) {
+    var id = String(values[i][0] || '').trim();
+    var nome = String(values[i][1] || '').trim();
+    var disciplina = String(values[i][2] || '').trim();
+    if (!id || !nome || !disciplina) continue;
+
+    out.push({
+      id: id,
+      nome: nome,
+      disciplina: disciplina
+    });
+  }
+
+  out.sort(function(a, b) {
+    var da = String(a.disciplina || '').localeCompare(String(b.disciplina || ''), 'pt-BR');
+    if (da !== 0) return da;
+    return String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR');
+  });
+
+  return out;
+}
+
+function buildTerceirizadaProfessionalId_(id) {
+  return 'terceirizada:' + String(id || '').trim();
 }
 
 function getUnifiedEapPublicDataSafe_() {
@@ -1267,6 +1362,20 @@ function getProfessionalsByDisciplina_(ss, disciplina) {
     if (String(userDisciplina || '').trim().toLowerCase() !== disciplinaNorm) continue;
 
     out.push({ nome: nome, email: email, cargo: cargo, disciplina: userDisciplina });
+  }
+
+  var terceirizadas = getTerceirizadas_(ss);
+  for (var t = 0; t < terceirizadas.length; t++) {
+    var terceirizada = terceirizadas[t] || {};
+    var terceirizadaDisciplina = String(terceirizada.disciplina || '').trim();
+    if (String(terceirizadaDisciplina || '').trim().toLowerCase() !== disciplinaNorm) continue;
+
+    out.push({
+      nome: String(terceirizada.nome || '').trim(),
+      email: buildTerceirizadaProfessionalId_(terceirizada.id),
+      cargo: 'Terceirizada',
+      disciplina: terceirizadaDisciplina
+    });
   }
 
   return out;
@@ -1933,6 +2042,7 @@ function publishFullDatabaseToPublicJson() {
     var values = loginSheet.getDataRange().getValues();
     var config = getConfigOptions_(ss);
     var databaseLinks = getDatabaseLinks_(ss);
+    var terceirizadasPublic = getTerceirizadas_(ss);
     var roleTabPermissions = getRoleTabPermissions_(ss);
 
     var users = {};
@@ -1953,6 +2063,7 @@ function publishFullDatabaseToPublicJson() {
             cargos: config.cargos,
             disciplinas: config.disciplinas,
             alocacoes: config.alocacoes,
+            terceirizadas: terceirizadasPublic,
             databaseLinks: databaseLinks,
             roleTabPermissions: roleTabPermissions
         },
@@ -2109,6 +2220,24 @@ function getProfessionalsIndexForJson_(ss, values, header) {
       cargo: cargo,
       disciplina: disciplina,
       alocacao: String(values[i][header.alocacao] || '').trim()
+    });
+  }
+
+  var terceirizadas = getTerceirizadas_(ss);
+  for (var t = 0; t < terceirizadas.length; t++) {
+    var terceirizada = terceirizadas[t] || {};
+    var nomeTer = String(terceirizada.nome || '').trim();
+    var disciplinaTer = String(terceirizada.disciplina || '').trim();
+    if (!nomeTer || !disciplinaTer) continue;
+
+    var keyTer = disciplinaTer || 'Sem disciplina';
+    if (!out[keyTer]) out[keyTer] = [];
+    out[keyTer].push({
+      nome: nomeTer,
+      email: buildTerceirizadaProfessionalId_(terceirizada.id),
+      cargo: 'Terceirizada',
+      disciplina: disciplinaTer,
+      alocacao: 'Terceirizada'
     });
   }
 

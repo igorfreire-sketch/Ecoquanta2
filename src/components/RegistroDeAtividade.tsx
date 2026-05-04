@@ -390,6 +390,9 @@ function MultiProfessionalSelector({ value, options, onChange }: { value: string
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const toggleItem = (email: string) => onChange(value.includes(email) ? value.filter((item) => item !== email) : [...value, email]);
   const selectedNames = options.filter((o) => value.includes(o.email)).map((o) => o.nome);
+  const getSecondaryLabel = (option: ProfessionalOption) => String(option.email || '').startsWith('terceirizada:')
+    ? 'Terceirizada'
+    : option.email;
 
   useEffect(() => {
     if (!open) return;
@@ -415,7 +418,7 @@ function MultiProfessionalSelector({ value, options, onChange }: { value: string
           <div className="p-2 space-y-1">
             {options.map((option) => (
               <label key={option.email} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg hover:bg-[#F9FAFB] cursor-pointer">
-                <div className="min-w-0"><p className="text-[13px] font-semibold text-bentham-dark truncate">{option.nome}</p><p className="text-[11px] text-bentham-gray truncate">{option.email}</p></div>
+                <div className="min-w-0"><p className="text-[13px] font-semibold text-bentham-dark truncate">{option.nome}</p><p className="text-[11px] text-bentham-gray truncate">{getSecondaryLabel(option)}</p></div>
                 <input type="checkbox" checked={value.includes(option.email)} onChange={() => toggleItem(option.email)} className="w-4 h-4 accent-[#F05D28]" />
               </label>
             ))}
@@ -454,6 +457,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const [hasInitializedDraftRecovery, setHasInitializedDraftRecovery] = useState(false);
   const draftSaveTimerRef = useRef<number | null>(null);
   const latestDraftPayloadRef = useRef<LocalDraftPayload | null>(null);
+  const freshDataAttemptRef = useRef(false);
 
   const [formData, setFormData] = useState({
     contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [] as string[], dificuldade: '' as DifficultyLevel | '', descricao: '', avancoInicial: 0,
@@ -562,6 +566,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const hasPendingChanges = Object.keys(pendingChanges).length > 0;
   const hasQueuedActivities = draftQueue.length > 0;
   const hasBothPending = hasQueuedActivities && hasPendingChanges;
+  const isMissingCoreData = contracts.length === 0 || osOptions.length === 0 || itemOptions.length === 0;
 
   const fetchFreshData = async () => {
     try {
@@ -647,10 +652,12 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   };
 
   useEffect(() => {
-    if (!preloadedData || Object.keys(preloadedData).length === 0) return;
     if (contracts.length > 0 && osOptions.length > 0 && itemOptions.length > 0) return;
+    if (freshDataAttemptRef.current) return;
+
+    freshDataAttemptRef.current = true;
     void fetchFreshData();
-  }, [preloadedData, currentUser.email, currentUser.role, currentUser.disciplina]);
+  }, [contracts.length, currentUser.contrato, currentUser.disciplina, currentUser.email, currentUser.role, itemOptions.length, osOptions.length, preloadedData]);
 
   const refreshFromPublishedJsonAfterSheetUpdate = async () => {
     setSyncingPublishedJson(true);
@@ -752,7 +759,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
     const selectedProfessionalNames = filteredProfessionals.filter((item) => formData.profissionaisEmails.includes(item.email)).map((item) => item.nome);
 
     setDraftQueue((prev) => [...prev, { localId: createLocalId(), contratoCodigo: formData.contratoCodigo, contratoNome: selectedContract?.nome || '', osCodigo: formData.osCodigo, osNome: selectedOs?.nome || '', setor: formData.setor, itemCodigo: formData.itemCodigo, itemNome: itemSelected.nome, profissionaisEmails: formData.profissionaisEmails, profissionaisNomes: selectedProfessionalNames, dificuldade: formData.dificuldade, descricao: formData.descricao.trim(), avancoInicial: normalizePercentage(formData.avancoInicial) }]);
-    setFormData({ contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [], dificuldade: '', descricao: '', avancoInicial: 0 });
+    setFormData({ contratoCodigo: String(currentUser.contrato || '').trim(), osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [], dificuldade: '', descricao: '', avancoInicial: 0 });
     setBalloonMessage('Atividade adicionada à fila. Você pode registrar a próxima.');
   };
 
@@ -840,6 +847,12 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
         )}
 
         {balloonMessage && <div className="mb-6 rounded-2xl border border-[#FED7AA] bg-[#FFF7ED] px-5 py-4 text-[13px] font-semibold text-[#C2410C]">{balloonMessage}</div>}
+
+        {isMissingCoreData && (
+          <div className="mb-6 rounded-2xl border border-[#BFDBFE] bg-[#EFF6FF] px-5 py-4 text-[13px] font-semibold text-[#1D4ED8]">
+            Carregando contratos, OS e atividades...
+          </div>
+        )}
 
         <form className="space-y-10" onSubmit={(e) => e.preventDefault()}>
           <div className="space-y-6">

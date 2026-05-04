@@ -26,7 +26,7 @@ function updateVersion_() {
   var timestamp = new Date().getTime().toString();
 
   PropertiesService.getScriptProperties().setProperty('appVersion', timestamp);
-  CacheService.getScriptCache().remove('appData');
+  CacheService.getScriptCache().remove('appD  ata');
 
   return timestamp;
 }

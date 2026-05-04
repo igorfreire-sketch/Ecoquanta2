@@ -94,10 +94,10 @@ export default function MatrizDePriorizacao({ tableFiltrada, filtros, contractOp
   const resumo = useMemo(() => ({
     criticas: atividades.filter((item) => item.peso >= 6).length,
     maior: Math.max(...atividades.map((item) => item.peso), 0),
-    sensivel: Object.entries(atividades.reduce((acc, item) => {
+    sensivel: (Object.entries(atividades.reduce((acc, item) => {
       acc[item.disciplina] = (acc[item.disciplina] || 0) + item.peso;
       return acc;
-    }, {} as Record<string, number>)).sort((a, b) => b[1] - a[1])[0]?.[0] || '-',
+    }, {} as Record<string, number>)) as Array<[string, number]>).sort((a, b) => b[1] - a[1])[0]?.[0] || '-',
   }), [atividades]);
 
   return (

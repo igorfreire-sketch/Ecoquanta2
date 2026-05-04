@@ -26,7 +26,13 @@ import type {
   RoleTabPermissions,
 } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
-import { fetchEapPublicData, fetchRegistroPublicData } from './lib/publicJson';
+import {
+  fetchAdminModulePublicData,
+  fetchCronogramaModulePublicData,
+  fetchEapPublicData,
+  fetchRegistroModulePublicData,
+  fetchRegistroPublicData,
+} from './lib/publicJson';
 import { getAppVersionLabel } from './config/appVersion';
 
 const RegistroDeAtividade = React.lazy(() => import('./components/RegistroDeAtividade'));
@@ -103,6 +109,145 @@ interface PublicEapPayload {
   data?: any;
 }
 
+interface PublicModulePayload {
+  source?: string;
+  publishedAt?: string;
+  data?: Partial<GlobalData>;
+}
+
+function normalizeEapCode(value: any) {
+  return String(value || '').trim();
+}
+
+function getEapRows(eapData: any) {
+  return Array.isArray(eapData?.atual) ? eapData.atual.filter((row: any) => normalizeEapCode(row?.[0])) : [];
+}
+
+function isEapOsName(value: any) {
+  const text = normalizeEapCode(value);
+  if (!text) return false;
+  return /^_?OS(?=$|[\s_\-.0-9A-Za-zÀ-ÿ])/i.test(text);
+}
+
+function buildRegistroDataFromEapRows(eapData: any) {
+  const rows = getEapRows(eapData);
+  const contracts: any[] = [];
+  const osOptions: any[] = [];
+  const itemOptions: any[] = [];
+  const hierarchyNodes: any[] = [];
+  const rootCodes: string[] = [];
+  const childrenByParent: Record<string, any[]> = {};
+  const seen = new Set<string>();
+
+  const addNode = (node: any) => {
+    if (!node.codigo || seen.has(node.codigo)) return;
+    seen.add(node.codigo);
+    hierarchyNodes.push(node);
+    const parent = node.parentCodigo || 'ROOT';
+    if (!childrenByParent[parent]) childrenByParent[parent] = [];
+    childrenByParent[parent].push(node);
+  };
+
+  rows.forEach((row: any[]) => {
+    const codigo = normalizeEapCode(row?.[0]);
+    const nome = normalizeEapCode(row?.[1] || codigo);
+    if (!codigo) return;
+
+    const level = (codigo.match(/\./g) || []).length;
+    if (level === 0) {
+      contracts.push({ codigo, nome });
+      rootCodes.push(codigo);
+      addNode({ codigo, nome, tipo: 'contrato', nivel: 0, parentCodigo: '', contratoCodigo: codigo, osCodigo: '' });
+    }
+  });
+
+  rows.forEach((row: any[]) => {
+    const codigo = normalizeEapCode(row?.[0]);
+    const nome = normalizeEapCode(row?.[1] || codigo);
+    if (!codigo) return;
+
+    const parts = codigo.split('.');
+    const level = parts.length - 1;
+    if (level === 1 && isEapOsName(nome)) {
+      const contratoCodigo = parts[0];
+      osOptions.push({ codigo, nome, contratoCodigo });
+      addNode({ codigo, nome, tipo: 'os', nivel: level, parentCodigo: contratoCodigo, contratoCodigo, osCodigo: codigo });
+    }
+  });
+
+  const osCodes = new Set(osOptions.map((os) => os.codigo));
+  rows.forEach((row: any[]) => {
+    const codigo = normalizeEapCode(row?.[0]);
+    const nome = normalizeEapCode(row?.[1] || codigo);
+    if (!codigo) return;
+
+    const osCodigo = Array.from(osCodes)
+      .filter((candidate) => codigo.startsWith(`${candidate}.`))
+      .sort((a, b) => b.length - a.length)[0];
+    if (!osCodigo) return;
+
+    const contratoCodigo = osCodigo.split('.')[0] || '';
+    itemOptions.push({ codigo, nome, osCodigo });
+    addNode({
+      codigo,
+      nome,
+      tipo: 'item',
+      nivel: (codigo.match(/\./g) || []).length,
+      parentCodigo: osCodigo,
+      contratoCodigo,
+      osCodigo,
+    });
+  });
+
+  return { contracts, osOptions, itemOptions, hierarchyNodes, childrenByParent, rootCodes };
+}
+
+function hasRegistroHierarchy(registro: any) {
+  return Array.isArray(registro?.contracts) && registro.contracts.length > 0
+    && Array.isArray(registro?.osOptions) && registro.osOptions.length > 0
+    && Array.isArray(registro?.itemOptions) && registro.itemOptions.length > 0;
+}
+
+function mergeGlobalData(base: GlobalData, incoming?: Partial<GlobalData> | null): GlobalData {
+  if (!incoming || typeof incoming !== 'object') return base;
+  return {
+    ...base,
+    ...incoming,
+    registro: incoming.registro ? { ...(base.registro || {}), ...incoming.registro } : base.registro,
+    admin: incoming.admin ? { ...(base.admin || {}), ...incoming.admin } : base.admin,
+    eap: incoming.eap ? { ...(base.eap || {}), ...incoming.eap } : base.eap,
+  };
+}
+
+function hasAnyGlobalData(data: GlobalData) {
+  return Boolean(data.registro || data.admin || data.cronograma || data.eap);
+}
+
+async function fetchGlobalPublicDataFromJson() {
+  const [registroPayload, adminPayload, cronogramaPayload, eapPayload] = await Promise.all([
+    fetchRegistroModulePublicData<PublicModulePayload>().catch(() => null),
+    fetchAdminModulePublicData<PublicModulePayload>().catch(() => null),
+    fetchCronogramaModulePublicData<PublicModulePayload>().catch(() => null),
+    fetchEapPublicData<PublicEapPayload>().catch(() => null),
+  ]);
+
+  let fullData: GlobalData = {};
+  fullData = mergeGlobalData(fullData, registroPayload?.data);
+  fullData = mergeGlobalData(fullData, adminPayload?.data);
+  fullData = mergeGlobalData(fullData, cronogramaPayload?.data);
+
+  if (!fullData.registro || !fullData.admin || !fullData.cronograma) {
+    const legacyPayload = await fetchRegistroPublicData<PublicGlobalRegistroPayload>().catch(() => null);
+    fullData = mergeGlobalData(legacyPayload?.data || {}, fullData);
+  }
+
+  if (!hasAnyGlobalData(fullData)) {
+    throw new Error('Nenhum JSON publico disponivel.');
+  }
+
+  return { fullData, eapPayload };
+}
+
 function applyUnifiedEapData(data: GlobalData, eapData: any): GlobalData {
   if (!eapData || typeof eapData !== 'object') return data;
 
@@ -121,6 +266,21 @@ function applyUnifiedEapData(data: GlobalData, eapData: any): GlobalData {
       childrenByParent: eapData.registro.childrenByParent && typeof eapData.registro.childrenByParent === 'object' ? eapData.registro.childrenByParent : next.registro?.childrenByParent,
       rootCodes: Array.isArray(eapData.registro.rootCodes) ? eapData.registro.rootCodes : next.registro?.rootCodes,
     };
+  }
+
+  if (!hasRegistroHierarchy(next.registro)) {
+    const derivedRegistro = buildRegistroDataFromEapRows(eapData);
+    if (derivedRegistro.contracts.length > 0 || derivedRegistro.osOptions.length > 0 || derivedRegistro.itemOptions.length > 0) {
+      next.registro = {
+        ...(next.registro || {}),
+        contracts: hasRegistroHierarchy(next.registro) ? next.registro?.contracts : derivedRegistro.contracts,
+        osOptions: Array.isArray(next.registro?.osOptions) && next.registro.osOptions.length > 0 ? next.registro.osOptions : derivedRegistro.osOptions,
+        itemOptions: Array.isArray(next.registro?.itemOptions) && next.registro.itemOptions.length > 0 ? next.registro.itemOptions : derivedRegistro.itemOptions,
+        hierarchyNodes: Array.isArray(next.registro?.hierarchyNodes) && next.registro.hierarchyNodes.length > 0 ? next.registro.hierarchyNodes : derivedRegistro.hierarchyNodes,
+        childrenByParent: next.registro?.childrenByParent && Object.keys(next.registro.childrenByParent).length > 0 ? next.registro.childrenByParent : derivedRegistro.childrenByParent,
+        rootCodes: Array.isArray(next.registro?.rootCodes) && next.registro.rootCodes.length > 0 ? next.registro.rootCodes : derivedRegistro.rootCodes,
+      };
+    }
   }
 
   if (Array.isArray(eapData.cronograma)) {
@@ -506,12 +666,9 @@ export default function App() {
       let eapPayload: PublicEapPayload | null = null;
 
       try {
-        const [publicPayload, publicEapPayload] = await Promise.all([
-          fetchRegistroPublicData<PublicGlobalRegistroPayload>(),
-          fetchEapPublicData<PublicEapPayload>().catch(() => null)
-        ]);
-        fullData = publicPayload.data || {};
-        eapPayload = publicEapPayload;
+        const publicData = await fetchGlobalPublicDataFromJson();
+        fullData = publicData.fullData;
+        eapPayload = publicData.eapPayload;
       } catch {
         fullData = await fetchInitialDataFromAppsScript(user);
         eapPayload = await fetchEapPublicData<PublicEapPayload>().catch(() => null);
@@ -1109,7 +1266,7 @@ function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode; labe
   );
 }
 
-function HeaderTab({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; }) {
+function HeaderTab({ active, onClick, icon, label }: { key?: string; active: boolean; onClick: () => void; icon: React.ReactNode; label: string; }) {
   return (
     <button onClick={onClick} className={`flex shrink-0 items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-bold whitespace-nowrap transition-all ${active ? 'bg-[#F05D28] text-white shadow-sm' : 'text-[#757575] hover:bg-[#F0F1F2] hover:text-[#2D2D2D]'}`}>
       {icon} {label}

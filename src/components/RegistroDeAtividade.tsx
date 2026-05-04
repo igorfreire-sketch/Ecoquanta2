@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { AuthUser } from './LoginScreen';
-import { fetchEapPublicData, fetchRegistroPublicData } from '../lib/publicJson';
+import { fetchEapPublicData, fetchRegistroModulePublicData, fetchRegistroPublicData } from '../lib/publicJson';
 
 const APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
@@ -198,18 +198,126 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser) {
   };
 }
 
+function normalizeEapCode(value: any) {
+  return String(value || '').trim();
+}
+
+function getEapRows(eapData: any) {
+  const resolved = eapData?.data && typeof eapData.data === 'object' ? eapData.data : eapData;
+  return Array.isArray(resolved?.atual) ? resolved.atual.filter((row: any) => normalizeEapCode(row?.[0])) : [];
+}
+
+function isEapOsName(value: any) {
+  const text = normalizeEapCode(value);
+  if (!text) return false;
+  return /^_?OS(?=$|[\s_\-.0-9A-Za-zÀ-ÿ])/i.test(text);
+}
+
+function buildRegistroDataFromEapRows(eapData: any) {
+  const rows = getEapRows(eapData);
+  const contracts: EapContractOption[] = [];
+  const osOptions: EapOsOption[] = [];
+  const itemOptions: EapItemOption[] = [];
+  const hierarchyNodes: EapHierarchyNode[] = [];
+  const rootCodes: string[] = [];
+  const childrenByParent: Record<string, EapHierarchyNode[]> = {};
+  const seen = new Set<string>();
+
+  const addNode = (node: EapHierarchyNode) => {
+    if (!node.codigo || seen.has(node.codigo)) return;
+    seen.add(node.codigo);
+    hierarchyNodes.push(node);
+    const parent = node.parentCodigo || 'ROOT';
+    if (!childrenByParent[parent]) childrenByParent[parent] = [];
+    childrenByParent[parent].push(node);
+  };
+
+  rows.forEach((row: any[]) => {
+    const codigo = normalizeEapCode(row?.[0]);
+    const nome = normalizeEapCode(row?.[1] || codigo);
+    if (!codigo) return;
+
+    const level = (codigo.match(/\./g) || []).length;
+    if (level === 0) {
+      contracts.push({ codigo, nome });
+      rootCodes.push(codigo);
+      addNode({ codigo, nome, tipo: 'contrato', nivel: 0, parentCodigo: '', contratoCodigo: codigo, osCodigo: '' });
+    }
+  });
+
+  rows.forEach((row: any[]) => {
+    const codigo = normalizeEapCode(row?.[0]);
+    const nome = normalizeEapCode(row?.[1] || codigo);
+    if (!codigo) return;
+
+    const parts = codigo.split('.');
+    const level = parts.length - 1;
+    if (level === 1 && isEapOsName(nome)) {
+      const contratoCodigo = parts[0];
+      osOptions.push({ codigo, nome, contratoCodigo });
+      addNode({ codigo, nome, tipo: 'os', nivel: level, parentCodigo: contratoCodigo, contratoCodigo, osCodigo: codigo });
+    }
+  });
+
+  const osCodes = new Set(osOptions.map((os) => os.codigo));
+  rows.forEach((row: any[]) => {
+    const codigo = normalizeEapCode(row?.[0]);
+    const nome = normalizeEapCode(row?.[1] || codigo);
+    if (!codigo) return;
+
+    const osCodigo = Array.from(osCodes)
+      .filter((candidate) => codigo.startsWith(`${candidate}.`))
+      .sort((a, b) => b.length - a.length)[0];
+    if (!osCodigo) return;
+
+    const contratoCodigo = osCodigo.split('.')[0] || '';
+    itemOptions.push({ codigo, nome, osCodigo });
+    addNode({
+      codigo,
+      nome,
+      tipo: 'item',
+      nivel: (codigo.match(/\./g) || []).length,
+      parentCodigo: osCodigo,
+      contratoCodigo,
+      osCodigo,
+    });
+  });
+
+  return { contracts, osOptions, itemOptions, hierarchyNodes, childrenByParent, rootCodes };
+}
+
+function hasRegistroHierarchy(registro: any) {
+  return Array.isArray(registro?.contracts) && registro.contracts.length > 0
+    && Array.isArray(registro?.osOptions) && registro.osOptions.length > 0
+    && Array.isArray(registro?.itemOptions) && registro.itemOptions.length > 0;
+}
+
 function applyUnifiedEapToRegistro(registro: any, eapPayload: PublicEapEnvelope | null) {
-  const eapRegistro = eapPayload?.data?.registro;
-  if (!eapRegistro) return registro;
+  const eapData = eapPayload?.data;
+  const eapRegistro = eapData?.registro;
+  const next = {
+    ...(registro || {}),
+    contracts: Array.isArray(eapRegistro?.contracts) ? eapRegistro.contracts : registro?.contracts,
+    osOptions: Array.isArray(eapRegistro?.osOptions) ? eapRegistro.osOptions : registro?.osOptions,
+    itemOptions: Array.isArray(eapRegistro?.itemOptions) ? eapRegistro.itemOptions : registro?.itemOptions,
+    hierarchyNodes: Array.isArray(eapRegistro?.hierarchyNodes) ? eapRegistro.hierarchyNodes : registro?.hierarchyNodes,
+    childrenByParent: eapRegistro?.childrenByParent && typeof eapRegistro.childrenByParent === 'object' ? eapRegistro.childrenByParent : registro?.childrenByParent,
+    rootCodes: Array.isArray(eapRegistro?.rootCodes) ? eapRegistro.rootCodes : registro?.rootCodes,
+  };
+
+  if (hasRegistroHierarchy(next)) return next;
+
+  const derivedRegistro = buildRegistroDataFromEapRows(eapData);
+  if (derivedRegistro.contracts.length === 0 && derivedRegistro.osOptions.length === 0 && derivedRegistro.itemOptions.length === 0) return next;
 
   return {
-    ...(registro || {}),
-    contracts: Array.isArray(eapRegistro.contracts) ? eapRegistro.contracts : registro?.contracts,
-    osOptions: Array.isArray(eapRegistro.osOptions) ? eapRegistro.osOptions : registro?.osOptions,
-    itemOptions: Array.isArray(eapRegistro.itemOptions) ? eapRegistro.itemOptions : registro?.itemOptions,
-    hierarchyNodes: Array.isArray(eapRegistro.hierarchyNodes) ? eapRegistro.hierarchyNodes : registro?.hierarchyNodes,
-    childrenByParent: eapRegistro.childrenByParent && typeof eapRegistro.childrenByParent === 'object' ? eapRegistro.childrenByParent : registro?.childrenByParent,
-    rootCodes: Array.isArray(eapRegistro.rootCodes) ? eapRegistro.rootCodes : registro?.rootCodes,
+    ...next,
+    contracts: Array.isArray(next.contracts) && next.contracts.length > 0 ? next.contracts : derivedRegistro.contracts,
+    osOptions: Array.isArray(next.osOptions) && next.osOptions.length > 0 ? next.osOptions : derivedRegistro.osOptions,
+    itemOptions: Array.isArray(next.itemOptions) && next.itemOptions.length > 0 ? next.itemOptions : derivedRegistro.itemOptions,
+    hierarchyNodes: Array.isArray(next.hierarchyNodes) && next.hierarchyNodes.length > 0 ? next.hierarchyNodes : derivedRegistro.hierarchyNodes,
+    childrenByParent: next.childrenByParent && Object.keys(next.childrenByParent).length > 0 ? next.childrenByParent : derivedRegistro.childrenByParent,
+    rootCodes: Array.isArray(next.rootCodes) && next.rootCodes.length > 0 ? next.rootCodes : derivedRegistro.rootCodes,
   };
 }
 
@@ -623,7 +731,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       const cachedData = readRegistroCache(currentUser.email);
 
       const [payload, eapPayload] = await Promise.all([
-        fetchRegistroPublicData<PublicRegistroEnvelope>(),
+        fetchRegistroModulePublicData<PublicRegistroEnvelope>().catch(() => fetchRegistroPublicData<PublicRegistroEnvelope>()),
         fetchEapPublicData<PublicEapEnvelope>().catch(() => null),
       ]);
       const registro = filterRegistroPayloadByContract(applyUnifiedEapToRegistro(payload.data?.registro, eapPayload) || {}, currentUser.contrato || '');

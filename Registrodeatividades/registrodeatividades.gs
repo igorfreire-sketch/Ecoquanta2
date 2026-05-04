@@ -1788,6 +1788,12 @@ function formatDateYmdSafe_(date) {
 var PUBLIC_JSON_FOLDER = "Publica";
 var REGISTRO_PUBLIC_JSON_FILE = "registro-atividades.json";
 var REGISTRO_ATIVIDADES_JSON_FILE = "registrodeatividades.json";
+var APP_REGISTRO_JSON_FILE = "app-registro.json";
+var APP_ADMIN_JSON_FILE = "app-administracao.json";
+var APP_CRONOGRAMA_JSON_FILE = "app-cronograma.json";
+var APP_CONTROLE_JSON_FILE = "app-controle.json";
+var APP_CONTRATO_JSON_FILE = "app-contrato.json";
+var APP_NC_JSON_FILE = "app-nc.json";
 var REGISTRO_ATIVIDADES_IMPORT_SHEET = "registrodeatividades_limpo";
 var PUBLIC_JSON_FAST_DELAY_MS = 1000;
 var PUBLIC_JSON_FULL_REFRESH_DELAY_MS = 90 * 1000;
@@ -2090,6 +2096,8 @@ function publishFullDatabaseToPublicJson() {
       }
     );
 
+    publishAppModuleJsons_(payloadData);
+
     publishRegistroAtividadesJson_(activities);
   } catch(err) {
     Logger.log("Public JSON push failed: " + err);
@@ -2097,6 +2105,84 @@ function publishFullDatabaseToPublicJson() {
   } finally {
     lock.releaseLock();
   }
+}
+
+function publishAppModuleJsons_(payloadData) {
+  var publishedAt = new Date().toISOString();
+  publishEncryptedJsonToGithub_(
+    APP_REGISTRO_JSON_FILE,
+    {
+      source: "Registrodeatividades",
+      module: "registro",
+      publishedAt: publishedAt,
+      data: {
+        registro: payloadData.registro
+      }
+    }
+  );
+
+  publishEncryptedJsonToGithub_(
+    APP_ADMIN_JSON_FILE,
+    {
+      source: "Registrodeatividades",
+      module: "administracao",
+      publishedAt: publishedAt,
+      data: {
+        admin: payloadData.admin
+      }
+    }
+  );
+
+  publishEncryptedJsonToGithub_(
+    APP_CRONOGRAMA_JSON_FILE,
+    {
+      source: "Registrodeatividades",
+      module: "cronograma",
+      publishedAt: publishedAt,
+      data: {
+        cronograma: payloadData.cronograma
+      }
+    }
+  );
+
+  publishEncryptedJsonToGithub_(
+    APP_CONTROLE_JSON_FILE,
+    {
+      source: "Registrodeatividades",
+      module: "controle",
+      publishedAt: publishedAt,
+      data: {
+        registro: payloadData.registro,
+        admin: payloadData.admin,
+        cronograma: payloadData.cronograma
+      }
+    }
+  );
+
+  publishEncryptedJsonToGithub_(
+    APP_CONTRATO_JSON_FILE,
+    {
+      source: "Registrodeatividades",
+      module: "contrato",
+      publishedAt: publishedAt,
+      data: {
+        registro: payloadData.registro
+      }
+    }
+  );
+
+  publishEncryptedJsonToGithub_(
+    APP_NC_JSON_FILE,
+    {
+      source: "Registrodeatividades",
+      module: "nao-conformidades",
+      publishedAt: publishedAt,
+      data: {
+        registro: payloadData.registro,
+        admin: payloadData.admin
+      }
+    }
+  );
 }
 
 function publishRegistroAtividadesJson_(activities) {

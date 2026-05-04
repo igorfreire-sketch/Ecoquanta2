@@ -151,6 +151,18 @@ export async function fetchRegistroPublicData<T>() {
   return fetchPublicJson<T>('registro-atividades.json');
 }
 
+export async function fetchRegistroModulePublicData<T>() {
+  return fetchPublicJson<T>('app-registro.json');
+}
+
+export async function fetchAdminModulePublicData<T>() {
+  return fetchPublicJson<T>('app-administracao.json');
+}
+
+export async function fetchCronogramaModulePublicData<T>() {
+  return fetchPublicJson<T>('app-cronograma.json');
+}
+
 export async function fetchEapPublicData<T>() {
   return fetchPublicJson<T>('eap-unificada.json');
 }

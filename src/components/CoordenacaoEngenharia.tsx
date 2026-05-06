@@ -1,14 +1,17 @@
 import React from 'react';
 import {
   CalendarClock,
-  ChevronRight
+  ChevronRight,
 } from 'lucide-react';
 import DashboardEngenharia from './CoordenacaoEngenharia/DashboardEngenharia';
 import Alocacoes from './CoordenacaoEngenharia/Alocacoes';
 import CurvaS from './CoordenacaoEngenharia/CurvaS';
-import Matrix from './CoordenacaoEngenharia/botaoMatrix';
+import Cronograma from './Cronograma';
+import EmergenciaCenter from './EmergenciaCenter';
+import type { AuthUser } from './LoginScreen';
 
 interface CoordenacaoEngenhariaProps {
+  currentUser: AuthUser;
   filtrosAtivos?: {
     contrato: string;
     os: string;
@@ -21,8 +24,9 @@ interface CoordenacaoEngenhariaProps {
     admin?: any;
     eap?: any;
   };
-  subTab: 'dashboard' | 'alocacoes' | 'curva-s' | 'matrix';
-  onSubTabChange: (tab: 'dashboard' | 'alocacoes' | 'curva-s' | 'matrix') => void;
+  subTab: 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'emergencia' | 'cronograma';
+  onSubTabChange: (tab: 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'emergencia' | 'cronograma') => void;
+  onEmergencyChanged?: () => void;
 }
 
 function formatLatestEapDate(value?: string) {
@@ -74,23 +78,27 @@ function getLatestEapDisplayDate(eap?: any) {
   return 'Nao publicada';
 }
 
-export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
+export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, subTab, lockedContractCode, onEmergencyChanged }: CoordenacaoEngenhariaProps) {
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'alocacoes', label: 'Alocacoes' },
     { id: 'curva-s', label: 'Curva S' },
-    { id: 'matrix', label: 'Matriz' },
+    { id: 'planejamento', label: 'Planejamento' },
+    { id: 'emergencia', label: 'Atividades' },
+    { id: 'cronograma', label: 'Cronograma' },
   ];
   const latestEapDate = getLatestEapDisplayDate(preloadedData?.eap);
   const activeContractCode = String(lockedContractCode || filtrosAtivos?.contrato || '').trim();
 
   return (
     <div className="w-full flex flex-col font-['Montserrat']">
-      <div className="flex flex-col gap-3 mb-6 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-2 text-[11px] font-bold text-[#757575] uppercase tracking-widest">
-          <span>Coordenacao de Engenharia</span>
-          <ChevronRight size={12} />
-          <span className="text-[#F05D28]">{tabs.find(t => t.id === subTab)?.label}</span>
+      <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="flex min-w-0 flex-col gap-3">
+          <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
+            <span>Coordenacao de Engenharia</span>
+            <ChevronRight size={12} />
+            <span className="text-[#F05D28]">{tabs.find(t => t.id === subTab)?.label}</span>
+          </div>
         </div>
 
         <div className="inline-flex w-fit items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
@@ -101,10 +109,12 @@ export default function CoordenacaoEngenharia({ filtrosAtivos, preloadedData, su
       </div>
 
       <div className="pb-10">
-        {subTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} />}
+        {subTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="dashboard" />}
         {subTab === 'alocacoes' && <Alocacoes preloadedData={preloadedData} activeContractCode={activeContractCode} />}
         {subTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
-        {subTab === 'matrix' && <Matrix />}
+        {subTab === 'planejamento' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="planejamento" />}
+        {subTab === 'emergencia' && <EmergenciaCenter currentUser={currentUser} preloadedData={preloadedData} activeContractCode={activeContractCode} lockedContractCode={lockedContractCode} onDataChange={onEmergencyChanged} />}
+        {subTab === 'cronograma' && <Cronograma preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
       </div>
     </div>
   );

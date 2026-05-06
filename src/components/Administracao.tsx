@@ -24,6 +24,7 @@ export type AppTabKey =
   | 'contrato'
   | 'alocacoes'
   | 'nc'
+  | 'nc2'
   | 'cronograma'
   | 'administracao';
 
@@ -155,7 +156,7 @@ function MultiTabSelector({
         {appTabs
           .filter((tab) => (user.isAdmin ? true : tab.key !== 'administracao'))
           .map((tab) => {
-            const checked = user.allowedTabs.includes(tab.key);
+            const checked = user.isAdmin || user.allowedTabs.includes(tab.key);
 
             return (
               <label
@@ -167,6 +168,7 @@ function MultiTabSelector({
                 <input
                   type="checkbox"
                   checked={checked}
+                  disabled={user.isAdmin}
                   onChange={() => onToggle(tab.key)}
                   className="w-4 h-4 accent-[#F05D28] cursor-pointer"
                 />

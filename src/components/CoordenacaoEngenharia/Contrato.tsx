@@ -11,20 +11,25 @@ import {
   PencilLine,
   Plus,
   Route,
-  Search,
   X
 } from 'lucide-react';
+import type { AuthUser } from '../LoginScreen';
+import EmergenciaCenter from '../EmergenciaCenter';
+import Cronograma from '../Cronograma';
 
 const CONTRACT_PRIORITY_STORAGE_KEY = 'quanta_contract_priorities';
 
 interface ContratoProps {
+  currentUser: AuthUser;
   preloadedData?: {
     registro?: any;
     cronograma?: any;
+    admin?: any;
   };
   activeContractCode?: string;
   lockedContractCode?: string;
-  activeView?: 'dashboard' | 'interferencias' | 'prioridades';
+  activeView?: 'dashboard' | 'interferencias' | 'prioridades' | 'emergencia' | 'cronograma';
+  onEmergencyChanged?: () => void;
 }
 
 interface ActivityRow {
@@ -104,10 +109,19 @@ function sameDisplayText(a?: string, b?: string) {
   return normalizeText(a) === normalizeText(b);
 }
 
+function isHierarchyCode(value?: string) {
+  return /^\d+(?:\.\d+)+$/.test(String(value || '').trim());
+}
+
+function getOsDisplayName(activity: ActivityRow) {
+  if (activity.osNome && !isHierarchyCode(activity.osNome)) return activity.osNome;
+  if (activity.osCodigo && !isHierarchyCode(activity.osCodigo)) return activity.osCodigo;
+  return activity.osNome || 'Sem OS';
+}
+
 function getActivityDisplayName(activity: ActivityRow) {
   if (activity.itemNome && !sameDisplayText(activity.itemNome, activity.osCodigo) && !sameDisplayText(activity.itemNome, activity.osNome)) return activity.itemNome;
   if (activity.descricao && !sameDisplayText(activity.descricao, activity.osCodigo) && !sameDisplayText(activity.descricao, activity.osNome)) return activity.descricao;
-  if (activity.itemCodigo && !sameDisplayText(activity.itemCodigo, activity.osCodigo) && !sameDisplayText(activity.itemCodigo, activity.osNome)) return activity.itemCodigo;
   return 'Atividade sem nome';
 }
 
@@ -239,8 +253,8 @@ function ActivityJourney({ activity }: { activity: ActivityRow }) {
   return (
     <div className="border border-[#E5E7EB] bg-white rounded-[12px] p-6 shadow-sm">
       <div className="flex flex-col gap-1 mb-6">
-        <p className="text-[11px] font-bold uppercase tracking-widest text-[#757575]">{activity.osCodigo}</p>
-        <h3 className="text-[18px] font-bold text-[#2D2D2D] leading-tight">{activity.osNome || activity.itemNome}</h3>
+        <p className="text-[11px] font-bold uppercase tracking-widest text-[#757575]">{getOsDisplayName(activity)}</p>
+        <h3 className="text-[18px] font-bold text-[#2D2D2D] leading-tight">{getActivityDisplayName(activity)}</h3>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -310,14 +324,8 @@ function ActivitiesList({
           >
             <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_120px_130px] gap-4 items-center">
               <div className="min-w-0">
-                <p className="text-[12px] font-bold text-[#2D2D2D] truncate">{activity.osCodigo}</p>
-                {activity.osNome && normalizeText(activity.osNome) !== normalizeText(activity.osCodigo) && (
-                  <p className="text-[10px] text-[#757575] uppercase tracking-wider mt-1 truncate">{activity.osNome}</p>
-                )}
+                <p className="text-[12px] font-bold text-[#2D2D2D] truncate">{getOsDisplayName(activity)}</p>
                 <p className="text-[13px] font-bold text-[#2D2D2D] truncate mt-2">{getActivityDisplayName(activity)}</p>
-                {activity.itemCodigo && !sameDisplayText(activity.itemCodigo, activity.osCodigo) && !sameDisplayText(activity.itemCodigo, activity.itemNome) && (
-                  <p className="text-[11px] text-[#757575] mt-1 truncate">{activity.itemCodigo}</p>
-                )}
               </div>
 
               <div className="min-w-0">
@@ -381,7 +389,7 @@ function PriorityDesk({
         {activity ? (
           <>
             <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
-              <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">{activity.osCodigo}</p>
+              <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">{getOsDisplayName(activity)}</p>
               <p className="mt-2 text-[15px] font-bold text-[#2D2D2D] leading-snug">{getActivityDisplayName(activity)}</p>
             </div>
 
@@ -423,7 +431,7 @@ function PriorityDesk({
   );
 }
 
-export default function Contrato({ preloadedData, activeContractCode, lockedContractCode, activeView = 'dashboard' }: ContratoProps) {
+export default function Contrato({ currentUser, preloadedData, activeContractCode, lockedContractCode, activeView = 'dashboard', onEmergencyChanged }: ContratoProps) {
   const activities = useMemo(() => buildActivities(preloadedData), [preloadedData]);
   const contracts = useMemo(() => getContracts(preloadedData, activities), [preloadedData, activities]);
   const [selectedContract, setSelectedContract] = useState(() => getContractInitialValue(activeContractCode, lockedContractCode));
@@ -512,44 +520,6 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
 
   return (
     <div className="space-y-6 font-['Montserrat']">
-      <section className="bg-white border border-[#E5E7EB] rounded-[12px] px-5 py-4 shadow-sm">
-        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
-          <div>
-            <h2 className="text-[20px] font-bold text-[#2D2D2D]">Contrato</h2>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-[minmax(220px,280px)_minmax(240px,360px)_auto] gap-3 w-full xl:w-auto">
-            <div>
-              <label className="text-[9px] font-bold text-[#757575] uppercase tracking-widest">Contrato</label>
-              <select
-                value={selectedContract}
-                disabled={locked}
-                onChange={(event) => setSelectedContract(event.target.value)}
-                className="mt-1 w-full h-10 px-3 bg-[#F8F9FA] border border-[#E5E7EB] rounded-xl text-[13px] font-bold text-[#2D2D2D] disabled:opacity-70 outline-none focus:border-[#F05D28]"
-              >
-                {!locked && <option value="Todos">Todos os contratos</option>}
-                {contracts.map((contract) => (
-                  <option key={contract.id} value={contract.id}>{contract.id} - {contract.nome}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-[9px] font-bold text-[#757575] uppercase tracking-widest">Pesquisar</label>
-              <div className="relative mt-1">
-                <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#757575]" />
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  className="w-full h-10 pl-10 pr-3 bg-white border border-[#E5E7EB] rounded-xl text-[13px] font-medium outline-none focus:border-[#F05D28]"
-                  placeholder="OS ou atividade"
-                />
-              </div>
-            </div>
-
-          </div>
-        </div>
-      </section>
 
       {activeView === 'dashboard' && (
         <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
@@ -639,16 +609,86 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
                 onClick={() => setSelectedActivityId(activity.id)}
                 className={`w-full text-left px-5 py-4 transition-colors ${selectedActivity?.id === activity.id ? 'bg-[#FFF7ED]' : 'hover:bg-[#F9FAFB]'}`}
               >
+                <span className="text-[13px] font-bold text-[#2D2D2D]">{getActivityDisplayName(activity)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+      )}
+
+      {false && activeView === 'dashboard' && (
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
+            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Atividades em execução</p>
+            <p className="mt-3 text-[28px] font-black text-[#2D2D2D]">{filteredActivities.length}</p>
+          </div>
+          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
+            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Prioridades pendentes</p>
+            <p className="mt-3 text-[28px] font-black text-[#F05D28]">{pendingPrioritiesCount}</p>
+          </div>
+          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
+            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Interferências</p>
+            <p className="mt-3 text-[28px] font-black text-[#2D2D2D]">{interferencias.length}</p>
+          </div>
+        </section>
+      )}
+
+      {activeView === 'prioridades' && (
+        <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
+          <ActivitiesList
+            activities={filteredActivities}
+            selectedActivity={selectedActivity}
+            onSelect={setSelectedActivityId}
+          />
+
+          <PriorityDesk
+            activity={selectedActivity}
+            pendingCount={pendingPrioritiesCount}
+            priority={selectedActivity ? prioridades[selectedActivity.id] || '1' : '1'}
+            confirmed={selectedActivity ? Boolean(prioridadesConfirmadas[selectedActivity.id]) : false}
+            onPriorityChange={(value) => {
+              if (!selectedActivity) return;
+              setPrioridades((prev) => ({ ...prev, [selectedActivity.id]: value }));
+            }}
+            onConfirm={() => {
+              if (!selectedActivity) return;
+              setPrioridades((prev) => ({ ...prev, [selectedActivity.id]: prev[selectedActivity.id] || '1' }));
+              setPrioridadesConfirmadas((prev) => ({ ...prev, [selectedActivity.id]: true }));
+            }}
+          />
+        </section>
+      )}
+
+      {false && activeView === 'prioridades' && (
+      <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] gap-6">
+        <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
+          <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <ClipboardList size={18} className="text-[#F05D28]" />
+              <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Atividades sendo executadas</h3>
+            </div>
+            <span className="text-[11px] font-bold text-[#757575]">{filteredActivities.length} em execução</span>
+          </div>
+
+          <div className="divide-y divide-[#E5E7EB]">
+            {filteredActivities.length === 0 && (
+              <div className="py-12 px-6 text-center text-[13px] font-medium text-[#757575]">
+                Nenhuma atividade em execução para este contrato.
+              </div>
+            )}
+
+            {filteredActivities.map((activity) => (
+              <button
+                type="button"
+                key={activity.id}
+                onClick={() => setSelectedActivityId(activity.id)}
+                className={`w-full text-left px-5 py-4 transition-colors ${selectedActivity?.id === activity.id ? 'bg-[#FFF7ED]' : 'hover:bg-[#F9FAFB]'}`}
+              >
                 <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_120px_170px_130px] gap-4 items-center">
                   <div className="min-w-0">
-                    <p className="text-[12px] font-bold text-[#2D2D2D] truncate">{activity.osCodigo}</p>
-                    {activity.osNome && normalizeText(activity.osNome) !== normalizeText(activity.osCodigo) && (
-                      <p className="text-[10px] text-[#757575] uppercase tracking-wider mt-1 truncate">{activity.osNome}</p>
-                    )}
+                    <p className="text-[12px] font-bold text-[#2D2D2D] truncate">{getOsDisplayName(activity)}</p>
                     <p className="text-[13px] font-bold text-[#2D2D2D] truncate mt-2">{getActivityDisplayName(activity)}</p>
-                    {activity.itemCodigo && !sameDisplayText(activity.itemCodigo, activity.osCodigo) && !sameDisplayText(activity.itemCodigo, activity.itemNome) && (
-                      <p className="text-[11px] text-[#757575] mt-1 truncate">{activity.itemCodigo}</p>
-                    )}
                   </div>
 
                   <div className="min-w-0">
@@ -765,6 +805,23 @@ export default function Contrato({ preloadedData, activeContractCode, lockedCont
           ))}
         </div>
       </section>
+      )}
+
+      {activeView === 'emergencia' && (
+        <EmergenciaCenter
+          currentUser={currentUser}
+          preloadedData={preloadedData}
+          activeContractCode={selectedContract}
+          lockedContractCode={lockedContractCode}
+          onDataChange={onEmergencyChanged}
+        />
+      )}
+
+      {activeView === 'cronograma' && (
+        <Cronograma
+          preloadedData={preloadedData}
+          lockedContractCode={lockedContractCode}
+        />
       )}
 
       {showInterferenciaForm && (

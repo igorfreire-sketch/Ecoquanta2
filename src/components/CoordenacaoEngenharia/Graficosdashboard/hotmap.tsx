@@ -2,16 +2,13 @@ import React, { useMemo } from 'react';
 
 interface Atividade {
   os: string;
+  osCodigo?: string;
   osNome?: string;
   disciplina: string;
 }
 
 interface HeatmapAlocacaoProps {
   dados?: Atividade[];
-}
-
-function normalizeText(value?: string) {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 }
 
 function getHeatmapColor(valor: number, maxValor: number) {
@@ -31,7 +28,7 @@ export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
 
     dados.forEach((atividade) => {
       const disciplina = String(atividade?.disciplina || '').trim() || 'Sem disciplina';
-      const osCodigo = String(atividade?.os || '').trim() || 'Sem OS';
+      const osCodigo = String(atividade?.osCodigo || atividade?.os || '').trim() || 'Sem OS';
       const osNome = String(atividade?.osNome || atividade?.os || '').trim() || osCodigo;
 
       disciplinasSet.add(disciplina);
@@ -135,7 +132,7 @@ export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
             <div className="flex w-full mt-3">
               {osLabels.map((os) => (
                 <div key={os.codigo} className="flex-1 text-center text-[11px] text-[#757575] font-medium px-2">
-                  {normalizeText(os.nome) === normalizeText(os.codigo) ? os.codigo : `${os.codigo} - ${os.nome}`}
+                  {os.nome}
                 </div>
               ))}
             </div>

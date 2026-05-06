@@ -620,7 +620,7 @@ function getLatestEapSheet_(ss, snapshotSheets) {
     return snapshotSheets[snapshotSheets.length - 1].sheet;
   }
 
-  return ss.getSheetByName('Atual') || ss.getSheetByName('EAP') || null;
+  return null;
 }
 
 function getRawEapRows_(sheet) {

@@ -32,6 +32,7 @@ type DashboardEngenhariaProps = {
     cronograma?: any;
     admin?: any;
   };
+  mode?: 'dashboard' | 'planejamento';
 };
 
 type ConsultaAtividade = {
@@ -40,8 +41,10 @@ type ConsultaAtividade = {
   profissionalEmail: string;
   descricao: string;
   contrato: string;
+  contratoCodigo: string;
   contratoNome?: string;
   os: string;
+  osCodigo: string;
   osNome: string;
   disciplina: string;
   prazoAtual: number;
@@ -308,7 +311,7 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
     const participantes = nomes.length > 0 ? nomes : [fallbackNome];
     const participantEmails = emails.length > 0 ? emails : [fallbackEmail];
     const itemCodigo = cleanHierarchyCode(activity?.itemCodigo);
-    const osCodigo = cleanHierarchyCode(activity?.osCodigo) || osByItemCode[itemCodigo] || '';
+    const osCodigo = osByItemCode[itemCodigo] || cleanHierarchyCode(activity?.osCodigo) || '';
     const contratoCodigo = cleanHierarchyCode(activity?.contratoCodigo)
       || contractByOsCode[osCodigo]
       || getContractFromOsCode(osCodigo);
@@ -338,8 +341,10 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
         profissionalEmail: email,
         descricao: String(activity?.itemNome || activity?.descricao || ''),
         contrato: getBestHierarchyLabel(contratoCodigo, contratoNome, 'Sem contrato'),
+        contratoCodigo,
         contratoNome,
-        os: getBestHierarchyLabel(osCodigo, osNome, 'Sem OS'),
+        os: getOsDisplayName(osCodigo, osNome),
+        osCodigo,
         osNome,
         disciplina,
         prazoAtual,
@@ -377,8 +382,8 @@ function buildComposicaoData(tableData: ConsultaAtividade[], disciplinas: string
   const disciplinasBase = disciplinas.length ? disciplinas : Array.from(new Set(tableData.map((item) => item.disciplina).filter(Boolean)));
 
   tableData.forEach((item) => {
-    const osCodigo = item.os || 'Sem OS';
-    const osNome = item.osNome || osCodigo;
+    const osCodigo = item.osCodigo || item.os || 'Sem OS';
+    const osNome = item.osNome || item.os || osCodigo;
     const osLabel = getOsDisplayName(osCodigo, osNome);
     if (!grouped[osCodigo]) {
       const base: Record<string, any> = {
@@ -405,8 +410,12 @@ function filterByContractOsAndDiscipline(
   filtroDisciplina: string
 ) {
   return tableData.filter((item) => {
-    const matchContrato = isAllValue(filtros.contrato) || normalizeText(item.contrato) === normalizeText(filtros.contrato);
-    const matchOS = isAllValue(filtros.os) || normalizeText(item.os) === normalizeText(filtros.os);
+    const matchContrato = isAllValue(filtros.contrato)
+      || normalizeText(item.contratoCodigo) === normalizeText(filtros.contrato)
+      || normalizeText(item.contrato) === normalizeText(filtros.contrato);
+    const matchOS = isAllValue(filtros.os)
+      || normalizeText(item.osCodigo) === normalizeText(filtros.os)
+      || normalizeText(item.os) === normalizeText(filtros.os);
     const matchDisciplina = isAllValue(filtroDisciplina) || normalizeText(item.disciplina) === normalizeText(filtroDisciplina);
     return matchContrato && matchOS && matchDisciplina;
   });
@@ -419,7 +428,7 @@ function getContractOptions(registro: any, tableData: ConsultaAtividade[]): Cont
   fromRegistro.forEach((item: any) => {
     const contrato = String(item?.codigo || item?.code || item?.id || '').trim();
     const nome = String(item?.nome || item?.name || contrato).trim();
-    if (contrato && tableData.some((row) => normalizeText(row.contrato) === normalizeText(contrato)) && !map.has(contrato)) {
+    if (contrato && tableData.some((row) => normalizeText(row.contratoCodigo) === normalizeText(contrato) || normalizeText(row.contrato) === normalizeText(contrato)) && !map.has(contrato)) {
       map.set(contrato, { codigo: contrato, nome });
     }
   });
@@ -436,7 +445,7 @@ function getOsOptions(registro: any, tableData: ConsultaAtividade[], contrato: s
     .filter((item: any) => {
       const contratoOs = String(item?.contratoCodigo || item?.contractCode || '').trim();
       const codigo = String(item?.codigo || item?.code || item?.id || '').trim();
-      const hasActivity = tableData.some((row) => normalizeText(row.os) === normalizeText(codigo));
+      const hasActivity = tableData.some((row) => normalizeText(row.osCodigo) === normalizeText(codigo) || normalizeText(row.os) === normalizeText(codigo));
       return hasActivity && (isAllValue(contrato) || normalizeText(contratoOs) === target);
     })
     .forEach((item: any) => {
@@ -448,7 +457,7 @@ function getOsOptions(registro: any, tableData: ConsultaAtividade[], contrato: s
   return Array.from(map.entries()).map(([codigo, nome]) => ({ codigo, nome }));
 }
 
-export default function DashboardEngenharia({ filtrosAtivos, preloadedData }: DashboardEngenhariaProps) {
+export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode = 'dashboard' }: DashboardEngenhariaProps) {
   const filtroContratoGlobal = filtrosAtivos?.contrato || 'Todos';
   const filtroOSGlobal = filtrosAtivos?.os || 'Todos';
   const filtroDisciplina = filtrosAtivos?.disciplina || 'Todos';
@@ -594,6 +603,8 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData }: Da
     return tableAnaliseFiltrada.map(item => ({
       id: item.id,
       os: item.os,
+      osCodigo: item.osCodigo,
+      osNome: item.osNome,
       descricao: item.descricao,
       contrato: item.contrato,
       disciplina: item.disciplina,
@@ -636,43 +647,52 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData }: Da
   return (
     <div className="w-full space-y-6 sm:space-y-8 font-['Montserrat'] relative">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8">
-        <div className="lg:col-span-12">
-          <ComposicaoDeProfissionaisPorOS
-            dados={dadosComposicaoFiltrados}
-            disciplinas={disciplinasCadastradas}
-            filtros={{ contrato: filtrosComposicao.contrato, os: filtrosComposicao.os }}
-            contractOptions={contractOptionsComposicao}
-            osOptions={osOptionsComposicao}
-            onFiltroChange={updateFiltroComposicao}
-          />
-        </div>
+        {mode === 'dashboard' && (
+          <>
+            <div className="lg:col-span-12">
+              <ComposicaoDeProfissionaisPorOS
+                dados={dadosComposicaoFiltrados}
+                disciplinas={disciplinasCadastradas}
+                filtros={{ contrato: filtrosComposicao.contrato, os: filtrosComposicao.os }}
+                contractOptions={contractOptionsComposicao}
+                osOptions={osOptionsComposicao}
+                onFiltroChange={updateFiltroComposicao}
+              />
+            </div>
 
-        <div className="lg:col-span-6">
-          <MatrizDePriorizacao
-            tableFiltrada={tableMatrizFiltrada}
-            maxPrazo={maxPrazo}
-            filtros={filtrosMatriz}
-            contractOptions={contractOptionsMatriz}
-            osOptions={osOptionsMatriz}
-            onFiltroChange={updateFiltroMatriz}
-          />
-        </div>
+            <div className="lg:col-span-12 mt-4">
+              <NovoGrafico dados={tableConsultaFiltrada} />
+            </div>
+          </>
+        )}
 
-        <div className="lg:col-span-6">
-          <SituacaoPorDisciplina
-            dadosBrutos={dadosImpactoEsforco}
-            filtros={filtrosAnalise}
-            contractOptions={contractOptionsAnalise}
-            osOptions={osOptionsAnalise}
-            onFiltroChange={updateFiltroAnalise}
-          />
-        </div>
+        {mode === 'planejamento' && (
+          <>
+            <div className="lg:col-span-6">
+              <MatrizDePriorizacao
+                tableFiltrada={tableMatrizFiltrada}
+                maxPrazo={maxPrazo}
+                filtros={filtrosMatriz}
+                contractOptions={contractOptionsMatriz}
+                osOptions={osOptionsMatriz}
+                onFiltroChange={updateFiltroMatriz}
+              />
+            </div>
 
-        <div className="lg:col-span-12 mt-4">
-          <NovoGrafico dados={tableConsultaFiltrada} />
-        </div>
+            <div className="lg:col-span-6">
+              <SituacaoPorDisciplina
+                dadosBrutos={dadosImpactoEsforco}
+                filtros={filtrosAnalise}
+                contractOptions={contractOptionsAnalise}
+                osOptions={osOptionsAnalise}
+                onFiltroChange={updateFiltroAnalise}
+              />
+            </div>
+          </>
+        )}
       </div>
 
+      {mode === 'dashboard' && (
       <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8">
         <div className="flex items-center gap-3 border-b border-[#E5E7EB] pb-4 mb-6">
           <span className="material-symbols-outlined text-[#F05D28] text-xl">list_alt</span>
@@ -783,6 +803,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData }: Da
           </table>
         </div>
       </div>
+      )}
     </div>
   );
 }

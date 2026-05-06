@@ -314,6 +314,18 @@ function doPost(e) {
       return updateActivitiesBatch_(ss, data);
     }
 
+    if (action === 'createEmergencia') {
+      return createEmergencia_(ss, data);
+    }
+
+    if (action === 'addEmergenciaMensagem') {
+      return addEmergenciaMensagem_(ss, data);
+    }
+
+    if (action === 'markEmergenciaRead') {
+      return markEmergenciaRead_(ss, data);
+    }
+
     return json_({
       success: false,
       error: 'Ação inválida.',
@@ -434,6 +446,10 @@ function doGet(e) {
 
   if (action === 'getCronogramaData') {
     return json_(getRawCronogramaData_(ss));
+  }
+
+  if (action === 'getEmergenciaData') {
+    return json_(getEmergenciaData_(ss));
   }
 
   return json_({ error: 'Ação inválida' });
@@ -698,6 +714,189 @@ function updateActivitiesBatch_(ss, data) {
 }
 
 // ============================================================================
+// EMERGENCIAS
+// ============================================================================
+
+function createEmergencia_(ss, data) {
+  var userEmail = normalizeEmail_(data.userEmail);
+  var userName = String(data.userName || '').trim();
+  var userSector = String(data.userSector || '').trim();
+  var activityId = String(data.activityId || '').trim();
+  var itemCodigo = String(data.itemCodigo || '').trim();
+  var observation = String(data.observation || '').trim();
+  var notifiedSectors = Array.isArray(data.notifiedSectors) ? data.notifiedSectors.map(function(item) { return String(item || '').trim(); }).filter(Boolean) : [];
+
+  if (!userEmail) return json_({ success: false, error: 'Usuário inválido.' });
+  if (!activityId || !itemCodigo) return json_({ success: false, error: 'Atividade inválida.' });
+  if (observation.length < 10) return json_({ success: false, error: 'Descreva melhor a emergência.' });
+  if (!notifiedSectors.length) return json_({ success: false, error: 'Selecione ao menos um setor para notificar.' });
+
+  var sh = getOrCreateEmergenciasSheet_(ss);
+  var emergencyId = Utilities.getUuid();
+  var nowIso = new Date().toISOString();
+
+  sh.appendRow([
+    emergencyId,
+    activityId,
+    String(data.contratoCodigo || '').trim(),
+    String(data.contratoNome || '').trim(),
+    String(data.osCodigo || '').trim(),
+    String(data.osNome || '').trim(),
+    itemCodigo,
+    String(data.itemNome || '').trim(),
+    'aberta',
+    nowIso,
+    userEmail,
+    userName,
+    userSector,
+    observation,
+    notifiedSectors.join(' | '),
+    nowIso
+  ]);
+
+  var shMessages = getOrCreateEmergenciaMessagesSheet_(ss);
+  shMessages.appendRow([
+    Utilities.getUuid(),
+    emergencyId,
+    nowIso,
+    userEmail,
+    userName,
+    userSector,
+    observation,
+    'abertura'
+  ]);
+
+  scheduleFirebasePush_();
+  return json_({ success: true, emergencyId: emergencyId });
+}
+
+function addEmergenciaMensagem_(ss, data) {
+  var emergencyId = String(data.emergencyId || '').trim();
+  var userEmail = normalizeEmail_(data.userEmail);
+  var userName = String(data.userName || '').trim();
+  var userSector = String(data.userSector || '').trim();
+  var message = String(data.message || '').trim();
+
+  if (!emergencyId) return json_({ success: false, error: 'Emergência inválida.' });
+  if (!userEmail) return json_({ success: false, error: 'Usuário inválido.' });
+  if (message.length < 3) return json_({ success: false, error: 'Mensagem muito curta.' });
+
+  var shMessages = getOrCreateEmergenciaMessagesSheet_(ss);
+  var nowIso = new Date().toISOString();
+  shMessages.appendRow([
+    Utilities.getUuid(),
+    emergencyId,
+    nowIso,
+    userEmail,
+    userName,
+    userSector,
+    message,
+    'mensagem'
+  ]);
+
+  var sh = getOrCreateEmergenciasSheet_(ss);
+  var values = sh.getDataRange().getValues();
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][0] || '').trim() === emergencyId) {
+      sh.getRange(i + 1, 16).setValue(nowIso);
+      break;
+    }
+  }
+
+  scheduleFirebasePush_();
+  return json_({ success: true });
+}
+
+function markEmergenciaRead_(ss, data) {
+  var emergencyId = String(data.emergencyId || '').trim();
+  var sector = String(data.sector || '').trim();
+  var userEmail = normalizeEmail_(data.userEmail);
+
+  if (!emergencyId || !sector) return json_({ success: false, error: 'Leitura inválida.' });
+
+  var sh = getOrCreateEmergenciaReadsSheet_(ss);
+  var values = sh.getDataRange().getValues();
+  var nowIso = new Date().toISOString();
+
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][1] || '').trim() === emergencyId && String(values[i][2] || '').trim() === sector) {
+      sh.getRange(i + 1, 4).setValue(nowIso);
+      sh.getRange(i + 1, 5).setValue(userEmail);
+      return json_({ success: true });
+    }
+  }
+
+  sh.appendRow([Utilities.getUuid(), emergencyId, sector, nowIso, userEmail]);
+  return json_({ success: true });
+}
+
+function getEmergenciaData_(ss) {
+  var sh = getOrCreateEmergenciasSheet_(ss);
+  var values = sh.getDataRange().getValues();
+  var emergencies = [];
+
+  for (var i = 1; i < values.length; i++) {
+    var id = String(values[i][0] || '').trim();
+    if (!id) continue;
+    emergencies.push({
+      id: id,
+      activityId: String(values[i][1] || '').trim(),
+      contratoCodigo: String(values[i][2] || '').trim(),
+      contratoNome: String(values[i][3] || '').trim(),
+      osCodigo: String(values[i][4] || '').trim(),
+      osNome: String(values[i][5] || '').trim(),
+      itemCodigo: String(values[i][6] || '').trim(),
+      itemNome: String(values[i][7] || '').trim(),
+      status: String(values[i][8] || 'aberta').trim(),
+      createdAt: String(values[i][9] || '').trim(),
+      createdByEmail: String(values[i][10] || '').trim(),
+      createdByName: String(values[i][11] || '').trim(),
+      createdBySector: String(values[i][12] || '').trim(),
+      initialObservation: String(values[i][13] || '').trim(),
+      notifiedSectors: String(values[i][14] || '').split('|').map(function(item) { return String(item || '').trim(); }).filter(Boolean),
+      lastUpdatedAt: String(values[i][15] || values[i][9] || '').trim()
+    });
+  }
+
+  var shMessages = getOrCreateEmergenciaMessagesSheet_(ss);
+  var messageValues = shMessages.getDataRange().getValues();
+  var messagesByEmergency = {};
+  for (var m = 1; m < messageValues.length; m++) {
+    var emergencyId = String(messageValues[m][1] || '').trim();
+    if (!emergencyId) continue;
+    if (!messagesByEmergency[emergencyId]) messagesByEmergency[emergencyId] = [];
+    messagesByEmergency[emergencyId].push({
+      id: String(messageValues[m][0] || '').trim(),
+      emergencyId: emergencyId,
+      createdAt: String(messageValues[m][2] || '').trim(),
+      authorEmail: String(messageValues[m][3] || '').trim(),
+      authorName: String(messageValues[m][4] || '').trim(),
+      authorSector: String(messageValues[m][5] || '').trim(),
+      message: String(messageValues[m][6] || '').trim(),
+      type: String(messageValues[m][7] || 'mensagem').trim()
+    });
+  }
+
+  var shReads = getOrCreateEmergenciaReadsSheet_(ss);
+  var readValues = shReads.getDataRange().getValues();
+  var readMarkers = {};
+  for (var r = 1; r < readValues.length; r++) {
+    var readEmergencyId = String(readValues[r][1] || '').trim();
+    var sector = String(readValues[r][2] || '').trim();
+    if (!readEmergencyId || !sector) continue;
+    if (!readMarkers[readEmergencyId]) readMarkers[readEmergencyId] = {};
+    readMarkers[readEmergencyId][sector] = String(readValues[r][3] || '').trim();
+  }
+
+  return {
+    success: true,
+    emergencies: emergencies,
+    messagesByEmergency: messagesByEmergency,
+    readMarkers: readMarkers
+  };
+}
+
+// ============================================================================
 // SHEETS
 // ============================================================================
 
@@ -799,6 +998,60 @@ function getOrCreateActivitiesHistorySheet_(ss) {
     sh.getRange(1, 1, 1, 8).setValues([[
       'HistoricoID', 'AtividadeID', 'DataHora', 'UsuarioEmail', 'UsuarioNome',
       'CampoAlterado', 'ValorAnterior', 'ValorNovo'
+    ]]);
+  }
+  return sh;
+}
+
+function getOrCreateEmergenciasSheet_(ss) {
+  var sh = ss.getSheetByName('emergencias');
+  if (!sh) {
+    sh = ss.insertSheet('emergencias');
+    sh.getRange(1, 1, 1, 16).setValues([[
+      'ID', 'ActivityID', 'ContratoCodigo', 'ContratoNome', 'OSCodigo', 'OSNome',
+      'ItemCodigo', 'ItemNome', 'Status', 'CreatedAt', 'CreatedByEmail', 'CreatedByName',
+      'CreatedBySector', 'InitialObservation', 'NotifiedSectors', 'LastUpdatedAt'
+    ]]);
+  } else if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
+    sh.clear();
+    sh.getRange(1, 1, 1, 16).setValues([[
+      'ID', 'ActivityID', 'ContratoCodigo', 'ContratoNome', 'OSCodigo', 'OSNome',
+      'ItemCodigo', 'ItemNome', 'Status', 'CreatedAt', 'CreatedByEmail', 'CreatedByName',
+      'CreatedBySector', 'InitialObservation', 'NotifiedSectors', 'LastUpdatedAt'
+    ]]);
+  }
+  return sh;
+}
+
+function getOrCreateEmergenciaMessagesSheet_(ss) {
+  var sh = ss.getSheetByName('emergencias_mensagens');
+  if (!sh) {
+    sh = ss.insertSheet('emergencias_mensagens');
+    sh.getRange(1, 1, 1, 8).setValues([[
+      'ID', 'EmergencyID', 'CreatedAt', 'AuthorEmail', 'AuthorName', 'AuthorSector',
+      'Message', 'Type'
+    ]]);
+  } else if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
+    sh.clear();
+    sh.getRange(1, 1, 1, 8).setValues([[
+      'ID', 'EmergencyID', 'CreatedAt', 'AuthorEmail', 'AuthorName', 'AuthorSector',
+      'Message', 'Type'
+    ]]);
+  }
+  return sh;
+}
+
+function getOrCreateEmergenciaReadsSheet_(ss) {
+  var sh = ss.getSheetByName('emergencias_leituras');
+  if (!sh) {
+    sh = ss.insertSheet('emergencias_leituras');
+    sh.getRange(1, 1, 1, 5).setValues([[
+      'ID', 'EmergencyID', 'Sector', 'LastReadAt', 'UpdatedByEmail'
+    ]]);
+  } else if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
+    sh.clear();
+    sh.getRange(1, 1, 1, 5).setValues([[
+      'ID', 'EmergencyID', 'Sector', 'LastReadAt', 'UpdatedByEmail'
     ]]);
   }
   return sh;

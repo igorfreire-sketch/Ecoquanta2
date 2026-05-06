@@ -8,6 +8,7 @@ import {
   Save,
   Send,
   ChevronUp,
+  ClipboardList,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { AuthUser } from './LoginScreen';
@@ -16,6 +17,7 @@ import { fetchEapPublicData, fetchRegistroModulePublicData, fetchRegistroPublicD
 const APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
 const PUBLIC_JSON_SYNC_DELAY_MS = 15000;
+const PLANNING_TODOS_STORAGE_KEY = 'quanta_planejamento_tecnico_itens';
 
 type DifficultyLevel = 'Facil' | 'Moderada' | 'Dificil';
 type EvaluationType =
@@ -27,6 +29,7 @@ type EvaluationType =
 interface EapContractOption { codigo: string; nome: string; }
 interface EapOsOption { codigo: string; nome: string; contratoCodigo: string; }
 interface EapItemOption { codigo: string; nome: string; osCodigo: string; }
+interface TodoOption { id: string; titulo: string; descricao: string; disciplina: string; contratoCodigo: string; osCodigo: string; osNome: string; itemCodigo: string; itemNome: string; }
 interface EapHierarchyNode {
   codigo: string;
   nome: string;
@@ -43,7 +46,7 @@ interface RegistroAtividade {
   setor: string; itemCodigo: string; itemNome: string; profissionais: string[]; profissionaisEmails: string[];
   dificuldade: DifficultyLevel; descricao: string; avancoAtual: number; avaliacaoAtual: string; observacaoAtual: string;
   status: 'em_andamento' | 'aguardando_conclusao' | 'concluida'; dataRegistro: string; data100?: string;
-  dataConclusaoEfetiva?: string; createdByEmail: string; ultimaAtualizacao?: string;
+  dataConclusaoEfetiva?: string; createdByEmail: string; ultimaAtualizacao?: string; disciplina?: string; criadoPorDisciplina?: string;
 }
 
 interface RegistroDataResponse {
@@ -94,11 +97,13 @@ interface BatchResponse {
 interface RegistroDeAtividadeProps {
   currentUser: AuthUser;
   preloadedData?: any;
+  viewMode?: 'registro' | 'andamento';
 }
 
 interface NewActivityDraft {
   localId: string; contratoCodigo: string; contratoNome: string; osCodigo: string; osNome: string;
   setor: string; itemCodigo: string; itemNome: string; profissionaisEmails: string[]; profissionaisNomes: string[];
+  todoId?: string; todoTitulo?: string; todoDescricao?: string;
   dificuldade: DifficultyLevel; descricao: string; avancoInicial: number;
 }
 
@@ -107,7 +112,7 @@ interface ActivityUpdateDraft {
 }
 
 interface LocalDraftPayload {
-  formData: { contratoCodigo: string; osCodigo: string; setor: string; itemCodigo: string; profissionaisEmails: string[]; dificuldade: DifficultyLevel | ''; descricao: string; avancoInicial: number; };
+  formData: { contratoCodigo: string; osCodigo: string; setor: string; itemCodigo: string; todoId?: string; profissionaisEmails: string[]; dificuldade: DifficultyLevel | ''; descricao: string; avancoInicial: number; };
   draftQueue: NewActivityDraft[]; pendingChanges: Record<string, ActivityUpdateDraft>; expandedActivities: Record<string, boolean>;
 }
 
@@ -124,7 +129,94 @@ interface RegistroViewCachePayload {
   updatedAt?: string;
 }
 
-function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser) {
+function normalizeDiscipline(value?: string) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+function isHierarchyCode(value?: string) {
+  return /^\d+(?:\.\d+)*$/.test(String(value || '').trim());
+}
+
+function getVisualLabel(primary?: string, fallback?: string, emptyLabel = '') {
+  const first = String(primary || '').trim();
+  const second = String(fallback || '').trim();
+  if (first && !isHierarchyCode(first)) return first;
+  if (second && !isHierarchyCode(second)) return second;
+  return emptyLabel || first || second;
+}
+
+function activityMatchesUserDiscipline(activity: Partial<RegistroAtividade> | any, currentUser: AuthUser, professionals: ProfessionalOption[] = []) {
+  const currentDisciplina = normalizeDiscipline(currentUser.disciplina);
+  if (!currentDisciplina) return true;
+
+  const activityDisciplina = normalizeDiscipline(activity?.criadoPorDisciplina || activity?.disciplina);
+  if (activityDisciplina) return activityDisciplina === currentDisciplina;
+
+  const professionalEmails = Array.isArray(activity?.profissionaisEmails)
+    ? activity.profissionaisEmails
+    : String(activity?.profissionaisEmails || '').split(' | ');
+  const disciplineEmails = new Set(
+    professionals
+      .filter((item) => normalizeDiscipline(item.disciplina) === currentDisciplina)
+      .map((item) => String(item.email || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  return professionalEmails.some((email: string) => disciplineEmails.has(String(email || '').trim().toLowerCase()));
+}
+
+function getPlanningTodoSources(preloadedData: any): any[] {
+  let localItems: any[] = [];
+  try {
+    const raw = localStorage.getItem(PLANNING_TODOS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    localItems = Array.isArray(parsed) ? parsed : [];
+  } catch {}
+
+  const registro = preloadedData?.registro || preloadedData || {};
+  const planejamento = preloadedData?.planejamento || {};
+  const candidates = [
+    registro.itensAFazer,
+    registro.itensAFazerOptions,
+    registro.planejamentoItens,
+    registro.todoItems,
+    planejamento.itensAFazer,
+    planejamento.todoItems,
+  ];
+  const jsonItems = candidates.find((item) => Array.isArray(item)) || [];
+  return [...localItems, ...jsonItems];
+}
+
+function buildTodoOptions(preloadedData: any): TodoOption[] {
+  return getPlanningTodoSources(preloadedData)
+    .map((item: any, index: number) => {
+      const titulo = String(item?.titulo || item?.nome || item?.name || item?.descricao || item?.description || '').trim();
+      const descricao = String(item?.descricao || item?.description || titulo).trim();
+      const id = String(item?.id || item?.codigo || item?.code || `${item?.itemCodigo || 'todo'}-${index}`).trim();
+      return {
+        id,
+        titulo: titulo || `Item a fazer ${index + 1}`,
+        descricao,
+        disciplina: String(item?.disciplina || item?.discipline || item?.setor || '').trim(),
+        contratoCodigo: String(item?.contratoCodigo || item?.contractCode || '').trim(),
+        osCodigo: String(item?.osCodigo || item?.osCode || '').trim(),
+        osNome: String(item?.osNome || item?.osName || '').trim(),
+        itemCodigo: String(item?.itemCodigo || item?.activityCode || '').trim(),
+        itemNome: String(item?.itemNome || item?.activityName || '').trim(),
+      };
+    })
+    .filter((item) => item.id && item.titulo);
+}
+
+function getVisibleRegistroActivities(allActivities: any[], currentUser: AuthUser, viewMode: 'registro' | 'andamento') {
+  if (viewMode === 'andamento') {
+    return allActivities.filter((item) => activityMatchesUserDiscipline(item, currentUser));
+  }
+
+  return allActivities;
+}
+
+function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser, viewMode: 'registro' | 'andamento') {
   const empty = {
     contracts: [] as EapContractOption[],
     osOptions: [] as EapOsOption[],
@@ -155,11 +247,9 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser) {
 
   const disciplinaKey = String(currentUser.disciplina || '').trim() || 'Sem disciplina';
   const allActivities = Array.isArray(preloadedData.activitiesList) ? preloadedData.activitiesList : [];
-  const roleLower = String(currentUser.role || '').trim().toLowerCase();
-  const currentEmail = String(currentUser.email || '').trim().toLowerCase();
-  const visibleActivities = roleLower === 'lider'
-    ? allActivities.filter((item) => String(item.criadoPorEmail || '').trim().toLowerCase() === currentEmail)
-    : allActivities;
+  const visibleActivities = getVisibleRegistroActivities(allActivities, currentUser, viewMode);
+  const osNameByCode = new Map((preloadedData.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
+  const itemNameByCode = new Map((preloadedData.itemOptions || []).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
 
   const mappedActivities: RegistroAtividade[] = visibleActivities.map((item) => ({
     id: String(item.activityId || ''),
@@ -168,10 +258,10 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser) {
     contratoCodigo: String(item.contratoCodigo || ''),
     contratoNome: String(item.contratoNome || ''),
     osCodigo: String(item.osCodigo || ''),
-    osNome: String(item.osNome || ''),
+    osNome: getVisualLabel(String(item.osNome || ''), osNameByCode.get(String(item.osCodigo || '')) || '', String(item.osNome || '')),
     setor: String(item.setor || ''),
     itemCodigo: String(item.itemCodigo || ''),
-    itemNome: String(item.itemNome || ''),
+    itemNome: getVisualLabel(String(item.itemNome || ''), itemNameByCode.get(String(item.itemCodigo || '')) || String(item.descricao || ''), String(item.itemNome || '')),
     profissionais: String(item.profissionais || '').split(' | ').filter(Boolean),
     profissionaisEmails: String(item.profissionaisEmails || '').split(' | ').filter(Boolean),
     dificuldade: String(item.dificuldade || 'Moderada') as DifficultyLevel,
@@ -183,6 +273,8 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser) {
     data100: String(item.data100 || ''),
     dataConclusaoEfetiva: String(item.dataConclusaoEfetiva || ''),
     ultimaAtualizacao: String(item.ultimaAtualizacao || ''),
+    disciplina: String(item.disciplina || item.criadoPorDisciplina || ''),
+    criadoPorDisciplina: String(item.criadoPorDisciplina || item.disciplina || ''),
   }));
 
   return {
@@ -577,8 +669,8 @@ function MultiProfessionalSelector({ value, options, onChange }: { value: string
   );
 }
 
-export default function RegistroDeAtividade({ currentUser, preloadedData }: RegistroDeAtividadeProps) {
-  const initialRegistroData = mergeRegistroViewData(buildRegistroViewModel(preloadedData, currentUser), readRegistroCache(currentUser.email));
+export default function RegistroDeAtividade({ currentUser, preloadedData, viewMode = 'registro' }: RegistroDeAtividadeProps) {
+  const initialRegistroData = mergeRegistroViewData(buildRegistroViewModel(preloadedData, currentUser, viewMode), readRegistroCache(currentUser.email));
   const [contracts, setContracts] = useState<EapContractOption[]>(initialRegistroData.contracts);
   const [osOptions, setOsOptions] = useState<EapOsOption[]>(initialRegistroData.osOptions);
   const [itemOptions, setItemOptions] = useState<EapItemOption[]>(initialRegistroData.itemOptions);
@@ -588,6 +680,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const [professionals, setProfessionals] = useState<ProfessionalOption[]>(initialRegistroData.professionals);
   const [activeActivities, setActiveActivities] = useState<RegistroAtividade[]>(initialRegistroData.activeActivities);
   const [completedActivities, setCompletedActivities] = useState<RegistroAtividade[]>(initialRegistroData.completedActivities);
+  const todoOptions = useMemo(() => buildTodoOptions(preloadedData), [preloadedData]);
+  const [showPlannedItems, setShowPlannedItems] = useState(false);
 
   const [sendingBatch, setSendingBatch] = useState(false);
   const [savingChanges, setSavingChanges] = useState(false);
@@ -609,7 +703,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   const freshDataAttemptRef = useRef(false);
 
   const [formData, setFormData] = useState({
-    contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [] as string[], dificuldade: '' as DifficultyLevel | '', descricao: '', avancoInicial: 0,
+    contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', todoId: '', profissionaisEmails: [] as string[], dificuldade: '' as DifficultyLevel | '', descricao: '', avancoInicial: 0,
   });
 
   const persistRegistroCache = (payload: RegistroViewCachePayload) => {
@@ -647,7 +741,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
 
   useEffect(() => {
     if (preloadedData && Object.keys(preloadedData).length > 0) {
-      const nextData = mergeRegistroViewData(buildRegistroViewModel(preloadedData, currentUser), readRegistroCache(currentUser.email));
+      const nextData = mergeRegistroViewData(buildRegistroViewModel(preloadedData, currentUser, viewMode), readRegistroCache(currentUser.email));
       setContracts(nextData.contracts);
       setOsOptions(nextData.osOptions);
       setItemOptions(nextData.itemOptions);
@@ -662,7 +756,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
         nextData.completedActivities,
       );
     }
-  }, [preloadedData, currentUser]);
+  }, [preloadedData, currentUser, viewMode]);
 
   useEffect(() => {
     persistRegistroCache({
@@ -683,7 +777,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
     if (!lockedContract) return;
     setFormData((prev) => prev.contratoCodigo === lockedContract
       ? prev
-      : { ...prev, contratoCodigo: lockedContract, osCodigo: '', itemCodigo: '' });
+      : { ...prev, contratoCodigo: lockedContract, osCodigo: '', itemCodigo: '', todoId: '' });
   }, [currentUser.contrato]);
 
   const filteredProfessionals = useMemo(() => {
@@ -712,6 +806,17 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       contratoCodigo: item.osCodigo.split('.')[0] || '',
     }));
   }, [itemOptions, formData.osCodigo]);
+  const filteredTodos = useMemo(() => {
+    const userDiscipline = normalizeDiscipline(currentUser.disciplina);
+    return todoOptions.filter((item) => {
+      const matchContract = !item.contratoCodigo || item.contratoCodigo === formData.contratoCodigo;
+      const matchOs = !item.osCodigo || item.osCodigo === formData.osCodigo;
+      const matchItem = !item.itemCodigo || item.itemCodigo === formData.itemCodigo;
+      const matchDiscipline = !item.disciplina || normalizeDiscipline(item.disciplina) === userDiscipline;
+      return matchContract && matchOs && matchItem && matchDiscipline;
+    });
+  }, [currentUser.disciplina, formData.contratoCodigo, formData.itemCodigo, formData.osCodigo, todoOptions]);
+  const selectedTodo = useMemo(() => filteredTodos.find((item) => item.id === formData.todoId), [filteredTodos, formData.todoId]);
 
   const filteredActivities = useMemo(() => {
     const term = deferredSearchText.trim().toLowerCase();
@@ -720,6 +825,14 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
       item.itemCodigo.toLowerCase().includes(term) || item.itemNome.toLowerCase().includes(term) || item.osNome.toLowerCase().includes(term) || item.profissionais.join(', ').toLowerCase().includes(term)
     ));
   }, [activeActivities, deferredSearchText]);
+
+  const visibleCompletedActivities = useMemo(() => {
+    return completedActivities.filter((item) => activityMatchesUserDiscipline(item, currentUser, professionals));
+  }, [completedActivities, currentUser, professionals]);
+  const disciplineTodos = useMemo(() => {
+    const userDiscipline = normalizeDiscipline(currentUser.disciplina);
+    return todoOptions.filter((item) => !item.disciplina || normalizeDiscipline(item.disciplina) === userDiscipline);
+  }, [currentUser.disciplina, todoOptions]);
 
   const hasPendingChanges = Object.keys(pendingChanges).length > 0;
   const hasQueuedActivities = draftQueue.length > 0;
@@ -745,11 +858,9 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
 
       const disciplinaKey = String(currentUser.disciplina || '').trim() || 'Sem disciplina';
       const allActivities = Array.isArray(registro.activitiesList) ? registro.activitiesList : [];
-      const roleLower = String(currentUser.role || '').trim().toLowerCase();
-      const currentEmail = String(currentUser.email || '').trim().toLowerCase();
-      const visibleActivities = roleLower === 'lider'
-        ? allActivities.filter((item) => String(item.criadoPorEmail || '').trim().toLowerCase() === currentEmail)
-        : allActivities;
+      const visibleActivities = getVisibleRegistroActivities(allActivities, currentUser, viewMode);
+      const osNameByCode = new Map((registro.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
+      const itemNameByCode = new Map((registro.itemOptions || []).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
 
       const mappedActivities: RegistroAtividade[] = visibleActivities.map((item) => ({
         id: String(item.activityId || ''),
@@ -758,10 +869,10 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
         contratoCodigo: String(item.contratoCodigo || ''),
         contratoNome: String(item.contratoNome || ''),
         osCodigo: String(item.osCodigo || ''),
-        osNome: String(item.osNome || ''),
+        osNome: getVisualLabel(String(item.osNome || ''), osNameByCode.get(String(item.osCodigo || '')) || '', String(item.osNome || '')),
         setor: String(item.setor || ''),
         itemCodigo: String(item.itemCodigo || ''),
-        itemNome: String(item.itemNome || ''),
+        itemNome: getVisualLabel(String(item.itemNome || ''), itemNameByCode.get(String(item.itemCodigo || '')) || String(item.descricao || ''), String(item.itemNome || '')),
         profissionais: String(item.profissionais || '').split(' | ').filter(Boolean),
         profissionaisEmails: String(item.profissionaisEmails || '').split(' | ').filter(Boolean),
         dificuldade: String(item.dificuldade || 'Moderada') as DifficultyLevel,
@@ -773,6 +884,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
         data100: String(item.data100 || ''),
         dataConclusaoEfetiva: String(item.dataConclusaoEfetiva || ''),
         ultimaAtualizacao: String(item.ultimaAtualizacao || ''),
+        disciplina: String(item.disciplina || item.criadoPorDisciplina || ''),
+        criadoPorDisciplina: String(item.criadoPorDisciplina || item.disciplina || ''),
       }));
 
       setContracts(registro.contracts || []);
@@ -894,7 +1007,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
   };
   const restoreLocalDraft = () => {
     if (!restorableDraft) return;
-    setFormData({ contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [], dificuldade: '', descricao: '', avancoInicial: 0, ...(restorableDraft.formData || {}) });
+    setFormData({ contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', todoId: '', profissionaisEmails: [], dificuldade: '', descricao: '', avancoInicial: 0, ...(restorableDraft.formData || {}) });
     setDraftQueue(restorableDraft.draftQueue || []); setPendingChanges(restorableDraft.pendingChanges || {}); setExpandedActivities(restorableDraft.expandedActivities || {});
     setShowRestorePrompt(false); setRestorableDraft(null); setBalloonMessage('Últimas alterações restauradas com sucesso.');
   };
@@ -915,7 +1028,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
     const selectedProfessionalNames = filteredProfessionals.filter((item) => formData.profissionaisEmails.includes(item.email)).map((item) => item.nome);
 
     setDraftQueue((prev) => [...prev, { localId: createLocalId(), contratoCodigo: formData.contratoCodigo, contratoNome: selectedContract?.nome || '', osCodigo: formData.osCodigo, osNome: selectedOs?.nome || '', setor: formData.setor, itemCodigo: formData.itemCodigo, itemNome: itemSelected.nome, profissionaisEmails: formData.profissionaisEmails, profissionaisNomes: selectedProfessionalNames, dificuldade: formData.dificuldade, descricao: formData.descricao.trim(), avancoInicial: normalizePercentage(formData.avancoInicial) }]);
-    setFormData({ contratoCodigo: String(currentUser.contrato || '').trim(), osCodigo: '', setor: 'Engenharia', itemCodigo: '', profissionaisEmails: [], dificuldade: '', descricao: '', avancoInicial: 0 });
+    setFormData({ contratoCodigo: String(currentUser.contrato || '').trim(), osCodigo: '', setor: 'Engenharia', itemCodigo: '', todoId: '', profissionaisEmails: [], dificuldade: '', descricao: '', avancoInicial: 0 });
     setBalloonMessage('Atividade adicionada à fila. Você pode registrar a próxima.');
   };
 
@@ -986,6 +1099,23 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
     } finally { setSavingAll(false); }
   };
 
+  const showRegistroForm = viewMode === 'registro';
+  const showAndamentoSection = viewMode === 'andamento';
+  const showCompletedSection = viewMode === 'registro';
+
+  const applyPlannedItemToForm = (item: TodoOption) => {
+    setFormData((prev) => ({
+      ...prev,
+      contratoCodigo: item.contratoCodigo || prev.contratoCodigo,
+      osCodigo: item.osCodigo || prev.osCodigo,
+      itemCodigo: item.itemCodigo || '',
+      todoId: item.id,
+      descricao: item.descricao || prev.descricao,
+    }));
+    setShowPlannedItems(false);
+    setBalloonMessage('Item planejado aplicado. Complete os campos restantes e registre a atividade.');
+  };
+
   return (
     <div className="w-full relative">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full">
@@ -1010,11 +1140,48 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
           </div>
         )}
 
+        {showRegistroForm && (
         <form className="space-y-10" onSubmit={(e) => e.preventDefault()}>
           <div className="space-y-6">
+            <div className="rounded-2xl border border-[#BBF7D0] bg-[#F0FDF4] p-4">
+              <button
+                type="button"
+                onClick={() => setShowPlannedItems((prev) => !prev)}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#10B981] px-5 text-[13px] font-black text-white shadow-sm transition hover:bg-[#059669]"
+              >
+                <ClipboardList size={16} />
+                Itens Planejado
+                <span className="rounded-full bg-white/20 px-2 py-0.5 text-[11px]">{disciplineTodos.length}</span>
+              </button>
+
+              {showPlannedItems && (
+                <div className="mt-4 space-y-3">
+                  {disciplineTodos.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-[#86EFAC] bg-white/70 p-4 text-[13px] font-semibold text-[#047857]">
+                      Nenhum item planejado foi cadastrado para sua disciplina ainda.
+                    </div>
+                  )}
+                  {disciplineTodos.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => applyPlannedItemToForm(item)}
+                      className="w-full rounded-xl border border-[#BBF7D0] bg-white p-4 text-left transition hover:border-[#10B981] hover:bg-[#ECFDF5]"
+                    >
+                      <div className="text-[12px] font-black uppercase tracking-[1px] text-[#047857]">{item.disciplina || currentUser.disciplina}</div>
+                      <div className="mt-1 text-[14px] font-black text-[#111827]">{item.titulo}</div>
+                      <div className="mt-1 text-[12px] font-semibold text-[#64748B]">{getVisualLabel(item.osNome, item.osCodigo, 'OS nao informada')}</div>
+                      {item.descricao && <p className="mt-2 text-[13px] leading-relaxed text-[#475569]">{item.descricao}</p>}
+                      <div className="mt-3 text-[11px] font-black uppercase tracking-[1px] text-[#10B981]">Clique para preencher</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="w-full">
               <label className="bentham-label">1. CONTRATO</label>
-              <select className="bentham-select" value={formData.contratoCodigo} disabled={Boolean(String(currentUser.contrato || '').trim())} onChange={(e) => setFormData((prev) => ({ ...prev, contratoCodigo: e.target.value, osCodigo: '', itemCodigo: '' }))}>
+              <select className="bentham-select" value={formData.contratoCodigo} disabled={Boolean(String(currentUser.contrato || '').trim())} onChange={(e) => setFormData((prev) => ({ ...prev, contratoCodigo: e.target.value, osCodigo: '', itemCodigo: '', todoId: '' }))}>
                 <option value="">{String(currentUser.contrato || '').trim() ? 'Contrato fixo' : 'Selecione...'}</option>
                 {contracts.map((item) => (<option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>))}
               </select>
@@ -1023,7 +1190,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6">
               <div>
                 <label className="bentham-label">2. OS</label>
-                <select className="bentham-select" value={formData.osCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, osCodigo: e.target.value, itemCodigo: '' }))}>
+                <select className="bentham-select" value={formData.osCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, osCodigo: e.target.value, itemCodigo: '', todoId: '' }))}>
                   <option value="">Selecione...</option>
                   {filteredOs.map((item) => (<option key={item.codigo} value={item.codigo}>{item.nome}</option>))}
                 </select>
@@ -1031,19 +1198,19 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
               <div><label className="bentham-label">3. SETOR</label><input value="Engenharia" className="bentham-input" readOnly /></div>
               <div>
                 <label className="bentham-label">4. ATIVIDADE</label>
-                <select className="bentham-select" value={formData.itemCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, itemCodigo: e.target.value }))}>
+                <select className="bentham-select" value={formData.itemCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, itemCodigo: e.target.value, todoId: '' }))}>
                   <option value="">{formData.osCodigo ? 'Selecione...' : 'Aguardando OS...'}</option>
-                  {filteredItems.map((item) => (<option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>))}
+                  {filteredItems.map((item) => (<option key={item.codigo} value={item.codigo}>{item.nome}</option>))}
                 </select>
               </div>
               <div>
-                <label className="bentham-label">6. DIFICULDADE</label>
+                <label className="bentham-label">7. DIFICULDADE</label>
                 <select className="bentham-select" value={formData.dificuldade} onChange={(e) => setFormData((prev) => ({ ...prev, dificuldade: e.target.value as DifficultyLevel }))}>
                   <option value="">Selecione...</option><option value="Facil">Fácil</option><option value="Moderada">Moderada</option><option value="Dificil">Difícil</option>
                 </select>
               </div>
               <div>
-                <label className="bentham-label">8. % INICIAL</label>
+                <label className="bentham-label">9. % INICIAL</label>
                 <div className="relative">
                   <input type="number" min={0} max={100} value={formData.avancoInicial} onChange={(e) => setFormData((prev) => ({ ...prev, avancoInicial: normalizePercentage(Number(e.target.value)) }))} className="bentham-input pr-10" />
                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[12px] font-bold text-bentham-gray">%</span>
@@ -1057,7 +1224,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
             </div>
 
             <div className="relative">
-              <label className="bentham-label">7. DESCRIÇÃO</label>
+              <label className="bentham-label">8. DESCRIÇÃO</label>
               <textarea placeholder="Descreva a atividade com no mínimo 50 caracteres..." className="bentham-textarea min-h-[100px]" value={formData.descricao} onChange={(e) => setFormData((prev) => ({ ...prev, descricao: e.target.value }))} />
               <div className="absolute bottom-3 right-3 text-[10px] font-medium text-bentham-gray">{formData.descricao.length} caracteres</div>
             </div>
@@ -1080,7 +1247,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
               <div className="space-y-3">
                 {draftQueue.map((item, index) => (
                   <div key={item.localId} className="rounded-xl border border-bentham-border bg-[#F9FAFB] px-4 py-3">
-                    <div className="text-[13px] font-bold text-bentham-dark">{index + 1}. {item.itemCodigo} - {item.itemNome}</div>
+                    <div className="text-[13px] font-bold text-bentham-dark">{index + 1}. {item.osNome} - {item.itemNome}</div>
+                    {item.todoTitulo && <div className="text-[12px] text-[#F05D28] font-semibold mt-1">Item a fazer: {item.todoTitulo}</div>}
                     <div className="text-[12px] text-bentham-gray mt-1">{item.profissionaisNomes.join(', ')}</div>
                     <div className="text-[12px] text-bentham-gray mt-1">AvanÃ§o inicial: {item.avancoInicial}%</div>
                   </div>
@@ -1089,12 +1257,14 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
             </div>
           )}
         </form>
+        )}
 
+        {showAndamentoSection && (
         <div className="mt-10 space-y-6">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h3 className="text-[16px] font-bold text-bentham-dark">Atividades em andamento</h3>
-              <p className="text-[12px] text-bentham-gray mt-1">Líder vê somente as atividades cadastradas por ele.</p>
+              <p className="text-[12px] text-bentham-gray mt-1">Aqui aparecem todas as atividades em andamento da sua disciplina.</p>
             </div>
             <div className="w-full max-w-sm relative">
               <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-bentham-gray" />
@@ -1192,15 +1362,18 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
             })}
           </div>
         </div>
+        )}
 
+        {showCompletedSection && (
         <div className="mt-12 space-y-5">
           <div className="flex items-center gap-3">
             <CheckCircle2 size={18} className="text-[#10B981]" />
             <h3 className="text-[16px] font-bold text-bentham-dark">Itens concluídos</h3>
           </div>
           <div className="space-y-4">
+            {visibleCompletedActivities.length === 0 && completedActivities.length > 0 && <div className="bg-white border border-bentham-border rounded-2xl p-6 text-[13px] text-bentham-gray">Nenhuma atividade concluida da sua disciplina ainda.</div>}
             {completedActivities.length === 0 && <div className="bg-white border border-bentham-border rounded-2xl p-6 text-[13px] text-bentham-gray">Nenhuma atividade concluída ainda.</div>}
-            {completedActivities.map((activity) => (
+            {visibleCompletedActivities.map((activity) => (
               <div key={activity.id} className="bg-white border border-[#D1FAE5] rounded-2xl p-5">
                 <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr_180px] gap-4">
                   <div>
@@ -1210,7 +1383,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
                         {activity.osNome}
                       </span>
                       <span className="text-[12px] font-medium text-bentham-dark mt-1 truncate">
-                        {activity.itemCodigo} - {activity.itemNome}
+                        {activity.itemNome}
                       </span>
                     </div>
                   </div>
@@ -1221,6 +1394,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData }: Regi
             ))}
           </div>
         </div>
+        )}
       </motion.div>
 
       {(hasQueuedActivities || hasPendingChanges) && (

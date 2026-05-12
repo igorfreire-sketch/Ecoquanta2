@@ -859,10 +859,15 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       }
 
       const disciplinaKey = String(currentUser.disciplina || '').trim() || 'Sem disciplina';
+      const nextProfessionals = registro.professionalsByDisciplina?.[disciplinaKey] || [];
       const allActivities = Array.isArray(registro.activitiesList) ? registro.activitiesList : [];
       const visibleActivities = getVisibleRegistroActivities(allActivities, currentUser, viewMode);
       const osNameByCode = new Map<string, string>((registro.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
       const itemNameByCode = new Map<string, string>((registro.itemOptions || []).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
+
+      if (currentUser.disciplina && nextProfessionals.length === 0) {
+        throw new Error('Profissionais ausentes no JSON publico.');
+      }
 
       const mappedActivities: RegistroAtividade[] = visibleActivities.map((item) => ({
         id: String(item.activityId || ''),
@@ -899,7 +904,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       setChildrenByParent(registro.childrenByParent && Object.keys(registro.childrenByParent).length > 0
         ? registro.childrenByParent
         : buildChildrenMapFromNodes(nextHierarchyNodes));
-      setProfessionals(registro.professionalsByDisciplina?.[disciplinaKey] || []);
+      setProfessionals(nextProfessionals);
       applyActivitiesState(
         mergeActivitiesWithCache(mappedActivities.filter((item) => item.status !== 'concluida'), cachedData?.activeActivities || []),
         mergeActivitiesWithCache(mappedActivities.filter((item) => item.status === 'concluida'), cachedData?.completedActivities || []),
@@ -929,12 +934,12 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   };
 
   useEffect(() => {
-    if (contracts.length > 0 && osOptions.length > 0 && itemOptions.length > 0) return;
+    if (contracts.length > 0 && osOptions.length > 0 && itemOptions.length > 0 && professionals.length > 0) return;
     if (freshDataAttemptRef.current) return;
 
     freshDataAttemptRef.current = true;
     void fetchFreshData();
-  }, [contracts.length, currentUser.contrato, currentUser.disciplina, currentUser.email, currentUser.role, itemOptions.length, osOptions.length, preloadedData]);
+  }, [contracts.length, currentUser.contrato, currentUser.disciplina, currentUser.email, currentUser.role, itemOptions.length, osOptions.length, preloadedData, professionals.length]);
 
   const refreshFromPublishedJsonAfterSheetUpdate = async () => {
     setSyncingPublishedJson(true);

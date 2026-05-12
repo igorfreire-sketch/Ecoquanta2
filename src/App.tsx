@@ -273,6 +273,14 @@ async function fetchGlobalPublicDataFromJson() {
     fullData = mergeGlobalData(legacyPayload?.data || {}, fullData);
   }
 
+  if (eapPayload?.data) {
+    fullData = applyUnifiedEapData(fullData, {
+      ...eapPayload.data,
+      publishedAt: eapPayload.data.publishedAt || eapPayload.publishedAt,
+      latestEapPublishedAt: eapPayload.data.latestEapPublishedAt || eapPayload.publishedAt,
+    });
+  }
+
   if (!hasAnyGlobalData(fullData)) {
     throw new Error('Nenhum JSON publico disponivel.');
   }

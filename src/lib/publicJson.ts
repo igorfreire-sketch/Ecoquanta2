@@ -1,5 +1,6 @@
 const DEFAULT_PUBLIC_JSON_BASE_URL = '';
 const DEFAULT_RAW_PUBLIC_JSON_BASE_URL = 'https://raw.githubusercontent.com/igorfreire-sketch/Ecoquanta2/main/Publica';
+const EAP_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
 
 interface EncryptedJsonEnvelope {
   version: number;
@@ -177,4 +178,15 @@ export async function fetchNaoConformidadesModulePublicData<T>() {
 
 export async function fetchEapPublicData<T>() {
   return fetchPublicJson<T>('eap-unificada.json');
+}
+
+export async function fetchEapAppsScriptData<T>() {
+  const response = await fetch(EAP_APPS_SCRIPT_URL, { cache: 'no-store' });
+  const payload = await response.json();
+
+  if (!payload?.success || !payload?.data) {
+    throw new Error(payload?.error || 'Falha ao carregar EAP pelo Apps Script.');
+  }
+
+  return payload.data as T;
 }

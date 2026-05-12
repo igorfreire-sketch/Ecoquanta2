@@ -32,6 +32,7 @@ import {
   fetchContratoModulePublicData,
   fetchControleModulePublicData,
   fetchCronogramaModulePublicData,
+  fetchEapAppsScriptData,
   fetchEapPublicData,
   fetchRegistroModulePublicData,
   fetchRegistroPublicData,
@@ -255,7 +256,9 @@ async function fetchGlobalPublicDataFromJson() {
     fetchContratoModulePublicData<PublicModulePayload>().catch(() => null),
     fetchCronogramaModulePublicData<PublicModulePayload>().catch(() => null),
     fetchAdminModulePublicData<PublicModulePayload>().catch(() => null),
-    fetchEapPublicData<PublicEapPayload>().catch(() => null),
+    fetchEapPublicData<PublicEapPayload>()
+      .catch(async () => ({ data: await fetchEapAppsScriptData<any>() } as PublicEapPayload))
+      .catch(() => null),
   ]);
 
   let fullData: GlobalData = {};
@@ -736,7 +739,9 @@ export default function App() {
         eapPayload = publicData.eapPayload;
       } catch {
         fullData = await fetchInitialDataFromAppsScript(user);
-        eapPayload = await fetchEapPublicData<PublicEapPayload>().catch(() => null);
+        eapPayload = await fetchEapPublicData<PublicEapPayload>()
+          .catch(async () => ({ data: await fetchEapAppsScriptData<any>() } as PublicEapPayload))
+          .catch(() => null);
       }
 
       if (eapPayload?.data) {

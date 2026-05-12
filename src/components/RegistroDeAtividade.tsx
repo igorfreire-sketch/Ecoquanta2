@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { AuthUser } from './LoginScreen';
-import { fetchEapPublicData, fetchRegistroModulePublicData, fetchRegistroPublicData } from '../lib/publicJson';
+import { fetchEapAppsScriptData, fetchEapPublicData, fetchRegistroModulePublicData, fetchRegistroPublicData } from '../lib/publicJson';
 
 const APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
@@ -248,8 +248,8 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser, viewM
   const disciplinaKey = String(currentUser.disciplina || '').trim() || 'Sem disciplina';
   const allActivities = Array.isArray(preloadedData.activitiesList) ? preloadedData.activitiesList : [];
   const visibleActivities = getVisibleRegistroActivities(allActivities, currentUser, viewMode);
-  const osNameByCode = new Map((preloadedData.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
-  const itemNameByCode = new Map((preloadedData.itemOptions || []).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
+  const osNameByCode = new Map<string, string>((preloadedData.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
+  const itemNameByCode = new Map<string, string>((preloadedData.itemOptions || []).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
 
   const mappedActivities: RegistroAtividade[] = visibleActivities.map((item) => ({
     id: String(item.activityId || ''),
@@ -845,7 +845,9 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
 
       const [payload, eapPayload] = await Promise.all([
         fetchRegistroModulePublicData<PublicRegistroEnvelope>().catch(() => fetchRegistroPublicData<PublicRegistroEnvelope>()),
-        fetchEapPublicData<PublicEapEnvelope>().catch(() => null),
+        fetchEapPublicData<PublicEapEnvelope>()
+          .catch(async () => ({ data: await fetchEapAppsScriptData<any>() } as PublicEapEnvelope))
+          .catch(() => null),
       ]);
       const registro = filterRegistroPayloadByContract(applyUnifiedEapToRegistro(payload.data?.registro, eapPayload) || {}, currentUser.contrato || '');
       if (!registro) throw new Error('Dados de registro ausentes no JSON publico.');
@@ -859,8 +861,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       const disciplinaKey = String(currentUser.disciplina || '').trim() || 'Sem disciplina';
       const allActivities = Array.isArray(registro.activitiesList) ? registro.activitiesList : [];
       const visibleActivities = getVisibleRegistroActivities(allActivities, currentUser, viewMode);
-      const osNameByCode = new Map((registro.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
-      const itemNameByCode = new Map((registro.itemOptions || []).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
+      const osNameByCode = new Map<string, string>((registro.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
+      const itemNameByCode = new Map<string, string>((registro.itemOptions || []).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
 
       const mappedActivities: RegistroAtividade[] = visibleActivities.map((item) => ({
         id: String(item.activityId || ''),
@@ -904,7 +906,13 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       );
     } catch {
       try {
-        const fallback = filterRegistroPayloadByContract(await fetchRegistroDataFromAppsScript(currentUser), currentUser.contrato || '');
+        const [fallbackResponse, fallbackEapPayload] = await Promise.all([
+          fetchRegistroDataFromAppsScript(currentUser),
+          fetchEapPublicData<PublicEapEnvelope>()
+            .catch(async () => ({ data: await fetchEapAppsScriptData<any>() } as PublicEapEnvelope))
+            .catch(() => null),
+        ]);
+        const fallback = filterRegistroPayloadByContract(applyUnifiedEapToRegistro(fallbackResponse, fallbackEapPayload), currentUser.contrato || '');
         setContracts(fallback.contracts || []);
         setOsOptions(fallback.osOptions || []);
         setItemOptions(fallback.itemOptions || []);

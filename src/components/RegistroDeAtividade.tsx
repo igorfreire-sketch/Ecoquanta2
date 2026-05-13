@@ -97,7 +97,7 @@ interface BatchResponse {
 interface RegistroDeAtividadeProps {
   currentUser: AuthUser;
   preloadedData?: any;
-  viewMode?: 'registro' | 'andamento';
+  viewMode?: 'registro' | 'andamento' | 'atividades';
 }
 
 interface NewActivityDraft {
@@ -131,6 +131,24 @@ interface RegistroViewCachePayload {
 
 function normalizeDiscipline(value?: string) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+function getProfessionalsByDiscipline(
+  professionalsByDisciplina: Record<string, ProfessionalOption[]> | undefined,
+  disciplina?: string,
+) {
+  if (!professionalsByDisciplina || typeof professionalsByDisciplina !== 'object') return [];
+
+  const exactKey = String(disciplina || '').trim() || 'Sem disciplina';
+  const exactMatch = professionalsByDisciplina[exactKey];
+  if (Array.isArray(exactMatch) && exactMatch.length > 0) return exactMatch;
+
+  const normalizedTarget = normalizeDiscipline(disciplina) || normalizeDiscipline('Sem disciplina');
+  const matchedEntry = Object.entries(professionalsByDisciplina).find(([key, value]) => (
+    normalizeDiscipline(key) === normalizedTarget && Array.isArray(value)
+  ));
+
+  return matchedEntry?.[1] || [];
 }
 
 function isHierarchyCode(value?: string) {
@@ -208,15 +226,15 @@ function buildTodoOptions(preloadedData: any): TodoOption[] {
     .filter((item) => item.id && item.titulo);
 }
 
-function getVisibleRegistroActivities(allActivities: any[], currentUser: AuthUser, viewMode: 'registro' | 'andamento') {
-  if (viewMode === 'andamento') {
+function getVisibleRegistroActivities(allActivities: any[], currentUser: AuthUser, viewMode: 'registro' | 'andamento' | 'atividades') {
+  if (viewMode === 'andamento' || viewMode === 'atividades') {
     return allActivities.filter((item) => activityMatchesUserDiscipline(item, currentUser));
   }
 
   return allActivities;
 }
 
-function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser, viewMode: 'registro' | 'andamento') {
+function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser, viewMode: 'registro' | 'andamento' | 'atividades') {
   const empty = {
     contracts: [] as EapContractOption[],
     osOptions: [] as EapOsOption[],
@@ -245,7 +263,6 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser, viewM
     };
   }
 
-  const disciplinaKey = String(currentUser.disciplina || '').trim() || 'Sem disciplina';
   const allActivities = Array.isArray(preloadedData.activitiesList) ? preloadedData.activitiesList : [];
   const visibleActivities = getVisibleRegistroActivities(allActivities, currentUser, viewMode);
   const osNameByCode = new Map<string, string>((preloadedData.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
@@ -284,7 +301,7 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser, viewM
     hierarchyNodes: preloadedData.hierarchyNodes || [],
     childrenByParent: preloadedData.childrenByParent || {},
     rootCodes: preloadedData.rootCodes || [],
-    professionals: preloadedData.professionalsByDisciplina?.[disciplinaKey] || [],
+    professionals: getProfessionalsByDiscipline(preloadedData.professionalsByDisciplina, currentUser.disciplina),
     activeActivities: mappedActivities.filter((item) => item.status !== 'concluida'),
     completedActivities: mappedActivities.filter((item) => item.status === 'concluida'),
   };
@@ -698,6 +715,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
   const [restorableDraft, setRestorableDraft] = useState<LocalDraftPayload | null>(null);
   const [hasInitializedDraftRecovery, setHasInitializedDraftRecovery] = useState(false);
+  const [showRegistroAccordion, setShowRegistroAccordion] = useState(viewMode !== 'atividades');
   const draftSaveTimerRef = useRef<number | null>(null);
   const latestDraftPayloadRef = useRef<LocalDraftPayload | null>(null);
   const freshDataAttemptRef = useRef(false);
@@ -757,6 +775,10 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       );
     }
   }, [preloadedData, currentUser, viewMode]);
+
+  useEffect(() => {
+    setShowRegistroAccordion(viewMode !== 'atividades');
+  }, [viewMode]);
 
   useEffect(() => {
     persistRegistroCache({
@@ -840,9 +862,9 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   const isMissingCoreData = contracts.length === 0 || osOptions.length === 0 || itemOptions.length === 0;
 
   const fetchFreshData = async () => {
-    try {
-      const cachedData = readRegistroCache(currentUser.email);
+    const cachedData = readRegistroCache(currentUser.email);
 
+    try {
       const [payload, eapPayload] = await Promise.all([
         fetchRegistroModulePublicData<PublicRegistroEnvelope>().catch(() => fetchRegistroPublicData<PublicRegistroEnvelope>()),
         fetchEapPublicData<PublicEapEnvelope>()
@@ -851,23 +873,45 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       ]);
       const registro = filterRegistroPayloadByContract(applyUnifiedEapToRegistro(payload.data?.registro, eapPayload) || {}, currentUser.contrato || '');
       if (!registro) throw new Error('Dados de registro ausentes no JSON publico.');
-      if (!Array.isArray(registro.contracts) || !Array.isArray(registro.osOptions) || !Array.isArray(registro.itemOptions)) {
-        throw new Error('Estrutura da EAP ausente no JSON publico.');
-      }
-      if (registro.contracts.length === 0 || registro.osOptions.length === 0 || registro.itemOptions.length === 0) {
+
+      const nextContracts = Array.isArray(registro.contracts) && registro.contracts.length > 0
+        ? registro.contracts
+        : cachedData?.contracts || [];
+      const nextOsOptions = Array.isArray(registro.osOptions) && registro.osOptions.length > 0
+        ? registro.osOptions
+        : cachedData?.osOptions || [];
+      const nextItemOptions = Array.isArray(registro.itemOptions) && registro.itemOptions.length > 0
+        ? registro.itemOptions
+        : cachedData?.itemOptions || [];
+      const nextRootCodes = Array.isArray(registro.rootCodes) && registro.rootCodes.length > 0
+        ? registro.rootCodes
+        : cachedData?.rootCodes || [];
+      const nextHierarchyNodes = normalizeHierarchyNodes(
+        registro.hierarchyNodes,
+        nextContracts,
+        nextOsOptions,
+        nextItemOptions,
+      );
+      const nextChildrenByParent = registro.childrenByParent && Object.keys(registro.childrenByParent).length > 0
+        ? registro.childrenByParent
+        : (cachedData?.childrenByParent && Object.keys(cachedData.childrenByParent).length > 0
+          ? cachedData.childrenByParent
+          : buildChildrenMapFromNodes(nextHierarchyNodes));
+
+      if (nextContracts.length === 0 || nextOsOptions.length === 0 || nextItemOptions.length === 0) {
         throw new Error('EAP sem contratos, OS ou atividades no JSON publico.');
       }
 
-      const disciplinaKey = String(currentUser.disciplina || '').trim() || 'Sem disciplina';
-      const nextProfessionals = registro.professionalsByDisciplina?.[disciplinaKey] || [];
+      const jsonProfessionals = getProfessionalsByDiscipline(registro.professionalsByDisciplina, currentUser.disciplina);
+      const nextProfessionals = jsonProfessionals.length > 0
+        ? jsonProfessionals
+        : (cachedData?.professionals && cachedData.professionals.length > 0
+          ? cachedData.professionals
+          : professionals);
       const allActivities = Array.isArray(registro.activitiesList) ? registro.activitiesList : [];
       const visibleActivities = getVisibleRegistroActivities(allActivities, currentUser, viewMode);
-      const osNameByCode = new Map<string, string>((registro.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
-      const itemNameByCode = new Map<string, string>((registro.itemOptions || []).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
-
-      if (currentUser.disciplina && nextProfessionals.length === 0) {
-        throw new Error('Profissionais ausentes no JSON publico.');
-      }
+      const osNameByCode = new Map<string, string>(nextOsOptions.map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
+      const itemNameByCode = new Map<string, string>(nextItemOptions.map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
 
       const mappedActivities: RegistroAtividade[] = visibleActivities.map((item) => ({
         id: String(item.activityId || ''),
@@ -895,15 +939,12 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
         criadoPorDisciplina: String(item.criadoPorDisciplina || item.disciplina || ''),
       }));
 
-      setContracts(registro.contracts || []);
-      setOsOptions(registro.osOptions || []);
-      setItemOptions(registro.itemOptions || []);
-      setRootCodes(registro.rootCodes || []);
-      const nextHierarchyNodes = normalizeHierarchyNodes(registro.hierarchyNodes, registro.contracts, registro.osOptions, registro.itemOptions);
+      setContracts(nextContracts);
+      setOsOptions(nextOsOptions);
+      setItemOptions(nextItemOptions);
+      setRootCodes(nextRootCodes);
       setHierarchyNodes(nextHierarchyNodes);
-      setChildrenByParent(registro.childrenByParent && Object.keys(registro.childrenByParent).length > 0
-        ? registro.childrenByParent
-        : buildChildrenMapFromNodes(nextHierarchyNodes));
+      setChildrenByParent(nextChildrenByParent);
       setProfessionals(nextProfessionals);
       applyActivitiesState(
         mergeActivitiesWithCache(mappedActivities.filter((item) => item.status !== 'concluida'), cachedData?.activeActivities || []),
@@ -1112,9 +1153,10 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
     } finally { setSavingAll(false); }
   };
 
-  const showRegistroForm = viewMode === 'registro';
-  const showAndamentoSection = viewMode === 'andamento';
-  const showCompletedSection = viewMode === 'registro';
+  const showRegistroForm = viewMode === 'registro' || viewMode === 'atividades';
+  const showAndamentoSection = viewMode === 'andamento' || viewMode === 'atividades';
+  const showCompletedSection = viewMode === 'registro' || viewMode === 'atividades';
+  const registroFormExpanded = viewMode === 'atividades' ? showRegistroAccordion : true;
 
   const applyPlannedItemToForm = (item: TodoOption) => {
     setFormData((prev) => ({
@@ -1154,6 +1196,26 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
         )}
 
         {showRegistroForm && (
+        <div className="space-y-4">
+        {viewMode === 'atividades' && (
+          <button
+            type="button"
+            onClick={() => setShowRegistroAccordion((prev) => !prev)}
+            className="flex w-full items-center justify-between rounded-2xl border border-[#E5E7EB] bg-white px-5 py-4 text-left transition hover:border-[#F05D28] hover:bg-[#FFF7ED]"
+          >
+            <span className="flex items-center gap-3 text-[14px] font-black text-[#2D2D2D]">
+              <span>Registro de atividades</span>
+              {disciplineTodos.length > 0 && (
+                <span className="inline-flex min-w-[26px] items-center justify-center rounded-full bg-[#10B981] px-2.5 py-1 text-[11px] font-black text-white shadow-sm">
+                  {disciplineTodos.length}
+                </span>
+              )}
+            </span>
+            {showRegistroAccordion ? <ChevronUp size={18} className="text-[#F05D28]" /> : <ChevronDown size={18} className="text-[#757575]" />}
+          </button>
+        )}
+
+        {registroFormExpanded && (
         <form className="space-y-10" onSubmit={(e) => e.preventDefault()}>
           <div className="space-y-6">
             <div className="rounded-2xl border border-[#BBF7D0] bg-[#F0FDF4] p-4">
@@ -1163,7 +1225,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#10B981] px-5 text-[13px] font-black text-white shadow-sm transition hover:bg-[#059669]"
               >
                 <ClipboardList size={16} />
-                Itens Planejado
+                Itens Planejamento
                 <span className="rounded-full bg-white/20 px-2 py-0.5 text-[11px]">{disciplineTodos.length}</span>
               </button>
 
@@ -1271,13 +1333,19 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
           )}
         </form>
         )}
+        </div>
+        )}
 
         {showAndamentoSection && (
         <div className="mt-10 space-y-6">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h3 className="text-[16px] font-bold text-bentham-dark">Atividades em andamento</h3>
-              <p className="text-[12px] text-bentham-gray mt-1">Aqui aparecem todas as atividades em andamento da sua disciplina.</p>
+              <h3 className="text-[16px] font-bold text-bentham-dark">{viewMode === 'atividades' ? 'Atividades da disciplina' : 'Atividades em andamento'}</h3>
+              <p className="text-[12px] text-bentham-gray mt-1">
+                {viewMode === 'atividades'
+                  ? 'Aqui aparecem todas as atividades registradas da sua disciplina.'
+                  : 'Aqui aparecem todas as atividades em andamento da sua disciplina.'}
+              </p>
             </div>
             <div className="w-full max-w-sm relative">
               <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-bentham-gray" />
@@ -1286,7 +1354,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
           </div>
 
           <div className="space-y-5">
-            {filteredActivities.length === 0 && <div className="bg-white border border-bentham-border rounded-2xl p-6 text-[13px] text-bentham-gray">Nenhuma atividade em andamento encontrada.</div>}
+            {filteredActivities.length === 0 && <div className="bg-white border border-bentham-border rounded-2xl p-6 text-[13px] text-bentham-gray">{viewMode === 'atividades' ? 'Nenhuma atividade registrada encontrada para sua disciplina.' : 'Nenhuma atividade em andamento encontrada.'}</div>}
             
             {filteredActivities.map((activity) => {
               const draft = getDraftForActivity(activity);
@@ -1308,7 +1376,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
                         </div>
                       ) : null}
                       <div className="mt-2 flex flex-wrap gap-3 text-[12px] text-bentham-gray">
-                        <span>Profissionais: {draft.profissionaisNomes.join(', ') || '-'}</span>
+                        <span>Usuarios cadastrados: {draft.profissionaisNomes.join(', ') || '-'}</span>
                         <span>Dias sem atualização: {getDaysWithoutUpdate(activity.ultimaAtualizacao)}</span>
                       </div>
                     </div>

@@ -2,9 +2,12 @@ import React from 'react';
 import {
   Search,
   RotateCcw,
-  ExternalLink
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
+import Alocacoes from './Alocacoes';
 import ComposicaoDeProfissionaisPorOS from './Graficosdashboard/ComposicaodeProfissionaisPorOS';
 import MatrizDePriorizacao from './Graficosdashboard/MatrizDePriorizacao';
 import SituacaoPorDisciplina from './Graficosdashboard/ImpactoXesforco';
@@ -25,6 +28,14 @@ type FiltrosLocais = {
   dificuldade: string;
 };
 
+type FiltrosConsulta = {
+  contrato: string;
+  os: string;
+  disciplina: string;
+  profissional: string;
+  avaliacao: string;
+};
+
 type DashboardEngenhariaProps = {
   filtrosAtivos?: FiltrosEngenharia;
   preloadedData?: {
@@ -32,8 +43,40 @@ type DashboardEngenhariaProps = {
     cronograma?: any;
     admin?: any;
   };
-  mode?: 'dashboard' | 'planejamento';
+  mode?: 'profissionais' | 'planejamento';
+  activeContractCode?: string;
 };
+
+function ExpandableSection({
+  title,
+  children,
+  defaultOpen = false,
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = React.useState(defaultOpen);
+
+  return (
+    <section className="rounded-2xl border border-[#E5E7EB] bg-white shadow-sm">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-[#F8F9FA]"
+      >
+        <span className="text-[14px] font-black uppercase tracking-wide text-[#2D2D2D]">{title}</span>
+        {open ? <ChevronUp size={18} className="text-[#F05D28]" /> : <ChevronDown size={18} className="text-[#757575]" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-[#E5E7EB] p-4 sm:p-5">
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
 
 type ConsultaAtividade = {
   id: string;
@@ -188,6 +231,17 @@ function buildContractNameMap(registro: any) {
   return map;
 }
 
+function buildContractCodeByNameMap(registro: any) {
+  const map: Record<string, string> = {};
+  const contracts = Array.isArray(registro?.contracts) ? registro.contracts : [];
+  contracts.forEach((item: any) => {
+    const codigo = String(item?.codigo || item?.code || item?.id || '').trim();
+    const nome = normalizeText(String(item?.nome || item?.name || codigo).trim());
+    if (codigo && nome && !map[nome]) map[nome] = codigo;
+  });
+  return map;
+}
+
 function buildOsNameMap(registro: any) {
   const map: Record<string, string> = {};
   const osOptions = Array.isArray(registro?.osOptions) ? registro.osOptions : [];
@@ -195,6 +249,17 @@ function buildOsNameMap(registro: any) {
     const codigo = String(item?.codigo || item?.code || item?.id || '').trim();
     const nome = String(item?.nome || item?.name || codigo).trim();
     if (codigo) map[codigo] = nome;
+  });
+  return map;
+}
+
+function buildOsCodeByNameMap(registro: any) {
+  const map: Record<string, string> = {};
+  const osOptions = Array.isArray(registro?.osOptions) ? registro.osOptions : [];
+  osOptions.forEach((item: any) => {
+    const codigo = String(item?.codigo || item?.code || item?.id || '').trim();
+    const nome = normalizeText(String(item?.nome || item?.name || codigo).trim());
+    if (codigo && nome && !map[nome]) map[nome] = codigo;
   });
   return map;
 }
@@ -294,7 +359,9 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
   const { byEmail: disciplinaByEmail, byName: disciplinaByName } = buildProfessionalDisciplineMaps(registro, admin);
   const cronogramaByCode = buildCronogramaMap(cronograma);
   const contractNameByCode = buildContractNameMap(registro);
+  const contractCodeByName = buildContractCodeByNameMap(registro);
   const osNameByCode = buildOsNameMap(registro);
+  const osCodeByName = buildOsCodeByNameMap(registro);
   const osByItemCode = buildItemOsMap(registro);
   const contractByOsCode = buildOsContractMap(registro);
   const priorityValues = readStoredPriorityValues();
@@ -310,13 +377,18 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
     const fallbackEmail = String(activity?.criadoPorEmail || activity?.createdByEmail || '').trim();
     const participantes = nomes.length > 0 ? nomes : [fallbackNome];
     const participantEmails = emails.length > 0 ? emails : [fallbackEmail];
+    const rawItemNome = String(activity?.itemNome || activity?.descricao || '').trim();
+    const rawOsNome = String(activity?.osNome || activity?.os || '').trim();
+    const rawContratoNome = String(activity?.contratoNome || activity?.contrato || '').trim();
     const itemCodigo = cleanHierarchyCode(activity?.itemCodigo);
-    const osCodigo = osByItemCode[itemCodigo] || cleanHierarchyCode(activity?.osCodigo) || '';
+    const resolvedOsCodigoFromName = osCodeByName[normalizeText(rawOsNome)] || '';
+    const osCodigo = osByItemCode[itemCodigo] || cleanHierarchyCode(activity?.osCodigo) || resolvedOsCodigoFromName || '';
     const contratoCodigo = cleanHierarchyCode(activity?.contratoCodigo)
       || contractByOsCode[osCodigo]
+      || contractCodeByName[normalizeText(rawContratoNome)]
       || getContractFromOsCode(osCodigo);
-    const osNome = osNameByCode[osCodigo] || cleanHierarchyCode(activity?.osNome) || osCodigo || 'Sem OS';
-    const contratoNome = contractNameByCode[contratoCodigo] || cleanHierarchyCode(activity?.contratoNome) || contratoCodigo || 'Sem contrato';
+    const osNome = osNameByCode[osCodigo] || rawOsNome || osCodigo || 'Sem OS';
+    const contratoNome = contractNameByCode[contratoCodigo] || rawContratoNome || contratoCodigo || 'Sem contrato';
     const cronogramaItem = cronogramaByCode[itemCodigo] || {};
     const plannedStart = formatDateBR(cronogramaItem.plannedStart);
     const plannedEnd = formatDateBR(cronogramaItem.plannedEnd);
@@ -339,7 +411,7 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
         id: `${baseId}-${email || nome}-${index}`,
         profissional: nome,
         profissionalEmail: email,
-        descricao: String(activity?.itemNome || activity?.descricao || ''),
+        descricao: rawItemNome,
         contrato: getBestHierarchyLabel(contratoCodigo, contratoNome, 'Sem contrato'),
         contratoCodigo,
         contratoNome,
@@ -428,10 +500,20 @@ function getContractOptions(registro: any, tableData: ConsultaAtividade[]): Cont
   fromRegistro.forEach((item: any) => {
     const contrato = String(item?.codigo || item?.code || item?.id || '').trim();
     const nome = String(item?.nome || item?.name || contrato).trim();
-    if (contrato && tableData.some((row) => normalizeText(row.contratoCodigo) === normalizeText(contrato) || normalizeText(row.contrato) === normalizeText(contrato)) && !map.has(contrato)) {
+    if (contrato && !map.has(contrato)) {
       map.set(contrato, { codigo: contrato, nome });
     }
   });
+
+  if (map.size === 0) {
+    tableData.forEach((row) => {
+      const contrato = String(row.contratoCodigo || row.contrato || '').trim();
+      const nome = String(row.contratoNome || row.contrato || contrato).trim();
+      if (contrato && !map.has(contrato)) {
+        map.set(contrato, { codigo: contrato, nome });
+      }
+    });
+  }
 
   return Array.from(map.values());
 }
@@ -444,9 +526,7 @@ function getOsOptions(registro: any, tableData: ConsultaAtividade[], contrato: s
   fromRegistro
     .filter((item: any) => {
       const contratoOs = String(item?.contratoCodigo || item?.contractCode || '').trim();
-      const codigo = String(item?.codigo || item?.code || item?.id || '').trim();
-      const hasActivity = tableData.some((row) => normalizeText(row.osCodigo) === normalizeText(codigo) || normalizeText(row.os) === normalizeText(codigo));
-      return hasActivity && (isAllValue(contrato) || normalizeText(contratoOs) === target);
+      return isAllValue(contrato) || normalizeText(contratoOs) === target;
     })
     .forEach((item: any) => {
       const os = String(item?.codigo || item?.code || item?.id || '').trim();
@@ -454,10 +534,72 @@ function getOsOptions(registro: any, tableData: ConsultaAtividade[], contrato: s
       if (os && !map.has(os)) map.set(os, nome);
     });
 
+  if (map.size === 0) {
+    tableData
+      .filter((row) => isAllValue(contrato) || normalizeText(row.contratoCodigo) === target)
+      .forEach((row) => {
+        const os = String(row.osCodigo || row.os || '').trim();
+        const nome = String(row.osNome || row.os || os).trim();
+        if (os && !map.has(os)) map.set(os, nome);
+      });
+  }
+
   return Array.from(map.entries()).map(([codigo, nome]) => ({ codigo, nome }));
 }
 
-export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode = 'dashboard' }: DashboardEngenhariaProps) {
+function getProfessionalOptions(registro: any, tableData: ConsultaAtividade[], disciplina: string) {
+  const map = new Map<string, { nome: string; email: string }>();
+
+  const professionalsByDisciplina = registro?.professionalsByDisciplina && typeof registro.professionalsByDisciplina === 'object'
+    ? registro.professionalsByDisciplina
+    : {};
+
+  Object.entries(professionalsByDisciplina).forEach(([disciplinaAtual, profissionais]) => {
+    const sameDisciplina = isAllValue(disciplina) || normalizeText(disciplinaAtual) === normalizeText(disciplina);
+    if (!sameDisciplina || !Array.isArray(profissionais)) return;
+
+    profissionais.forEach((item: any) => {
+      const nome = String(item?.nome || item?.name || '').trim();
+      const email = String(item?.email || '').trim();
+      const key = normalizeText(email || nome);
+      if (!key || map.has(key)) return;
+      map.set(key, { nome, email });
+    });
+  });
+
+  tableData.forEach((item) => {
+    const sameDisciplina = isAllValue(disciplina) || normalizeText(item.disciplina) === normalizeText(disciplina);
+    if (!sameDisciplina) return;
+    const nome = String(item.profissional || '').trim();
+    const email = String(item.profissionalEmail || '').trim();
+    const key = normalizeText(email || nome);
+    if (!key || map.has(key)) return;
+    map.set(key, { nome, email });
+  });
+
+  return Array.from(map.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+
+function getEvaluationOptions(tableData: ConsultaAtividade[]) {
+  const preferredOrder = [
+    'Dentro do esperado',
+    'Melhor que o esperado',
+    'Pior que o esperado',
+    'Problema/Bloqueio',
+    'A programar',
+  ];
+  const unique = Array.from(new Set(tableData.map((item) => String(item.avaliacao || '').trim()).filter(Boolean)));
+  return unique.sort((a, b) => {
+    const ai = preferredOrder.findIndex((item) => normalizeText(item) === normalizeText(a));
+    const bi = preferredOrder.findIndex((item) => normalizeText(item) === normalizeText(b));
+    if (ai === -1 && bi === -1) return a.localeCompare(b, 'pt-BR');
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+}
+
+export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode = 'profissionais', activeContractCode }: DashboardEngenhariaProps) {
   const filtroContratoGlobal = filtrosAtivos?.contrato || 'Todos';
   const filtroOSGlobal = filtrosAtivos?.os || 'Todos';
   const filtroDisciplina = filtrosAtivos?.disciplina || 'Todos';
@@ -494,6 +636,14 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
     importancia: 'Todos',
     dificuldade: 'Todos',
   });
+  const [filtrosConsulta, setFiltrosConsulta] = React.useState<FiltrosConsulta>({
+    contrato: filtroContratoGlobal,
+    os: filtroOSGlobal,
+    disciplina: filtroDisciplina,
+    profissional: 'Todos',
+    avaliacao: 'Todas',
+  });
+  const [consultaSearch, setConsultaSearch] = React.useState('');
 
   React.useEffect(() => {
     setFiltrosComposicao((prev) => ({
@@ -511,7 +661,13 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
       contrato: filtroContratoGlobal,
       os: filtroOSGlobal,
     }));
-  }, [filtroContratoGlobal, filtroOSGlobal]);
+    setFiltrosConsulta((prev) => ({
+      ...prev,
+      contrato: filtroContratoGlobal,
+      os: filtroOSGlobal,
+      disciplina: filtroDisciplina,
+    }));
+  }, [filtroContratoGlobal, filtroOSGlobal, filtroDisciplina]);
 
   const contractOptionsComposicao = React.useMemo(
     () => getContractOptions(preloadedData?.registro, tableData),
@@ -537,6 +693,26 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
     () => getOsOptions(preloadedData?.registro, tableData, filtrosAnalise.contrato),
     [preloadedData?.registro, tableData, filtrosAnalise.contrato]
   );
+  const contractOptionsConsulta = React.useMemo(
+    () => getContractOptions(preloadedData?.registro, tableData),
+    [preloadedData?.registro, tableData]
+  );
+  const osOptionsConsulta = React.useMemo(
+    () => getOsOptions(preloadedData?.registro, tableData, filtrosConsulta.contrato),
+    [preloadedData?.registro, tableData, filtrosConsulta.contrato]
+  );
+  const disciplineOptionsConsulta = React.useMemo(
+    () => disciplinasCadastradas.filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [disciplinasCadastradas]
+  );
+  const professionalOptionsConsulta = React.useMemo(
+    () => getProfessionalOptions(preloadedData?.registro, tableData, filtrosConsulta.disciplina),
+    [preloadedData?.registro, tableData, filtrosConsulta.disciplina]
+  );
+  const evaluationOptionsConsulta = React.useMemo(
+    () => getEvaluationOptions(tableData),
+    [tableData]
+  );
 
   React.useEffect(() => {
     if (isAllValue(filtrosComposicao.os)) return;
@@ -555,6 +731,22 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
     const exists = osOptionsAnalise.some((item) => normalizeText(item.codigo) === normalizeText(filtrosAnalise.os));
     if (!exists) setFiltrosAnalise((prev) => ({ ...prev, os: 'Todos' }));
   }, [osOptionsAnalise, filtrosAnalise.os]);
+
+  React.useEffect(() => {
+    if (isAllValue(filtrosConsulta.os)) return;
+    const exists = osOptionsConsulta.some((item) => normalizeText(item.codigo) === normalizeText(filtrosConsulta.os));
+    if (!exists) {
+      setFiltrosConsulta((prev) => ({ ...prev, os: 'Todos' }));
+    }
+  }, [osOptionsConsulta, filtrosConsulta.os]);
+
+  React.useEffect(() => {
+    if (normalizeText(filtrosConsulta.profissional) === 'todos') return;
+    const exists = professionalOptionsConsulta.some((item) => normalizeText(item.nome) === normalizeText(filtrosConsulta.profissional));
+    if (!exists) {
+      setFiltrosConsulta((prev) => ({ ...prev, profissional: 'Todos' }));
+    }
+  }, [professionalOptionsConsulta, filtrosConsulta.profissional]);
 
   const tableComposicaoFiltrada = React.useMemo(() => {
     return filterByContractOsAndDiscipline(tableData, filtrosComposicao, filtroDisciplina);
@@ -585,12 +777,30 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   }, [tableAnaliseBase, filtrosAnalise.importancia, filtrosAnalise.dificuldade]);
 
   const tableConsultaFiltrada = React.useMemo(() => {
-    return filterByContractOsAndDiscipline(
+    const base = filterByContractOsAndDiscipline(
       tableData,
-      { contrato: filtroContratoGlobal, os: filtroOSGlobal },
-      filtroDisciplina
+      { contrato: filtrosConsulta.contrato, os: filtrosConsulta.os },
+      filtrosConsulta.disciplina
     );
-  }, [tableData, filtroContratoGlobal, filtroOSGlobal, filtroDisciplina]);
+    return base.filter((item) => {
+      const matchProfissional = normalizeText(filtrosConsulta.profissional) === 'todos'
+        || normalizeText(item.profissional) === normalizeText(filtrosConsulta.profissional);
+      const matchAvaliacao = normalizeText(filtrosConsulta.avaliacao) === 'todas'
+        || normalizeText(item.avaliacao) === normalizeText(filtrosConsulta.avaliacao);
+      const search = normalizeText(consultaSearch);
+      const matchSearch = !search || [
+        item.profissional,
+        item.disciplina,
+        item.contrato,
+        item.contratoNome,
+        item.os,
+        item.osNome,
+        item.descricao,
+        item.avaliacao,
+      ].some((value) => normalizeText(String(value || '')).includes(search));
+      return matchProfissional && matchAvaliacao && matchSearch;
+    });
+  }, [tableData, filtrosConsulta, consultaSearch]);
 
   const dadosComposicaoFiltrados = React.useMemo(() => {
     return buildComposicaoData(tableComposicaoFiltrada, disciplinasCadastradas).map((item) => {
@@ -644,24 +854,45 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
     }));
   };
 
+  const resetConsultaFiltros = () => {
+    setFiltrosConsulta({
+      contrato: filtroContratoGlobal,
+      os: filtroOSGlobal,
+      disciplina: filtroDisciplina,
+      profissional: 'Todos',
+      avaliacao: 'Todas',
+    });
+    setConsultaSearch('');
+  };
+
   return (
     <div className="w-full space-y-6 sm:space-y-8 font-['Montserrat'] relative">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8">
-        {mode === 'dashboard' && (
+        {mode === 'profissionais' && (
           <>
             <div className="lg:col-span-12">
-              <ComposicaoDeProfissionaisPorOS
-                dados={dadosComposicaoFiltrados}
-                disciplinas={disciplinasCadastradas}
-                filtros={{ contrato: filtrosComposicao.contrato, os: filtrosComposicao.os }}
-                contractOptions={contractOptionsComposicao}
-                osOptions={osOptionsComposicao}
-                onFiltroChange={updateFiltroComposicao}
-              />
+              <ExpandableSection title="Composicao de Profissionais por OS">
+                <ComposicaoDeProfissionaisPorOS
+                  dados={dadosComposicaoFiltrados}
+                  disciplinas={disciplinasCadastradas}
+                  filtros={{ contrato: filtrosComposicao.contrato, os: filtrosComposicao.os }}
+                  contractOptions={contractOptionsComposicao}
+                  osOptions={osOptionsComposicao}
+                  onFiltroChange={updateFiltroComposicao}
+                />
+              </ExpandableSection>
             </div>
 
-            <div className="lg:col-span-12 mt-4">
-              <NovoGrafico dados={tableConsultaFiltrada} />
+            <div className="lg:col-span-12">
+              <ExpandableSection title="Alocacao de Disciplina por OS">
+                <NovoGrafico dados={tableConsultaFiltrada} />
+              </ExpandableSection>
+            </div>
+
+            <div className="lg:col-span-12">
+              <ExpandableSection title="Profissionais">
+                <Alocacoes preloadedData={preloadedData} activeContractCode={activeContractCode} />
+              </ExpandableSection>
             </div>
           </>
         )}
@@ -669,30 +900,35 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
         {mode === 'planejamento' && (
           <>
             <div className="lg:col-span-6">
-              <MatrizDePriorizacao
-                tableFiltrada={tableMatrizFiltrada}
-                maxPrazo={maxPrazo}
-                filtros={filtrosMatriz}
-                contractOptions={contractOptionsMatriz}
-                osOptions={osOptionsMatriz}
-                onFiltroChange={updateFiltroMatriz}
-              />
+              <ExpandableSection title="Matriz de Priorizacao">
+                <MatrizDePriorizacao
+                  tableFiltrada={tableMatrizFiltrada}
+                  maxPrazo={maxPrazo}
+                  filtros={filtrosMatriz}
+                  contractOptions={contractOptionsMatriz}
+                  osOptions={osOptionsMatriz}
+                  onFiltroChange={updateFiltroMatriz}
+                />
+              </ExpandableSection>
             </div>
 
             <div className="lg:col-span-6">
-              <SituacaoPorDisciplina
-                dadosBrutos={dadosImpactoEsforco}
-                filtros={filtrosAnalise}
-                contractOptions={contractOptionsAnalise}
-                osOptions={osOptionsAnalise}
-                onFiltroChange={updateFiltroAnalise}
-              />
+              <ExpandableSection title="Analise de Atuacao Executiva">
+                <SituacaoPorDisciplina
+                  dadosBrutos={dadosImpactoEsforco}
+                  filtros={filtrosAnalise}
+                  contractOptions={contractOptionsAnalise}
+                  osOptions={osOptionsAnalise}
+                  onFiltroChange={updateFiltroAnalise}
+                />
+              </ExpandableSection>
             </div>
           </>
         )}
       </div>
 
-      {mode === 'dashboard' && (
+      {mode === 'profissionais' && (
+      <ExpandableSection title="Consulta de Atividades">
       <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8">
         <div className="flex items-center gap-3 border-b border-[#E5E7EB] pb-4 mb-6">
           <span className="material-symbols-outlined text-[#F05D28] text-xl">list_alt</span>
@@ -702,49 +938,87 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
           <div className="space-y-1.5 md:col-span-1">
             <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Contrato</label>
-            <select className="w-full h-11 px-4 bg-[#F8F9FA] border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] outline-none disabled:opacity-70" value={filtroContratoGlobal} disabled>
+            <select
+              className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
+              value={filtrosConsulta.contrato}
+              onChange={(e) => setFiltrosConsulta((prev) => ({ ...prev, contrato: e.target.value, os: 'Todos' }))}
+            >
               <option value="Todos">Todos</option>
-              <option value={filtroContratoGlobal}>{filtroContratoGlobal}</option>
+              {contractOptionsConsulta.map((item) => (
+                <option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>
+              ))}
             </select>
           </div>
           <div className="space-y-1.5 md:col-span-1">
-            <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Ordem Serv.</label>
-            <select className="w-full h-11 px-4 bg-[#F8F9FA] border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] outline-none disabled:opacity-70" value={filtroOSGlobal} disabled>
+            <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">OS</label>
+            <select
+              className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
+              value={filtrosConsulta.os}
+              onChange={(e) => setFiltrosConsulta((prev) => ({ ...prev, os: e.target.value }))}
+            >
               <option value="Todos">Todas as OS</option>
-              <option value={filtroOSGlobal}>{filtroOSGlobal}</option>
+              {osOptionsConsulta.map((item) => (
+                <option key={item.codigo} value={item.codigo}>{item.nome}</option>
+              ))}
             </select>
           </div>
           <div className="space-y-1.5 md:col-span-1">
             <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Disciplina</label>
-            <select className="w-full h-11 px-4 bg-[#F8F9FA] border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] outline-none disabled:opacity-70" value={filtroDisciplina} disabled>
+            <select
+              className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
+              value={filtrosConsulta.disciplina}
+              onChange={(e) => setFiltrosConsulta((prev) => ({ ...prev, disciplina: e.target.value, profissional: 'Todos' }))}
+            >
               <option value="Todos">Todas</option>
-              <option value={filtroDisciplina}>{filtroDisciplina}</option>
+              {disciplineOptionsConsulta.map((item) => (
+                <option key={item} value={item}>{item}</option>
+              ))}
             </select>
           </div>
           <div className="space-y-1.5 md:col-span-1">
             <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Profissional</label>
-            <select className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer">
-              <option>Todos</option>
+            <select
+              className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
+              value={filtrosConsulta.profissional}
+              onChange={(e) => setFiltrosConsulta((prev) => ({ ...prev, profissional: e.target.value }))}
+            >
+              <option value="Todos">Todos</option>
+              {professionalOptionsConsulta.map((item) => (
+                <option key={item.email || item.nome} value={item.nome}>{item.nome}</option>
+              ))}
             </select>
           </div>
           <div className="space-y-1.5 md:col-span-1">
             <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Avaliação</label>
-            <select className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer">
-              <option>Todas</option>
+            <select
+              className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
+              value={filtrosConsulta.avaliacao}
+              onChange={(e) => setFiltrosConsulta((prev) => ({ ...prev, avaliacao: e.target.value }))}
+            >
+              <option value="Todas">Todas</option>
+              {evaluationOptionsConsulta.map((item) => (
+                <option key={item} value={item}>{item}</option>
+              ))}
             </select>
           </div>
         </div>
 
         <div className="flex flex-col md:flex-row gap-4 mb-8">
           <div className="flex-1 relative">
-            <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#757575]" />
-            <input
-              type="text"
-              placeholder="Pesquisar atividades..."
-              className="w-full h-11 pl-12 pr-4 bg-white border border-[#E5E7EB] rounded-xl text-sm font-medium text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] outline-none transition-colors"
-            />
-          </div>
-          <button className="h-11 px-6 border border-[#E5E7EB] text-[#757575] hover:bg-[#F4F5F7] hover:text-[#2D2D2D] rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-colors">
+              <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#757575]" />
+              <input
+                type="text"
+                placeholder="Pesquisar atividades..."
+                value={consultaSearch}
+                onChange={(e) => setConsultaSearch(e.target.value)}
+                className="w-full h-11 pl-12 pr-4 bg-white border border-[#E5E7EB] rounded-xl text-sm font-medium text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] outline-none transition-colors"
+              />
+            </div>
+          <button
+            type="button"
+            onClick={resetConsultaFiltros}
+            className="h-11 px-6 border border-[#E5E7EB] text-[#757575] hover:bg-[#F4F5F7] hover:text-[#2D2D2D] rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-colors"
+          >
             <RotateCcw size={16} />
             Limpar Filtro
           </button>
@@ -802,6 +1076,32 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
             </tbody>
           </table>
         </div>
+      </div>
+      </ExpandableSection>
+      )}
+
+      {mode === 'profissionais' && (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <ExpandableSection title="Matriz de Priorizacao">
+          <MatrizDePriorizacao
+            tableFiltrada={tableMatrizFiltrada}
+            maxPrazo={maxPrazo}
+            filtros={filtrosMatriz}
+            contractOptions={contractOptionsMatriz}
+            osOptions={osOptionsMatriz}
+            onFiltroChange={updateFiltroMatriz}
+          />
+        </ExpandableSection>
+
+        <ExpandableSection title="Analise de Atuacao Executiva">
+          <SituacaoPorDisciplina
+            dadosBrutos={dadosImpactoEsforco}
+            filtros={filtrosAnalise}
+            contractOptions={contractOptionsAnalise}
+            osOptions={osOptionsAnalise}
+            onFiltroChange={updateFiltroAnalise}
+          />
+        </ExpandableSection>
       </div>
       )}
     </div>

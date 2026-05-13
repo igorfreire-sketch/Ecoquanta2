@@ -5,9 +5,7 @@ import {
   Users,
   AlertTriangle,
   Calendar,
-  Bell,
   LogOut,
-  ChevronDown,
   Menu,
   X,
   LayoutDashboard,
@@ -37,13 +35,12 @@ import {
   fetchRegistroModulePublicData,
   fetchRegistroPublicData,
 } from './lib/publicJson';
-import { fetchEmergencyData, getEmergencyUnreadCount } from './lib/emergenciaApi';
 import { getAppVersionLabel } from './config/appVersion';
-import EmergenciaCenter from './components/EmergenciaCenter';
 
 const RegistroDeAtividade = React.lazy(() => import('./components/RegistroDeAtividade'));
 const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEngenharia'));
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
+const Alertas = React.lazy(() => import('./components/CoordenacaoEngenharia/Alertas'));
 const PlanejamentoTecnico = React.lazy(() => import('./components/PlanejamentoTecnico'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
@@ -59,12 +56,27 @@ const APP_VERSION_LABEL = getAppVersionLabel();
 const CORPORATE_DOMAIN = '@quantaconsultoria.com';
 const isCorporateEmail = (email: string) => email.toLowerCase().trim().endsWith(CORPORATE_DOMAIN);
 
+function normalizeUserText(value?: string) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+function shouldLockUserToContract(user?: AuthUser | null) {
+  if (!user) return false;
+  if (user.isAdmin) return false;
+
+  const role = normalizeUserText(user.role);
+  const leadershipKeywords = ['lider', 'coorden', 'geren', 'diretor', 'gestor', 'supervisor'];
+  if (leadershipKeywords.some((keyword) => role.includes(keyword))) return false;
+
+  return Boolean(String(user.contrato || '').trim());
+}
+
 type AppTab = 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'administracao';
-type AreaTecnicaSubTab = 'registro' | 'atividades' | 'cronograma';
-type ControleSubTab = 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'emergencia' | 'cronograma';
-type PlanejamentoSubTab = 'dashboard' | 'tecnico' | 'emergencia' | 'cronograma';
-type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'emergencia' | 'cronograma';
-type ContratoSubTab = 'dashboard' | 'interferencias' | 'prioridades' | 'emergencia' | 'cronograma';
+type AreaTecnicaSubTab = 'atividades' | 'cronograma';
+type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma';
+type PlanejamentoSubTab = 'dashboard' | 'tecnico' | 'alertas' | 'cronograma';
+type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'cronograma';
+type ContratoSubTab = 'dashboard' | 'interferencias' | 'prioridades' | 'cronograma';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
@@ -566,6 +578,25 @@ function filterRowsByContract(rows: any[], contractCode: string) {
   });
 }
 
+function getActivityContractCodeForFilter(activity: any) {
+  const explicitContract = String(activity?.contratoCodigo || activity?.contractCode || '').trim();
+  if (explicitContract) return explicitContract;
+
+  const osCode = String(activity?.osCodigo || activity?.osCode || '').trim();
+  if (osCode) {
+    const osParts = osCode.split('.');
+    if (osParts[0]) return osParts[0];
+  }
+
+  const itemCode = String(activity?.itemCodigo || activity?.itemCode || '').trim();
+  if (itemCode) {
+    const itemParts = itemCode.split('.');
+    if (itemParts[0]) return itemParts[0];
+  }
+
+  return '';
+}
+
 function filterGlobalDataByContract(data: GlobalData, contractCode: string): GlobalData {
   const target = String(contractCode || '').trim();
   if (!target) return data;
@@ -592,9 +623,9 @@ function filterGlobalDataByContract(data: GlobalData, contractCode: string): Glo
         .filter(([key]) => key === 'ROOT' || String(key).trim() === target || String(key).trim().startsWith(`${target}.`))
         .map(([key, value]) => [key, (Array.isArray(value) ? value : []).filter((item: any) => String(item?.codigo || '').trim() === target || String(item?.codigo || '').trim().startsWith(`${target}.`))])
     );
-    next.registro.activitiesList = (Array.isArray(next.registro.activitiesList) ? next.registro.activitiesList : []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target);
-    next.registro.activeActivities = (Array.isArray(next.registro.activeActivities) ? next.registro.activeActivities : []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target);
-    next.registro.completedActivities = (Array.isArray(next.registro.completedActivities) ? next.registro.completedActivities : []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target);
+    next.registro.activitiesList = (Array.isArray(next.registro.activitiesList) ? next.registro.activitiesList : []).filter((item: any) => getActivityContractCodeForFilter(item) === target);
+    next.registro.activeActivities = (Array.isArray(next.registro.activeActivities) ? next.registro.activeActivities : []).filter((item: any) => getActivityContractCodeForFilter(item) === target);
+    next.registro.completedActivities = (Array.isArray(next.registro.completedActivities) ? next.registro.completedActivities : []).filter((item: any) => getActivityContractCodeForFilter(item) === target);
   }
 
   next.cronograma = filterRowsByContract(data.cronograma as any[], target);
@@ -623,6 +654,180 @@ function filterGlobalDataByContract(data: GlobalData, contractCode: string): Glo
   return next;
 }
 
+function getSeedSourceActivities(registro: any) {
+  const activitiesList = Array.isArray(registro?.activitiesList) ? registro.activitiesList : [];
+  const activeActivities = Array.isArray(registro?.activeActivities) ? registro.activeActivities : [];
+  const completedActivities = Array.isArray(registro?.completedActivities) ? registro.completedActivities : [];
+
+  return activitiesList.length > 0
+    ? activitiesList
+    : [...activeActivities, ...completedActivities];
+}
+
+function buildProfessionalsForSeed(registro: any, admin: any) {
+  const out = new Map<string, Array<{ nome: string; email: string; disciplina: string }>>();
+  const push = (disciplinaRaw: any, nomeRaw: any, emailRaw: any) => {
+    const disciplina = String(disciplinaRaw || '').trim() || 'Sem disciplina';
+    const nome = String(nomeRaw || '').trim();
+    const email = String(emailRaw || '').trim().toLowerCase();
+    if (!nome) return;
+    const key = normalizeEapCode(disciplina);
+    const current = out.get(key) || [];
+    if (current.some((item) => item.nome === nome && item.email === email)) return;
+    current.push({ nome, email, disciplina });
+    out.set(key, current);
+  };
+
+  const professionalsByDisciplina = registro?.professionalsByDisciplina && typeof registro.professionalsByDisciplina === 'object'
+    ? registro.professionalsByDisciplina
+    : {};
+
+  Object.entries(professionalsByDisciplina).forEach(([disciplina, list]) => {
+    (Array.isArray(list) ? list : []).forEach((prof: any) => push(disciplina, prof?.nome || prof?.name, prof?.email));
+  });
+
+  (Array.isArray(registro?.usersSummary) ? registro.usersSummary : []).forEach((user: any) => {
+    push(user?.disciplina, user?.nome || user?.name, user?.email);
+  });
+
+  const adminUsers = Array.isArray(admin?.users)
+    ? admin.users
+    : admin?.usersByEmail && typeof admin.usersByEmail === 'object'
+      ? Object.values(admin.usersByEmail)
+      : [];
+  adminUsers.forEach((user: any) => {
+    push(user?.disciplina || user?.discipline, user?.nome || user?.name, user?.email);
+  });
+
+  return Array.from(out.entries()).map(([disciplinaKey, profissionais]) => ({
+    disciplinaKey,
+    disciplina: profissionais[0]?.disciplina || 'Sem disciplina',
+    profissionais,
+  })).filter((item) => item.profissionais.length > 0);
+}
+
+function buildLocalTestActivities(registro: any, admin: any, currentUser?: AuthUser | null) {
+  const contracts = Array.isArray(registro?.contracts) ? registro.contracts : [];
+  const osOptions = Array.isArray(registro?.osOptions) ? registro.osOptions : [];
+  const itemOptions = Array.isArray(registro?.itemOptions) ? registro.itemOptions : [];
+  const professionalsByDisciplina = buildProfessionalsForSeed(registro, admin);
+  const existingActivities = getSeedSourceActivities(registro);
+  const existingIds = new Set(existingActivities.map((item: any) => String(item?.activityId || item?.id || '').trim()).filter(Boolean));
+
+  if (!contracts.length || !osOptions.length || !itemOptions.length || !professionalsByDisciplina.length) return [];
+
+  const preferredContractCode = String(currentUser?.contrato || '').trim();
+  const preferredDisciplina = String(currentUser?.disciplina || '').trim();
+  const prioritizedDisciplineGroups = [
+    ...professionalsByDisciplina.filter((item) => normalizeEapCode(item.disciplina) === normalizeEapCode(preferredDisciplina)),
+    ...professionalsByDisciplina.filter((item) => normalizeEapCode(item.disciplina) !== normalizeEapCode(preferredDisciplina)),
+  ];
+  const prioritizedContracts = [
+    ...contracts.filter((item: any) => String(item?.codigo || '').trim() === preferredContractCode),
+    ...contracts.filter((item: any) => String(item?.codigo || '').trim() !== preferredContractCode),
+  ];
+  const prioritizedOsOptions = [
+    ...osOptions.filter((item: any) => String(item?.contratoCodigo || '').trim() === preferredContractCode),
+    ...osOptions.filter((item: any) => String(item?.contratoCodigo || '').trim() !== preferredContractCode),
+  ];
+  const prioritizedItemOptions = [
+    ...itemOptions.filter((item: any) => {
+      const osCodigo = String(item?.osCodigo || '').trim();
+      return prioritizedOsOptions.some((os: any) => String(os?.codigo || '').trim() === osCodigo && String(os?.contratoCodigo || '').trim() === preferredContractCode);
+    }),
+    ...itemOptions.filter((item: any) => {
+      const osCodigo = String(item?.osCodigo || '').trim();
+      return !prioritizedOsOptions.some((os: any) => String(os?.codigo || '').trim() === osCodigo && String(os?.contratoCodigo || '').trim() === preferredContractCode);
+    }),
+  ];
+
+  const evaluationCycle = [
+    'Dentro do esperado',
+    'Problema/Bloqueio',
+    'Melhor que o esperado',
+    'Pior que o esperado',
+  ];
+  const difficultyCycle = ['Facil', 'Moderada', 'Dificil'] as const;
+  const progressCycle = [8, 14, 21, 27, 33, 48, 56, 64, 79, 92];
+
+  const availableItems = prioritizedItemOptions.slice(0, 120);
+  const seeds: any[] = [];
+
+  for (let index = 0; index < 10; index += 1) {
+    const item = availableItems[index % availableItems.length];
+    const osCodigo = String(item?.osCodigo || '').trim();
+    const os = prioritizedOsOptions.find((entry: any) => String(entry?.codigo || '').trim() === osCodigo) || prioritizedOsOptions[index % prioritizedOsOptions.length];
+    const contratoCodigo = String(os?.contratoCodigo || prioritizedContracts[index % prioritizedContracts.length]?.codigo || '').trim();
+    const contrato = prioritizedContracts.find((entry: any) => String(entry?.codigo || '').trim() === contratoCodigo) || prioritizedContracts[index % prioritizedContracts.length];
+    const disciplinaGroup = prioritizedDisciplineGroups[index % prioritizedDisciplineGroups.length];
+    const professionals = disciplinaGroup.profissionais;
+    const professionalCount = Math.min(1 + (index % 3), professionals.length);
+    const selectedProfessionals = professionals.slice(0, professionalCount);
+    const responsavel = selectedProfessionals[0];
+    const activityId = `seed-local-${String(item?.codigo || index + 1).replace(/[^0-9A-Za-z_.-]/g, '_')}-${index + 1}`;
+    if (existingIds.has(activityId)) continue;
+
+    const day = 10 + index;
+    const status = index % 5 === 4 ? 'concluida' : index % 3 === 0 ? 'aguardando_conclusao' : 'em_andamento';
+
+    seeds.push({
+      id: activityId,
+      activityId,
+      contratoCodigo,
+      contratoNome: String(contrato?.nome || contratoCodigo).trim(),
+      osCodigo: String(os?.codigo || osCodigo).trim(),
+      osNome: String(os?.nome || osCodigo).trim(),
+      setor: 'Engenharia',
+      itemCodigo: String(item?.codigo || '').trim(),
+      itemNome: String(item?.nome || item?.codigo || '').trim(),
+      descricao: `Atividade teste ${index + 1} - ${String(item?.nome || item?.codigo || '').trim()}`,
+      profissionais: selectedProfessionals.map((entry) => entry.nome),
+      profissionaisEmails: selectedProfessionals.map((entry) => entry.email),
+      dificuldade: difficultyCycle[index % difficultyCycle.length],
+      avancoAtual: progressCycle[index % progressCycle.length],
+      avaliacaoAtual: evaluationCycle[index % evaluationCycle.length],
+      observacaoAtual: 'Registro local de teste para validacao de graficos e filtros.',
+      status,
+      dataRegistro: `2026-05-${String(day).padStart(2, '0')}`,
+      ultimaAtualizacao: `2026-05-${String(Math.min(day + 1, 28)).padStart(2, '0')}`,
+      data100: status === 'concluida' ? `2026-05-${String(Math.min(day + 2, 28)).padStart(2, '0')}` : '',
+      dataConclusaoEfetiva: status === 'concluida' ? `2026-05-${String(Math.min(day + 2, 28)).padStart(2, '0')}` : '',
+      criadoPorNome: responsavel?.nome || '',
+      criadoPorEmail: responsavel?.email || '',
+      createdByName: responsavel?.nome || '',
+      createdByEmail: responsavel?.email || '',
+      criadoPorDisciplina: disciplinaGroup.disciplina,
+      disciplina: disciplinaGroup.disciplina,
+      responsavel: responsavel?.nome || '',
+      importancia: 1 + (index % 3),
+    });
+  }
+
+  return seeds;
+}
+
+function augmentGlobalDataWithLocalTestActivities(data: GlobalData, currentUser?: AuthUser | null): GlobalData {
+  if (!import.meta.env.DEV) return data;
+  const registro = data.registro;
+  if (!registro || typeof registro !== 'object') return data;
+
+  const seededActivities = buildLocalTestActivities(registro, data.admin, currentUser);
+  if (seededActivities.length === 0) return data;
+
+  const existingActivities = getSeedSourceActivities(registro);
+  const mergedActivities = [...existingActivities, ...seededActivities];
+
+  return {
+    ...data,
+    registro: {
+      ...registro,
+      activitiesList: mergedActivities,
+      activeActivities: mergedActivities.filter((item: any) => String(item?.status || '').trim().toLowerCase() !== 'concluida'),
+      completedActivities: mergedActivities.filter((item: any) => String(item?.status || '').trim().toLowerCase() === 'concluida'),
+    },
+  };
+}
+
 export default function App() {
   const [booting, setBooting] = useState(true);
   const [preloading, setPreloading] = useState(false);
@@ -634,14 +839,13 @@ export default function App() {
 
   const [activeTab, setActiveTab] = React.useState<AppTab>('registro');
   const [areaTecnicaSubTab, setAreaTecnicaSubTab] = React.useState<AreaTecnicaSubTab>('atividades');
-  const [subTab, setSubTab] = React.useState<ControleSubTab>('dashboard');
+  const [subTab, setSubTab] = React.useState<ControleSubTab>('profissionais');
   const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('dashboard');
   const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('dashboard');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [globalData, setGlobalData] = useState<GlobalData>({});
-  const [emergencyUnreadCount, setEmergencyUnreadCount] = useState(0);
 
   // ADMIN
   const [usuarios, setUsuarios] = useState<UserAccessRecord[]>([]);
@@ -656,54 +860,38 @@ export default function App() {
 
   // Filter States (Dashboard/Tech Mock)
   const [filtrosAtivos, setFiltrosAtivos] = React.useState({ contrato: 'Todos', os: 'Todos', disciplina: 'Todos' });
+  const effectiveGlobalData = React.useMemo(() => augmentGlobalDataWithLocalTestActivities(globalData, currentUser), [globalData, currentUser]);
+  const lockedContractCode = React.useMemo(
+    () => (shouldLockUserToContract(currentUser) ? String(currentUser?.contrato || '').trim() : ''),
+    [currentUser]
+  );
 
   const contratos = React.useMemo(() => {
-    const list = Array.isArray(globalData.registro?.contracts) ? globalData.registro.contracts : [];
+    const list = Array.isArray(effectiveGlobalData.registro?.contracts) ? effectiveGlobalData.registro.contracts : [];
     return list.map((item: any) => ({
       id: String(item.codigo || '').trim(),
       nome: String(item.nome || item.codigo || '').trim(),
     })).filter((item: any) => item.id);
-  }, [globalData.registro?.contracts]);
+  }, [effectiveGlobalData.registro?.contracts]);
 
   const adminTerceirizadas = React.useMemo(() => {
     return [...terceirizadas, ...pendingTerceirizadas];
   }, [pendingTerceirizadas, terceirizadas]);
 
   useEffect(() => {
-    const lockedContract = String(currentUser?.contrato || '').trim();
+    const lockedContract = lockedContractCode;
     if (lockedContract) {
       setFiltrosAtivos((prev) => ({ ...prev, contrato: lockedContract }));
-    }
-  }, [currentUser?.contrato]);
-
-  const refreshEmergencySummary = useCallback(async () => {
-    if (!currentUser?.disciplina) {
-      setEmergencyUnreadCount(0);
       return;
     }
-
-    try {
-      const emergencyData = await fetchEmergencyData();
-      setEmergencyUnreadCount(getEmergencyUnreadCount(emergencyData, currentUser.disciplina));
-    } catch {
-      setEmergencyUnreadCount(0);
-    }
-  }, [currentUser?.disciplina]);
-
-  useEffect(() => {
-    if (!currentUser) return;
-    void refreshEmergencySummary();
-    const interval = window.setInterval(() => {
-      void refreshEmergencySummary();
-    }, 30000);
-    return () => window.clearInterval(interval);
-  }, [currentUser, refreshEmergencySummary]);
+    setFiltrosAtivos((prev) => ({ ...prev, contrato: 'Todos', os: 'Todos' }));
+  }, [lockedContractCode]);
 
   const loadGlobalEnvironment = async (user: AuthUser, isBackgroundSync = false) => {
     if (!isBackgroundSync) {
       const cachedData = getGlobalDataCache();
       if (cachedData && Object.keys(cachedData).length > 0) {
-        const scopedCachedData = filterGlobalDataByContract(cachedData, user.contrato || '');
+        const scopedCachedData = filterGlobalDataByContract(cachedData, shouldLockUserToContract(user) ? user.contrato || '' : '');
         setGlobalData(scopedCachedData);
         if (scopedCachedData.admin) {
           const adminState = getAdminState(scopedCachedData);
@@ -759,7 +947,7 @@ export default function App() {
           latestEapPublishedAt: eapPayload.data.latestEapPublishedAt || eapPayload.publishedAt,
         });
       }
-      fullData = filterGlobalDataByContract(fullData, user.contrato || '');
+      fullData = filterGlobalDataByContract(fullData, shouldLockUserToContract(user) ? user.contrato || '' : '');
         
         // Converte o índice por e-mail do JSON público de volta para o array esperado pelo app
         if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
@@ -1140,27 +1328,16 @@ export default function App() {
 
   if (booting && !preloading) return null;
 
-  const emergencyTabLabel = (
-    <span className="inline-flex items-center gap-2">
-      <span>Atividades</span>
-      {emergencyUnreadCount > 0 && (
-        <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#DC2626] px-1.5 py-0.5 text-[10px] font-black text-white animate-pulse">
-          {emergencyUnreadCount}
-        </span>
-      )}
-    </span>
-  );
-
   const showCronogramaSubTab = Boolean(currentUser);
 
   const headerTabs = (() => {
     if (activeTab === 'controle') {
       return [
-        { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: subTab === 'dashboard', onClick: () => setSubTab('dashboard') },
+        { key: 'profissionais', label: 'Profissionais', icon: <Users size={16} />, active: subTab === 'profissionais', onClick: () => setSubTab('profissionais') },
         { key: 'alocacoes', label: 'Alocações', icon: <Users size={16} />, active: subTab === 'alocacoes', onClick: () => setSubTab('alocacoes') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
         { key: 'planejamento', label: 'Planejamento', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
-        { key: 'emergencia', label: emergencyTabLabel, icon: <Bell size={16} />, active: subTab === 'emergencia', onClick: () => setSubTab('emergencia') },
+        { key: 'alertas', label: 'Alertas', icon: <AlertTriangle size={16} />, active: subTab === 'alertas', onClick: () => setSubTab('alertas') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: subTab === 'cronograma', onClick: () => setSubTab('cronograma') }] : []),
       ];
     }
@@ -1169,7 +1346,7 @@ export default function App() {
       return [
         { key: 'dashboard', label: 'Planejamento', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'dashboard', onClick: () => setPlanejamentoSubTab('dashboard') },
         { key: 'tecnico', label: 'Planejamento Técnico', icon: <ClipboardList size={16} />, active: planejamentoSubTab === 'tecnico', onClick: () => setPlanejamentoSubTab('tecnico') },
-        { key: 'emergencia', label: emergencyTabLabel, icon: <Bell size={16} />, active: planejamentoSubTab === 'emergencia', onClick: () => setPlanejamentoSubTab('emergencia') },
+        { key: 'alertas', label: 'Alertas', icon: <AlertTriangle size={16} />, active: planejamentoSubTab === 'alertas', onClick: () => setPlanejamentoSubTab('alertas') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: planejamentoSubTab === 'cronograma', onClick: () => setPlanejamentoSubTab('cronograma') }] : []),
       ];
     }
@@ -1180,7 +1357,6 @@ export default function App() {
         { key: 'preenchimento', label: 'Preenchimento', icon: <Clipboard size={16} />, active: nc2SubTab === 'preenchimento', onClick: () => setNc2SubTab('preenchimento') },
         { key: 'revisoes', label: 'Revisoes', icon: <CheckSquare size={16} />, active: nc2SubTab === 'revisoes', onClick: () => setNc2SubTab('revisoes') },
         { key: 'terceirizadas', label: 'Terceirizadas', icon: <Users size={16} />, active: nc2SubTab === 'terceirizadas', onClick: () => setNc2SubTab('terceirizadas') },
-        { key: 'emergencia', label: emergencyTabLabel, icon: <Bell size={16} />, active: nc2SubTab === 'emergencia', onClick: () => setNc2SubTab('emergencia') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: nc2SubTab === 'cronograma', onClick: () => setNc2SubTab('cronograma') }] : []),
       ];
     }
@@ -1190,15 +1366,13 @@ export default function App() {
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: contratoSubTab === 'dashboard', onClick: () => setContratoSubTab('dashboard') },
         { key: 'interferencias', label: 'Interferências', icon: <AlertTriangle size={16} />, active: contratoSubTab === 'interferencias', onClick: () => setContratoSubTab('interferencias') },
         { key: 'prioridades', label: 'Prioridades do contrato', icon: <ClipboardList size={16} />, active: contratoSubTab === 'prioridades', onClick: () => setContratoSubTab('prioridades') },
-        { key: 'emergencia', label: emergencyTabLabel, icon: <Bell size={16} />, active: contratoSubTab === 'emergencia', onClick: () => setContratoSubTab('emergencia') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: contratoSubTab === 'cronograma', onClick: () => setContratoSubTab('cronograma') }] : []),
       ];
     }
 
     if (activeTab === 'registro') {
       return [
-        { key: 'atividades-andamento', label: 'Atividades em andamento', icon: <LayoutDashboard size={16} />, active: areaTecnicaSubTab === 'atividades', onClick: () => setAreaTecnicaSubTab('atividades') },
-        { key: 'registro-atividade', label: 'Registro de Atividade', icon: <ClipboardList size={16} />, active: areaTecnicaSubTab === 'registro', onClick: () => setAreaTecnicaSubTab('registro') },
+        { key: 'atividades', label: 'Atividades', icon: <ClipboardList size={16} />, active: areaTecnicaSubTab === 'atividades', onClick: () => setAreaTecnicaSubTab('atividades') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: areaTecnicaSubTab === 'cronograma', onClick: () => setAreaTecnicaSubTab('cronograma') }] : []),
       ];
     }
@@ -1213,6 +1387,10 @@ export default function App() {
 
     return [];
   })();
+
+  const visibleHeaderTabs = activeTab === 'controle'
+    ? headerTabs.filter((tab) => tab.key !== 'alocacoes' && tab.key !== 'dashboard' && tab.key !== 'planejamento')
+    : headerTabs;
 
   if (!currentUser && !preloading) {
     return <LoginScreen onLogin={handleLogin} onRegister={handleRegister} onForgotPassword={handleForgotPassword} onResetPassword={handleResetPassword} />;
@@ -1290,16 +1468,16 @@ export default function App() {
 
           {false && activeTab === 'controle' && (
             <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-[#E5E7EB]">
-              <HeaderTab active={subTab === 'dashboard'} onClick={() => setSubTab('dashboard')} icon={<LayoutDashboard size={16} />} label="Dashboard" />
-              <HeaderTab active={subTab === 'alocacoes'} onClick={() => setSubTab('alocacoes')} icon={<Users size={16} />} label="Alocações" />
+              <HeaderTab active={subTab === 'profissionais'} onClick={() => setSubTab('profissionais')} icon={<Users size={16} />} label="Profissionais" />
               <HeaderTab active={subTab === 'curva-s'} onClick={() => setSubTab('curva-s')} icon={<TrendingUp size={16} />} label="Curva S" />
-              <HeaderTab active={subTab === 'matrix'} onClick={() => setSubTab('matrix')} icon={<LayoutGrid size={16} />} label="Matriz" />
+              <HeaderTab active={subTab === 'planejamento'} onClick={() => setSubTab('planejamento')} icon={<LayoutGrid size={16} />} label="Planejamento" />
+              <HeaderTab active={subTab === 'alertas'} onClick={() => setSubTab('alertas')} icon={<AlertTriangle size={16} />} label="Alertas" />
             </div>
           )}
 
-          {headerTabs.length > 0 && (
+          {visibleHeaderTabs.length > 0 && (
             <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-[#E5E7EB] max-w-[58vw] overflow-x-auto">
-              {headerTabs.map((tab) => (
+              {visibleHeaderTabs.map((tab) => (
                 <HeaderTab key={tab.key} active={tab.active} onClick={tab.onClick} icon={tab.icon} label={tab.label} />
               ))}
             </div>
@@ -1312,41 +1490,40 @@ export default function App() {
           </div>
         </header>
 
-        <main className={`flex-1 overflow-y-auto p-8 ${activeTab === 'registro' && areaTecnicaSubTab === 'registro' ? 'bg-white' : 'bg-[#F8F9FA]'}`}>
+        <main className={`flex-1 overflow-y-auto p-8 ${activeTab === 'registro' && areaTecnicaSubTab === 'atividades' ? 'bg-white' : 'bg-[#F8F9FA]'}`}>
           <React.Suspense fallback={<TabLoadingFallback />}>
             {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
-              areaTecnicaSubTab === 'registro'
-                ? <RegistroDeAtividade currentUser={currentUser} preloadedData={globalData.registro} viewMode="registro" />
-                : areaTecnicaSubTab === 'atividades'
-                  ? <RegistroDeAtividade currentUser={currentUser} preloadedData={globalData.registro} viewMode="andamento" />
-                  : <Cronograma preloadedData={globalData} lockedContractCode={currentUser.contrato} />
+              areaTecnicaSubTab === 'atividades'
+                ? <RegistroDeAtividade currentUser={currentUser} preloadedData={effectiveGlobalData.registro} viewMode="atividades" />
+                : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
             )}
-            {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={globalData} lockedContractCode={currentUser.contrato} onEmergencyChanged={refreshEmergencySummary} />}
+            {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />}
             {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
               planejamentoSubTab === 'dashboard'
-                ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={globalData} mode="planejamento" />
+                ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="planejamento" />
                 : planejamentoSubTab === 'tecnico'
-                  ? <PlanejamentoTecnico preloadedData={globalData} />
+                  ? <PlanejamentoTecnico preloadedData={effectiveGlobalData} />
+                  : planejamentoSubTab === 'alertas'
+                  ? <Alertas preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                   : planejamentoSubTab === 'cronograma'
-                  ? <Cronograma preloadedData={globalData} lockedContractCode={currentUser.contrato} />
-                  : <EmergenciaCenter currentUser={currentUser} preloadedData={globalData} activeContractCode={String(currentUser.contrato || '').trim() || filtrosAtivos.contrato} lockedContractCode={currentUser.contrato} onDataChange={refreshEmergencySummary} />
+                  ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                  : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
             )}
-            {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato currentUser={currentUser} preloadedData={globalData} activeContractCode={String(currentUser.contrato || '').trim() || filtrosAtivos.contrato} lockedContractCode={currentUser.contrato} activeView={contratoSubTab} onEmergencyChanged={refreshEmergencySummary} />}
+            {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />}
             {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
               <NaoConformidades
                 activeTab={nc2SubTab}
                 onTabChange={setNc2SubTab}
                 currentUser={currentUser}
-                activeContractCode={String(currentUser.contrato || '').trim() || filtrosAtivos.contrato}
-                preloadedData={globalData}
-                lockedContractCode={currentUser.contrato}
+                activeContractCode={lockedContractCode || filtrosAtivos.contrato}
+                preloadedData={effectiveGlobalData}
+                lockedContractCode={lockedContractCode}
                 disciplinas={disciplinas}
                 terceirizadas={adminTerceirizadas}
                 pendingTerceirizadaIds={pendingTerceirizadas.map((item) => item.id)}
                 onSaveTerceirizada={saveTerceirizada}
                 onDeleteTerceirizada={deleteTerceirizada}
                 onSavePendingInfo={savePendingUsers}
-                onEmergencyChanged={refreshEmergencySummary}
               />
             )}
             {activeTab === 'administracao' && currentUser?.isAdmin && (
@@ -1381,22 +1558,18 @@ function HeaderTab({ active, onClick, icon, label }: { key?: string; active: boo
   return (
     <button
       onClick={onClick}
-      className={`group flex h-9 shrink-0 items-center overflow-hidden rounded-lg transition-[width,padding,gap,background-color,color,box-shadow] duration-1000 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+      className={`flex h-9 shrink-0 items-center gap-2 overflow-hidden rounded-lg px-4 transition-colors duration-200 ${
         active
-          ? 'w-auto gap-2 bg-[#F05D28] px-4 text-white shadow-sm'
-          : 'w-9 justify-center px-0 text-[#757575] hover:w-auto hover:justify-start hover:gap-2 hover:bg-[#F0F1F2] hover:px-4 hover:text-[#2D2D2D]'
+          ? 'bg-[#F05D28] text-white shadow-sm'
+          : 'text-[#757575] hover:bg-[#F0F1F2] hover:text-[#2D2D2D]'
       }`}
       title={typeof label === 'string' ? label : undefined}
       aria-label={typeof label === 'string' ? label : undefined}
     >
-      <span className="shrink-0 transition-opacity duration-1000 ease-[cubic-bezier(0.22,1,0.36,1)] opacity-100 group-hover:opacity-100">
+      <span className="shrink-0">
         {icon}
       </span>
-      <span
-        className={`whitespace-nowrap text-[13px] font-bold transition-[max-width,opacity] duration-1000 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-          active ? 'max-w-[220px] opacity-100' : 'max-w-0 opacity-0 group-hover:max-w-[220px] group-hover:opacity-100'
-        }`}
-      >
+      <span className="whitespace-nowrap text-[13px] font-bold">
         {label}
       </span>
     </button>

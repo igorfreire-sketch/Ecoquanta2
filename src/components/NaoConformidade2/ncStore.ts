@@ -1,9 +1,9 @@
-// Shared store for NC2 records with T non-conformities.
-// Uses localStorage + CustomEvent so Preenchimento and Revisoes stay in sync.
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
 
 export interface Nc2Item {
   itemKey: string;
   itemLabel: string;
+  quantidadeC: number;
   quantidadeT: number;
   unit: 'folha' | 'arquivo';
   revisado: boolean;
@@ -11,54 +11,89 @@ export interface Nc2Item {
 
 export interface Nc2Record {
   id: string;
+  contratoCodigo: string;
+  contratoNome: string;
   os: string;
+  osCodigo: string;
   objetoOs: string;
+  objetoOsCodigo: string;
   disciplina: string;
   avaliador: string;
+  avaliadorEmail: string;
+  observacoes: string;
   dataHora: string;
+  itens: Nc2Item[];
   itensT: Nc2Item[];
   concluido: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  updatedByNome?: string;
+  updatedByEmail?: string;
 }
 
-const KEY = 'nc2_revisoes';
-const EVENT = 'nc2_revisoes_change';
+interface GenericResponse {
+  success: boolean;
+  error?: string;
+  message?: string;
+}
 
-export function getRecords(): Nc2Record[] {
+interface Nc2ListResponse extends GenericResponse {
+  records?: Nc2Record[];
+}
+
+function assertSuccess(response: GenericResponse, fallbackMessage: string) {
+  if (!response?.success) {
+    throw new Error(response?.error || response?.message || fallbackMessage);
+  }
+}
+
+async function postToAppsScript<T>(payload: Record<string, unknown>): Promise<T> {
+  const response = await fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+  const text = await response.text();
   try {
-    return JSON.parse(localStorage.getItem(KEY) || '[]') as Nc2Record[];
+    return JSON.parse(text);
   } catch {
-    return [];
+    throw new Error(`Servidor instavel ou resposta invalida do Apps Script: ${text.substring(0, 100)}`);
   }
 }
 
-export function saveRecord(record: Nc2Record): void {
-  const list = getRecords();
-  const idx = list.findIndex((item) => item.id === record.id);
-  if (idx >= 0) list[idx] = record;
-  else list.unshift(record);
-  localStorage.setItem(KEY, JSON.stringify(list));
-  window.dispatchEvent(new Event(EVENT));
+export async function getRecords(): Promise<Nc2Record[]> {
+  const response = await fetch(`${APPS_SCRIPT_URL}?action=getNc2Records`, { cache: 'no-store' });
+  const data = await response.json() as Nc2ListResponse;
+  assertSuccess(data, 'Falha ao carregar revisoes de conformidade.');
+  return Array.isArray(data.records) ? data.records : [];
 }
 
-export function updateRecord(id: string, patch: Partial<Nc2Record>): void {
-  const list = getRecords();
-  const idx = list.findIndex((item) => item.id === id);
-  if (idx >= 0) {
-    list[idx] = { ...list[idx], ...patch };
-    localStorage.setItem(KEY, JSON.stringify(list));
-    window.dispatchEvent(new Event(EVENT));
-  }
+export async function saveRecordsBatch(
+  records: Nc2Record[],
+  currentUser?: { nome?: string; email?: string }
+): Promise<Nc2Record[]> {
+  const response = await postToAppsScript<Nc2ListResponse>({
+    action: 'saveNc2RecordsBatch',
+    userName: currentUser?.nome || '',
+    userEmail: currentUser?.email || '',
+    records,
+  });
+  assertSuccess(response, 'Falha ao salvar atividades de conformidade.');
+  return Array.isArray(response.records) ? response.records : [];
 }
 
-export function archiveRecord(id: string): void {
-  const list = getRecords().filter((item) => item.id !== id);
-  localStorage.setItem(KEY, JSON.stringify(list));
-  window.dispatchEvent(new Event(EVENT));
-}
-
-export function onRecordsChange(cb: () => void): () => void {
-  window.addEventListener(EVENT, cb);
-  return () => window.removeEventListener(EVENT, cb);
+export async function updateRecord(
+  record: Nc2Record,
+  currentUser?: { nome?: string; email?: string }
+): Promise<Nc2Record> {
+  const response = await postToAppsScript<Nc2ListResponse>({
+    action: 'updateNc2Record',
+    userName: currentUser?.nome || '',
+    userEmail: currentUser?.email || '',
+    record,
+  });
+  assertSuccess(response, 'Falha ao atualizar revisao de conformidade.');
+  return Array.isArray(response.records) && response.records[0] ? response.records[0] : record;
 }
 
 export function generateId(): string {

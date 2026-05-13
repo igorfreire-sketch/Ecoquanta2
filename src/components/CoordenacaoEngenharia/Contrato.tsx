@@ -7,17 +7,17 @@ import {
   ClipboardList,
   FileWarning,
   GitBranch,
-  MessageSquareText,
   PencilLine,
   Plus,
   Route,
-  X
+  Search,
+  X,
 } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
-import EmergenciaCenter from '../EmergenciaCenter';
 import Cronograma from '../Cronograma';
 
 const CONTRACT_PRIORITY_STORAGE_KEY = 'quanta_contract_priorities';
+const CONTRACT_INTERFERENCES_STORAGE_KEY = 'quanta_contract_interferences';
 
 interface ContratoProps {
   currentUser: AuthUser;
@@ -28,8 +28,7 @@ interface ContratoProps {
   };
   activeContractCode?: string;
   lockedContractCode?: string;
-  activeView?: 'dashboard' | 'interferencias' | 'prioridades' | 'emergencia' | 'cronograma';
-  onEmergencyChanged?: () => void;
+  activeView?: 'dashboard' | 'interferencias' | 'prioridades' | 'cronograma';
 }
 
 interface ActivityRow {
@@ -38,6 +37,7 @@ interface ActivityRow {
   contratoNome: string;
   criadoPorNome: string;
   criadoPorDisciplina: string;
+  profissionais: string[];
   osCodigo: string;
   osNome: string;
   itemCodigo: string;
@@ -54,19 +54,15 @@ interface Interferencia {
   data: string;
   observacao: string;
   osImpactada: string;
+  contratoCodigo?: string;
+  contratoNome?: string;
 }
 
-function readStoredPriorities() {
-  try {
-    const raw = localStorage.getItem(CONTRACT_PRIORITY_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return {
-      values: parsed?.values && typeof parsed.values === 'object' ? parsed.values as Record<string, string> : {},
-      confirmed: parsed?.confirmed && typeof parsed.confirmed === 'object' ? parsed.confirmed as Record<string, boolean> : {},
-    };
-  } catch (error) {
-    return { values: {}, confirmed: {} };
-  }
+interface StoredPrioritiesState {
+  values: Record<string, string>;
+  confirmed: Record<string, boolean>;
+  monthly: Record<string, string>;
+  licitatoria: Record<string, boolean>;
 }
 
 const FLOW_STEPS = [
@@ -89,17 +85,16 @@ function isAllContract(value?: string) {
 function isDateLikeLabel(value?: string) {
   const text = String(value || '').trim();
   return Boolean(
-    text.match(/^\d{4}-\d{2}-\d{2}T.*Z$/i) ||
-    text.match(/^\d{4}-\d{2}-\d{2}T/i) ||
-    text.match(/^\d{1,2}\/\d{1,2}\/\d{2,4}/) ||
-    text.match(/GMT|Hor.rio|Bras.lia/i)
+    text.match(/^\d{4}-\d{2}-\d{2}T.*Z$/i)
+    || text.match(/^\d{4}-\d{2}-\d{2}T/i)
+    || text.match(/^\d{1,2}\/\d{1,2}\/\d{2,4}/)
+    || text.match(/GMT|Hor.rio|Bras.lia/i)
   );
 }
 
 function cleanDisplayLabel(primary?: string, fallback?: string, emptyLabel = 'Sem informacao') {
   const first = String(primary || '').trim();
   const second = String(fallback || '').trim();
-
   if (first && !isDateLikeLabel(first)) return first;
   if (second && !isDateLikeLabel(second)) return second;
   return emptyLabel;
@@ -113,21 +108,85 @@ function isHierarchyCode(value?: string) {
   return /^\d+(?:\.\d+)+$/.test(String(value || '').trim());
 }
 
-function getOsDisplayName(activity: ActivityRow) {
-  if (activity.osNome && !isHierarchyCode(activity.osNome)) return activity.osNome;
-  if (activity.osCodigo && !isHierarchyCode(activity.osCodigo)) return activity.osCodigo;
-  return activity.osNome || 'Sem OS';
-}
-
-function getActivityDisplayName(activity: ActivityRow) {
-  if (activity.itemNome && !sameDisplayText(activity.itemNome, activity.osCodigo) && !sameDisplayText(activity.itemNome, activity.osNome)) return activity.itemNome;
-  if (activity.descricao && !sameDisplayText(activity.descricao, activity.osCodigo) && !sameDisplayText(activity.descricao, activity.osNome)) return activity.descricao;
-  return 'Atividade sem nome';
-}
-
 function isOsLabel(value?: string) {
   const text = String(value || '').trim();
   return /^OS(?=$|[\s_\-.0-9A-Za-zÀ-ÿ])/i.test(text);
+}
+
+function getMonthlyPriorityCycleKey(referenceDate = new Date()) {
+  const baseDate = new Date(referenceDate);
+  if (baseDate.getDate() < 5) {
+    baseDate.setMonth(baseDate.getMonth() - 1);
+  }
+  const year = baseDate.getFullYear();
+  const month = String(baseDate.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+function formatMonthlyCycleLabel(cycleKey: string) {
+  const match = cycleKey.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return cycleKey;
+  return `${match[2]}/${match[1]}`;
+}
+
+function isMonthlyPriorityActive(value: string | undefined, cycleKey: string) {
+  return String(value || '').trim() === cycleKey;
+}
+
+function buildLegacyPriorityState(
+  monthly: Record<string, string>,
+  licitatoria: Record<string, boolean>,
+  cycleKey: string
+) {
+  const values: Record<string, string> = {};
+  const confirmed: Record<string, boolean> = {};
+  const allIds = new Set([...Object.keys(monthly || {}), ...Object.keys(licitatoria || {})]);
+
+  allIds.forEach((id) => {
+    const monthlyActive = isMonthlyPriorityActive(monthly[id], cycleKey);
+    const licitatoriaActive = Boolean(licitatoria[id]);
+    if (licitatoriaActive) values[id] = '3';
+    else if (monthlyActive) values[id] = '2';
+    confirmed[id] = monthlyActive || licitatoriaActive;
+  });
+
+  return { values, confirmed };
+}
+
+function readStoredPriorities(): StoredPrioritiesState {
+  try {
+    const raw = localStorage.getItem(CONTRACT_PRIORITY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    const monthly = parsed?.monthly && typeof parsed.monthly === 'object' ? parsed.monthly as Record<string, string> : {};
+    const licitatoria = parsed?.licitatoria && typeof parsed.licitatoria === 'object'
+      ? parsed.licitatoria as Record<string, boolean>
+      : parsed?.confirmed && typeof parsed.confirmed === 'object'
+        ? Object.fromEntries(
+            Object.entries(parsed.confirmed)
+              .filter(([, confirmed]) => Boolean(confirmed))
+              .map(([id]) => [id, true])
+          ) as Record<string, boolean>
+        : {};
+    const legacy = buildLegacyPriorityState(monthly, licitatoria, getMonthlyPriorityCycleKey());
+    return {
+      values: legacy.values,
+      confirmed: legacy.confirmed,
+      monthly,
+      licitatoria,
+    };
+  } catch {
+    return { values: {}, confirmed: {}, monthly: {}, licitatoria: {} };
+  }
+}
+
+function readStoredInterferencias() {
+  try {
+    const raw = localStorage.getItem(CONTRACT_INTERFERENCES_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed as Interferencia[] : [];
+  } catch {
+    return [];
+  }
 }
 
 function formatDateBR(value?: string) {
@@ -152,18 +211,26 @@ function getCronogramaMap(cronograma: any) {
   }, {});
 }
 
+function buildProfessionalsList(activity: any) {
+  if (Array.isArray(activity?.profissionais)) {
+    return activity.profissionais.map((item: any) => String(item || '').trim()).filter(Boolean);
+  }
+  return String(activity?.profissionais || '')
+    .split('|')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function buildActivities(preloadedData?: ContratoProps['preloadedData']): ActivityRow[] {
   const activitiesList = Array.isArray(preloadedData?.registro?.activitiesList) ? preloadedData.registro.activitiesList : [];
   const activeActivities = Array.isArray(preloadedData?.registro?.activeActivities) ? preloadedData.registro.activeActivities : [];
   const completedActivities = Array.isArray(preloadedData?.registro?.completedActivities) ? preloadedData.registro.completedActivities : [];
-  const sourceActivities = activitiesList.length > 0
-    ? activitiesList
-    : [...activeActivities, ...completedActivities];
+  const sourceActivities = activitiesList.length > 0 ? activitiesList : [...activeActivities, ...completedActivities];
   const cronogramaByCode = getCronogramaMap(preloadedData?.cronograma);
   const seenIds = new Set<string>();
 
   return sourceActivities
-    .filter((activity: any) => String(activity?.status || '').trim().toLowerCase() !== 'concluida')
+    .filter((activity: any) => normalizeText(activity?.status) !== 'concluida')
     .map((activity: any, index: number) => {
       const itemCodigo = String(activity?.itemCodigo || '').trim();
       const cronograma = cronogramaByCode[itemCodigo] || {};
@@ -175,14 +242,15 @@ function buildActivities(preloadedData?: ContratoProps['preloadedData']): Activi
         contratoNome: String(activity?.contratoNome || activity?.contratoCodigo || '').trim(),
         criadoPorNome: String(activity?.criadoPorNome || activity?.registradoPorNome || activity?.userName || '').trim(),
         criadoPorDisciplina: String(activity?.criadoPorDisciplina || activity?.disciplina || activity?.userDisciplina || '').trim(),
+        profissionais: buildProfessionalsList(activity),
         osCodigo: cleanDisplayLabel(activity?.osCodigo, activity?.osNome, 'Sem OS'),
-        osNome: cleanDisplayLabel(activity?.osNome, activity?.contratoNome, ''),
+        osNome: cleanDisplayLabel(activity?.osNome, activity?.osCodigo, ''),
         itemCodigo: cleanDisplayLabel(itemCodigo, activity?.itemNome, ''),
         itemNome: cleanDisplayLabel(activity?.itemNome, activity?.descricao, 'Atividade sem nome'),
         descricao: String(activity?.descricao || '').trim(),
         avancoAtual: Math.max(0, Math.min(100, Number(activity?.avancoAtual || 0))),
         dataFim: formatDateBR(cronograma?.plannedEnd || activity?.data100 || activity?.dataConclusaoEfetiva),
-        status: String(activity?.status || '').trim()
+        status: String(activity?.status || '').trim(),
       };
     })
     .filter((activity) => {
@@ -249,6 +317,26 @@ function getContractInitialValue(activeContractCode?: string, lockedContractCode
   return isAllContract(active) ? 'Todos' : active || 'Todos';
 }
 
+function getOsDisplayName(activity: ActivityRow) {
+  if (activity.osNome && !isHierarchyCode(activity.osNome)) return activity.osNome;
+  if (activity.osCodigo && !isHierarchyCode(activity.osCodigo)) return activity.osCodigo;
+  return activity.osNome || 'Sem OS';
+}
+
+function getActivityDisplayName(activity: ActivityRow) {
+  if (activity.itemNome && !sameDisplayText(activity.itemNome, activity.osCodigo) && !sameDisplayText(activity.itemNome, activity.osNome)) return activity.itemNome;
+  if (activity.descricao && !sameDisplayText(activity.descricao, activity.osCodigo) && !sameDisplayText(activity.descricao, activity.osNome)) return activity.descricao;
+  return 'Atividade sem nome';
+}
+
+function getPeopleLabel(activity: ActivityRow) {
+  if (activity.profissionais.length > 0) return activity.profissionais.join(', ');
+  if (activity.criadoPorNome || activity.criadoPorDisciplina) {
+    return [activity.criadoPorNome, activity.criadoPorDisciplina].filter(Boolean).join(' - ');
+  }
+  return 'Sem profissional vinculado';
+}
+
 function ActivityJourney({ activity }: { activity: ActivityRow }) {
   return (
     <div className="border border-[#E5E7EB] bg-white rounded-[12px] p-6 shadow-sm">
@@ -293,10 +381,16 @@ function ActivitiesList({
   activities,
   selectedActivity,
   onSelect,
+  monthlyPriorityMap,
+  licitatoriaMap,
+  monthlyCycle,
 }: {
   activities: ActivityRow[];
   selectedActivity: ActivityRow | null;
   onSelect: (activityId: string) => void;
+  monthlyPriorityMap: Record<string, string>;
+  licitatoriaMap: Record<string, boolean>;
+  monthlyCycle: string;
 }) {
   return (
     <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
@@ -305,54 +399,61 @@ function ActivitiesList({
           <ClipboardList size={18} className="text-[#F05D28]" />
           <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Atividades sendo executadas</h3>
         </div>
-        <span className="text-[11px] font-bold text-[#757575]">{activities.length} em execução</span>
+        <span className="text-[11px] font-bold text-[#757575]">{activities.length} em execucao</span>
       </div>
 
       <div className="divide-y divide-[#E5E7EB]">
         {activities.length === 0 && (
           <div className="py-12 px-6 text-center text-[13px] font-medium text-[#757575]">
-            Nenhuma atividade em execução para este contrato.
+            Nenhuma atividade em execucao para este contrato.
           </div>
         )}
 
-        {activities.map((activity) => (
-          <button
-            type="button"
-            key={activity.id}
-            onClick={() => onSelect(activity.id)}
-            className={`w-full text-left px-5 py-4 transition-colors ${selectedActivity?.id === activity.id ? 'bg-[#FFF7ED]' : 'hover:bg-[#F9FAFB]'}`}
-          >
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_120px_130px] gap-4 items-center">
-              <div className="min-w-0">
-                <p className="text-[12px] font-bold text-[#2D2D2D] truncate">{getOsDisplayName(activity)}</p>
-                <p className="text-[13px] font-bold text-[#2D2D2D] truncate mt-2">{getActivityDisplayName(activity)}</p>
-              </div>
+        {activities.map((activity) => {
+          const monthlyActive = isMonthlyPriorityActive(monthlyPriorityMap[activity.id], monthlyCycle);
+          const licitatoriaActive = Boolean(licitatoriaMap[activity.id]);
 
-              <div className="min-w-0">
-                <div className="h-2 rounded-full bg-[#F3F4F6] overflow-hidden">
-                  <span className="block h-full bg-[#10B981]" style={{ width: `${activity.avancoAtual}%` }} />
+          return (
+            <button
+              type="button"
+              key={activity.id}
+              onClick={() => onSelect(activity.id)}
+              className={`w-full text-left px-5 py-4 transition-colors ${selectedActivity?.id === activity.id ? 'bg-[#FFF7ED]' : 'hover:bg-[#F9FAFB]'}`}
+            >
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.45fr)_140px_150px] gap-4 items-center">
+                <div className="min-w-0">
+                  <p className="text-[12px] font-bold text-[#2D2D2D] truncate">{getOsDisplayName(activity)}</p>
+                  <p className="text-[13px] font-bold text-[#2D2D2D] truncate mt-2">{getActivityDisplayName(activity)}</p>
+                  <p className="text-[10px] font-semibold text-[#4B5563] mt-2 leading-tight">{getPeopleLabel(activity)}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {monthlyActive && (
+                      <span className="rounded-full bg-[#DCFCE7] px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#166534]">
+                        Prioridade do mes
+                      </span>
+                    )}
+                    {licitatoriaActive && (
+                      <span className="rounded-full bg-[#E0E7FF] px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#3730A3]">
+                        Licitatoria
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <p className="text-[11px] font-bold text-[#2D2D2D] mt-1">{activity.avancoAtual}%</p>
-                {(activity.criadoPorNome || activity.criadoPorDisciplina) && (
-                  <p className="text-[10px] font-semibold text-[#4B5563] mt-2 leading-tight">
-                    {activity.criadoPorNome || 'Sem nome'}
-                    {activity.criadoPorDisciplina ? (
-                      <>
-                        <br />
-                        {activity.criadoPorDisciplina}
-                      </>
-                    ) : null}
-                  </p>
-                )}
-              </div>
 
-              <div className="inline-flex items-center gap-2 text-[12px] font-semibold text-[#757575]">
-                <CalendarDays size={15} />
-                {activity.dataFim}
+                <div className="min-w-0">
+                  <div className="h-2 rounded-full bg-[#F3F4F6] overflow-hidden">
+                    <span className="block h-full bg-[#10B981]" style={{ width: `${activity.avancoAtual}%` }} />
+                  </div>
+                  <p className="text-[11px] font-bold text-[#2D2D2D] mt-1">{activity.avancoAtual}%</p>
+                </div>
+
+                <div className="inline-flex items-center gap-2 text-[12px] font-semibold text-[#757575]">
+                  <CalendarDays size={15} />
+                  {activity.dataFim}
+                </div>
               </div>
-            </div>
-          </button>
-        ))}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -361,23 +462,25 @@ function ActivitiesList({
 function PriorityDesk({
   activity,
   pendingCount,
-  priority,
-  confirmed,
-  onPriorityChange,
-  onConfirm,
+  monthlyActive,
+  licitatoriaActive,
+  currentCycleLabel,
+  onToggleMonthly,
+  onToggleLicitatoria,
 }: {
   activity: ActivityRow | null;
   pendingCount: number;
-  priority: string;
-  confirmed: boolean;
-  onPriorityChange: (value: string) => void;
-  onConfirm: () => void;
+  monthlyActive: boolean;
+  licitatoriaActive: boolean;
+  currentCycleLabel: string;
+  onToggleMonthly: () => void;
+  onToggleLicitatoria: () => void;
 }) {
   return (
     <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden min-h-[420px]">
       <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
         <div>
-          <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Balcão unido</p>
+          <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Balcao unido</p>
           <h3 className="text-[16px] font-bold text-[#2D2D2D] mt-1">Prioridades do contrato</h3>
         </div>
         <span className="rounded-full border border-[#FED7AA] bg-[#FFF7ED] px-3 py-1 text-[11px] font-bold text-[#C2410C]">
@@ -391,34 +494,54 @@ function PriorityDesk({
             <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
               <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">{getOsDisplayName(activity)}</p>
               <p className="mt-2 text-[15px] font-bold text-[#2D2D2D] leading-snug">{getActivityDisplayName(activity)}</p>
+              <p className="mt-2 text-[12px] font-semibold text-[#4B5563]">{getPeopleLabel(activity)}</p>
             </div>
 
-            <div>
-              <label className="text-[10px] font-bold text-[#92400E] uppercase tracking-widest">Prioridade do contrato</label>
-              <div className={`mt-2 grid grid-cols-[minmax(0,1fr)_64px] gap-2 rounded-xl ${confirmed ? '' : 'ring-2 ring-[#EF4444] ring-offset-2'}`}>
-                <select
-                  value={priority || '1'}
-                  disabled={confirmed}
-                  onChange={(event) => onPriorityChange(event.target.value)}
-                  className="w-full min-w-0 h-11 rounded-xl border border-[#FDE68A] bg-[#FEF3C7] px-3 text-[12px] font-bold text-[#92400E] outline-none disabled:opacity-80"
-                >
-                  <option value="1">1 - Baixa</option>
-                  <option value="2">2 - Média</option>
-                  <option value="3">3 - Alta</option>
-                </select>
-                <button
-                  type="button"
-                  disabled={confirmed}
-                  onClick={onConfirm}
-                  className="h-11 rounded-xl bg-[#F05D28] text-white text-[11px] font-black uppercase tracking-wide hover:bg-[#D94E1F] disabled:bg-[#10B981] disabled:opacity-100"
-                >
-                  OK
-                </button>
+            <div className="space-y-4">
+              <div className={`rounded-2xl border p-4 ${monthlyActive ? 'border-[#BBF7D0] bg-[#F0FDF4]' : 'border-[#FDE68A] bg-[#FEFCE8]'}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-widest text-[#166534]">Prioridade do mes</p>
+                    <p className="mt-2 text-[14px] font-bold text-[#1F2937]">Fica ativa no ciclo atual e reseta automaticamente no dia 05.</p>
+                    <p className="mt-2 text-[12px] font-semibold text-[#4B5563]">Ciclo atual: {currentCycleLabel}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onToggleMonthly}
+                    className={`min-w-[112px] rounded-xl px-4 py-3 text-[11px] font-black uppercase tracking-wide transition ${
+                      monthlyActive
+                        ? 'bg-[#10B981] text-white hover:bg-[#059669]'
+                        : 'border border-[#86EFAC] bg-white text-[#166534] hover:bg-[#ECFDF5]'
+                    }`}
+                  >
+                    {monthlyActive ? 'Ativa' : 'Marcar'}
+                  </button>
+                </div>
+              </div>
+
+              <div className={`rounded-2xl border p-4 ${licitatoriaActive ? 'border-[#C7D2FE] bg-[#EEF2FF]' : 'border-[#DBEAFE] bg-[#F8FAFC]'}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-widest text-[#3730A3]">Prioridade licitatoria</p>
+                    <p className="mt-2 text-[14px] font-bold text-[#1F2937]">Nao reseta. Permanece marcada ate o contrato remover manualmente.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onToggleLicitatoria}
+                    className={`min-w-[112px] rounded-xl px-4 py-3 text-[11px] font-black uppercase tracking-wide transition ${
+                      licitatoriaActive
+                        ? 'bg-[#4F46E5] text-white hover:bg-[#4338CA]'
+                        : 'border border-[#A5B4FC] bg-white text-[#3730A3] hover:bg-[#EEF2FF]'
+                    }`}
+                  >
+                    {licitatoriaActive ? 'Ativa' : 'Marcar'}
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div className="min-h-[170px] rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] flex items-center justify-center px-5 text-center">
-              <p className="text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">Placeholder do balcão de prioridades</p>
+            <div className="rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-4 text-[12px] font-semibold text-[#64748B]">
+              Uma atividade deixa de ficar pendente quando recebe pelo menos uma prioridade do contrato.
             </div>
           </>
         ) : (
@@ -431,20 +554,31 @@ function PriorityDesk({
   );
 }
 
-export default function Contrato({ currentUser, preloadedData, activeContractCode, lockedContractCode, activeView = 'dashboard', onEmergencyChanged }: ContratoProps) {
+export default function Contrato({
+  currentUser: _currentUser,
+  preloadedData,
+  activeContractCode,
+  lockedContractCode,
+  activeView = 'dashboard',
+}: ContratoProps) {
   const activities = useMemo(() => buildActivities(preloadedData), [preloadedData]);
   const contracts = useMemo(() => getContracts(preloadedData, activities), [preloadedData, activities]);
   const [selectedContract, setSelectedContract] = useState(() => getContractInitialValue(activeContractCode, lockedContractCode));
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
-  const storedPriorities = readStoredPriorities();
-  const [prioridades, setPrioridades] = useState<Record<string, string>>(storedPriorities.values);
-  const [prioridadesConfirmadas, setPrioridadesConfirmadas] = useState<Record<string, boolean>>(storedPriorities.confirmed);
-  const [observacoes, setObservacoes] = useState<Record<string, string>>({});
+  const monthlyPriorityCycle = useMemo(() => getMonthlyPriorityCycleKey(), []);
+  const monthlyPriorityCycleLabel = useMemo(() => formatMonthlyCycleLabel(monthlyPriorityCycle), [monthlyPriorityCycle]);
+  const storedPriorities = useMemo<StoredPrioritiesState>(() => readStoredPriorities(), []);
+  const [prioridadeMensal, setPrioridadeMensal] = useState<Record<string, string>>(storedPriorities.monthly);
+  const [prioridadeLicitatoria, setPrioridadeLicitatoria] = useState<Record<string, boolean>>(storedPriorities.licitatoria);
   const [showInterferenciaForm, setShowInterferenciaForm] = useState(false);
-  const [interferencias, setInterferencias] = useState<Interferencia[]>([]);
+  const [interferencias, setInterferencias] = useState<Interferencia[]>(() => readStoredInterferencias());
   const [interferenciaDraft, setInterferenciaDraft] = useState({ nome: '', data: '', osImpactada: '', observacao: '' });
+  const prioridadesPersistidas = useMemo(
+    () => buildLegacyPriorityState(prioridadeMensal, prioridadeLicitatoria, monthlyPriorityCycle),
+    [monthlyPriorityCycle, prioridadeLicitatoria, prioridadeMensal]
+  );
 
   React.useEffect(() => {
     setSelectedContract(getContractInitialValue(activeContractCode, lockedContractCode));
@@ -453,21 +587,19 @@ export default function Contrato({ currentUser, preloadedData, activeContractCod
   React.useEffect(() => {
     try {
       localStorage.setItem(CONTRACT_PRIORITY_STORAGE_KEY, JSON.stringify({
-        values: prioridades,
-        confirmed: prioridadesConfirmadas,
+        values: prioridadesPersistidas.values,
+        confirmed: prioridadesPersistidas.confirmed,
+        monthly: prioridadeMensal,
+        licitatoria: prioridadeLicitatoria,
       }));
-    } catch (error) {}
-  }, [prioridades, prioridadesConfirmadas]);
+    } catch {}
+  }, [prioridadeLicitatoria, prioridadeMensal, prioridadesPersistidas]);
 
   React.useEffect(() => {
-    setPrioridades((prev) => {
-      const next = { ...prev };
-      activities.forEach((activity) => {
-        if (!next[activity.id]) next[activity.id] = '1';
-      });
-      return next;
-    });
-  }, [activities]);
+    try {
+      localStorage.setItem(CONTRACT_INTERFERENCES_STORAGE_KEY, JSON.stringify(interferencias));
+    } catch {}
+  }, [interferencias]);
 
   const locked = Boolean(String(lockedContractCode || '').trim());
 
@@ -475,7 +607,13 @@ export default function Contrato({ currentUser, preloadedData, activeContractCod
     const termo = normalizeText(deferredSearch);
     return activities.filter((activity) => {
       const matchContract = isAllContract(selectedContract) || normalizeText(activity.contratoCodigo) === normalizeText(selectedContract);
-      const matchSearch = !termo || normalizeText(`${activity.osCodigo} ${activity.osNome} ${activity.itemNome}`).includes(termo);
+      const matchSearch = !termo || normalizeText([
+        activity.osCodigo,
+        activity.osNome,
+        activity.itemNome,
+        activity.descricao,
+        ...activity.profissionais,
+      ].join(' ')).includes(termo);
       return matchContract && matchSearch;
     });
   }, [activities, deferredSearch, selectedContract]);
@@ -493,17 +631,25 @@ export default function Contrato({ currentUser, preloadedData, activeContractCod
           : selectedActivity.avancoAtual,
       }
     : null;
+
   const osOptions = useMemo(() => getOsOptions(preloadedData, activities, selectedContract), [preloadedData, activities, selectedContract]);
   const observationMinLength = 35;
-  const isInterferenciaValid =
-    interferenciaDraft.nome.trim() &&
-    interferenciaDraft.data &&
-    interferenciaDraft.osImpactada &&
-    interferenciaDraft.observacao.trim().length >= observationMinLength;
-  const pendingPrioritiesCount = filteredActivities.filter((activity) => !prioridadesConfirmadas[activity.id]).length;
+  const isInterferenciaValid = Boolean(
+    interferenciaDraft.nome.trim()
+    && interferenciaDraft.data
+    && interferenciaDraft.osImpactada
+    && interferenciaDraft.observacao.trim().length >= observationMinLength
+  );
+
+  const pendingPrioritiesCount = filteredActivities.filter((activity) => {
+    const monthlyActive = isMonthlyPriorityActive(prioridadeMensal[activity.id], monthlyPriorityCycle);
+    const licitatoriaActive = Boolean(prioridadeLicitatoria[activity.id]);
+    return !monthlyActive && !licitatoriaActive;
+  }).length;
 
   const handleAddInterferencia = () => {
     if (!isInterferenciaValid) return;
+    const contratoAtual = contracts.find((item) => normalizeText(item.id) === normalizeText(selectedContract));
     setInterferencias((prev) => [
       {
         id: `${Date.now()}-${interferenciaDraft.osImpactada}`,
@@ -511,6 +657,8 @@ export default function Contrato({ currentUser, preloadedData, activeContractCod
         data: interferenciaDraft.data,
         osImpactada: interferenciaDraft.osImpactada,
         observacao: interferenciaDraft.observacao.trim(),
+        contratoCodigo: selectedContract,
+        contratoNome: contratoAtual?.nome || selectedContract,
       },
       ...prev,
     ]);
@@ -520,6 +668,41 @@ export default function Contrato({ currentUser, preloadedData, activeContractCod
 
   return (
     <div className="space-y-6 font-['Montserrat']">
+      {activeView !== 'cronograma' && (
+        <section className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm p-5">
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(220px,280px)_minmax(0,1fr)] gap-4">
+            <div>
+              <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Contrato</label>
+              <select
+                value={selectedContract}
+                disabled={locked}
+                onChange={(event) => setSelectedContract(event.target.value)}
+                className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none disabled:bg-[#F8FAFC] disabled:text-[#94A3B8]"
+              >
+                {!locked && <option value="Todos">Todos os contratos</option>}
+                {contracts.map((contract) => (
+                  <option key={contract.id} value={contract.id}>
+                    {contract.id && contract.nome && contract.nome !== contract.id ? `${contract.id} - ${contract.nome}` : contract.nome || contract.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Buscar atividade</label>
+              <div className="mt-1 relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar por OS, atividade ou profissional"
+                  className="w-full h-11 rounded-xl border border-[#E5E7EB] bg-white pl-10 pr-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {activeView === 'dashboard' && (
         <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
@@ -527,6 +710,9 @@ export default function Contrato({ currentUser, preloadedData, activeContractCod
             activities={filteredActivities}
             selectedActivity={selectedActivity}
             onSelect={setSelectedActivityId}
+            monthlyPriorityMap={prioridadeMensal}
+            licitatoriaMap={prioridadeLicitatoria}
+            monthlyCycle={monthlyPriorityCycle}
           />
 
           <div className="space-y-6">
@@ -541,280 +727,78 @@ export default function Contrato({ currentUser, preloadedData, activeContractCod
         </section>
       )}
 
-      {false && activeView === 'dashboard' && (
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
-            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Atividades em execução</p>
-            <p className="mt-3 text-[28px] font-black text-[#2D2D2D]">{filteredActivities.length}</p>
-          </div>
-          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
-            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Prioridades pendentes</p>
-            <p className="mt-3 text-[28px] font-black text-[#F05D28]">{pendingPrioritiesCount}</p>
-          </div>
-          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
-            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Interferências</p>
-            <p className="mt-3 text-[28px] font-black text-[#2D2D2D]">{interferencias.length}</p>
-          </div>
-        </section>
-      )}
-
       {activeView === 'prioridades' && (
         <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
           <ActivitiesList
             activities={filteredActivities}
             selectedActivity={selectedActivity}
             onSelect={setSelectedActivityId}
+            monthlyPriorityMap={prioridadeMensal}
+            licitatoriaMap={prioridadeLicitatoria}
+            monthlyCycle={monthlyPriorityCycle}
           />
 
           <PriorityDesk
             activity={selectedActivity}
             pendingCount={pendingPrioritiesCount}
-            priority={selectedActivity ? prioridades[selectedActivity.id] || '1' : '1'}
-            confirmed={selectedActivity ? Boolean(prioridadesConfirmadas[selectedActivity.id]) : false}
-            onPriorityChange={(value) => {
+            monthlyActive={selectedActivity ? isMonthlyPriorityActive(prioridadeMensal[selectedActivity.id], monthlyPriorityCycle) : false}
+            licitatoriaActive={selectedActivity ? Boolean(prioridadeLicitatoria[selectedActivity.id]) : false}
+            currentCycleLabel={monthlyPriorityCycleLabel}
+            onToggleMonthly={() => {
               if (!selectedActivity) return;
-              setPrioridades((prev) => ({ ...prev, [selectedActivity.id]: value }));
+              setPrioridadeMensal((prev) => {
+                const next = { ...prev };
+                if (isMonthlyPriorityActive(next[selectedActivity.id], monthlyPriorityCycle)) delete next[selectedActivity.id];
+                else next[selectedActivity.id] = monthlyPriorityCycle;
+                return next;
+              });
             }}
-            onConfirm={() => {
+            onToggleLicitatoria={() => {
               if (!selectedActivity) return;
-              setPrioridades((prev) => ({ ...prev, [selectedActivity.id]: prev[selectedActivity.id] || '1' }));
-              setPrioridadesConfirmadas((prev) => ({ ...prev, [selectedActivity.id]: true }));
-            }}
-          />
-        </section>
-      )}
-
-      {false && activeView === 'prioridades' && (
-      <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] gap-6">
-        <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
-          <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <ClipboardList size={18} className="text-[#F05D28]" />
-              <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Atividades sendo executadas</h3>
-            </div>
-            <span className="text-[11px] font-bold text-[#757575]">{filteredActivities.length} em execução</span>
-          </div>
-
-          <div className="divide-y divide-[#E5E7EB]">
-            {filteredActivities.length === 0 && (
-              <div className="py-12 px-6 text-center text-[13px] font-medium text-[#757575]">
-                Nenhuma atividade em execução para este contrato.
-              </div>
-            )}
-
-            {filteredActivities.map((activity) => (
-              <button
-                type="button"
-                key={activity.id}
-                onClick={() => setSelectedActivityId(activity.id)}
-                className={`w-full text-left px-5 py-4 transition-colors ${selectedActivity?.id === activity.id ? 'bg-[#FFF7ED]' : 'hover:bg-[#F9FAFB]'}`}
-              >
-                <span className="text-[13px] font-bold text-[#2D2D2D]">{getActivityDisplayName(activity)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-      )}
-
-      {false && activeView === 'dashboard' && (
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
-            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Atividades em execução</p>
-            <p className="mt-3 text-[28px] font-black text-[#2D2D2D]">{filteredActivities.length}</p>
-          </div>
-          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
-            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Prioridades pendentes</p>
-            <p className="mt-3 text-[28px] font-black text-[#F05D28]">{pendingPrioritiesCount}</p>
-          </div>
-          <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
-            <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Interferências</p>
-            <p className="mt-3 text-[28px] font-black text-[#2D2D2D]">{interferencias.length}</p>
-          </div>
-        </section>
-      )}
-
-      {activeView === 'prioridades' && (
-        <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
-          <ActivitiesList
-            activities={filteredActivities}
-            selectedActivity={selectedActivity}
-            onSelect={setSelectedActivityId}
-          />
-
-          <PriorityDesk
-            activity={selectedActivity}
-            pendingCount={pendingPrioritiesCount}
-            priority={selectedActivity ? prioridades[selectedActivity.id] || '1' : '1'}
-            confirmed={selectedActivity ? Boolean(prioridadesConfirmadas[selectedActivity.id]) : false}
-            onPriorityChange={(value) => {
-              if (!selectedActivity) return;
-              setPrioridades((prev) => ({ ...prev, [selectedActivity.id]: value }));
-            }}
-            onConfirm={() => {
-              if (!selectedActivity) return;
-              setPrioridades((prev) => ({ ...prev, [selectedActivity.id]: prev[selectedActivity.id] || '1' }));
-              setPrioridadesConfirmadas((prev) => ({ ...prev, [selectedActivity.id]: true }));
+              setPrioridadeLicitatoria((prev) => ({ ...prev, [selectedActivity.id]: !prev[selectedActivity.id] }));
             }}
           />
         </section>
-      )}
-
-      {false && activeView === 'prioridades' && (
-      <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] gap-6">
-        <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
-          <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <ClipboardList size={18} className="text-[#F05D28]" />
-              <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Atividades sendo executadas</h3>
-            </div>
-            <span className="text-[11px] font-bold text-[#757575]">{filteredActivities.length} em execução</span>
-          </div>
-
-          <div className="divide-y divide-[#E5E7EB]">
-            {filteredActivities.length === 0 && (
-              <div className="py-12 px-6 text-center text-[13px] font-medium text-[#757575]">
-                Nenhuma atividade em execução para este contrato.
-              </div>
-            )}
-
-            {filteredActivities.map((activity) => (
-              <button
-                type="button"
-                key={activity.id}
-                onClick={() => setSelectedActivityId(activity.id)}
-                className={`w-full text-left px-5 py-4 transition-colors ${selectedActivity?.id === activity.id ? 'bg-[#FFF7ED]' : 'hover:bg-[#F9FAFB]'}`}
-              >
-                <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_120px_170px_130px] gap-4 items-center">
-                  <div className="min-w-0">
-                    <p className="text-[12px] font-bold text-[#2D2D2D] truncate">{getOsDisplayName(activity)}</p>
-                    <p className="text-[13px] font-bold text-[#2D2D2D] truncate mt-2">{getActivityDisplayName(activity)}</p>
-                  </div>
-
-                  <div className="min-w-0">
-                    <div className="h-2 rounded-full bg-[#F3F4F6] overflow-hidden">
-                      <span className="block h-full bg-[#10B981]" style={{ width: `${activity.avancoAtual}%` }} />
-                    </div>
-                    <p className="text-[11px] font-bold text-[#2D2D2D] mt-1">{activity.avancoAtual}%</p>
-                    {(activity.criadoPorNome || activity.criadoPorDisciplina) && (
-                      <p className="text-[10px] font-semibold text-[#4B5563] mt-2 leading-tight">
-                        {activity.criadoPorNome || 'Sem nome'}
-                        {activity.criadoPorDisciplina ? (
-                          <>
-                            <br />
-                            {activity.criadoPorDisciplina}
-                          </>
-                        ) : null}
-                      </p>
-                    )}
-                  </div>
-
-                  <div onClick={(event) => event.stopPropagation()} className="max-w-[170px]">
-                  <label className="text-[9px] font-bold text-[#92400E] uppercase tracking-widest">Prioridade do contrato</label>
-                  <div className={`mt-1.5 grid grid-cols-[minmax(0,1fr)_42px] gap-1.5 rounded-xl ${prioridadesConfirmadas[activity.id] ? '' : 'ring-2 ring-[#EF4444] ring-offset-2 animate-pulse'}`}>
-                    <select
-                      value={prioridades[activity.id] || '1'}
-                      disabled={Boolean(prioridadesConfirmadas[activity.id])}
-                      onChange={(event) => setPrioridades((prev) => ({ ...prev, [activity.id]: event.target.value }))}
-                      className="w-full min-w-0 h-10 rounded-xl border border-[#FDE68A] bg-[#FEF3C7] px-2 text-[11px] font-bold text-[#92400E] outline-none disabled:opacity-80"
-                    >
-                      <option value="1">1 - Baixa</option>
-                      <option value="2">2 - Media</option>
-                      <option value="3">3 - Alta</option>
-                    </select>
-                    <button
-                      type="button"
-                      disabled={Boolean(prioridadesConfirmadas[activity.id])}
-                      onClick={() => {
-                        setPrioridades((prev) => ({ ...prev, [activity.id]: prev[activity.id] || '1' }));
-                        setPrioridadesConfirmadas((prev) => ({ ...prev, [activity.id]: true }));
-                      }}
-                      className="h-10 rounded-xl bg-[#F05D28] text-white text-[10px] font-black uppercase tracking-wide hover:bg-[#D94E1F] disabled:bg-[#10B981] disabled:opacity-100"
-                    >
-                      OK
-                    </button>
-                  </div>
-                </div>
-
-                  <div className="inline-flex items-center gap-2 text-[12px] font-semibold text-[#757575]">
-                    <CalendarDays size={15} />
-                    {activity.dataFim}
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          {selectedActivity && <ActivityJourney activity={selectedActivity} />}
-
-          {selectedActivity && (
-            <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 shadow-sm">
-              <label className="flex items-center gap-2 text-[11px] font-bold text-[#757575] uppercase tracking-widest">
-                <MessageSquareText size={16} className="text-[#F05D28]" />
-                Observacoes
-              </label>
-              <textarea
-                value={observacoes[selectedActivity.id] || ''}
-                onChange={(event) => setObservacoes((prev) => ({ ...prev, [selectedActivity.id]: event.target.value }))}
-                className="mt-3 w-full min-h-[120px] resize-none rounded-xl border border-[#E5E7EB] bg-[#F8F9FA] p-4 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
-                placeholder="Observacoes da atividade"
-              />
-            </div>
-          )}
-        </div>
-      </section>
       )}
 
       {activeView === 'interferencias' && (
-      <section className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-[#E5E7EB] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <FileWarning size={18} className="text-[#F05D28]" />
-            <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Interferencias</h3>
+        <section className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
+          <div className="px-6 py-5 border-b border-[#E5E7EB] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <FileWarning size={18} className="text-[#F05D28]" />
+              <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Interferencias</h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowInterferenciaForm(true)}
+              className="h-10 px-4 rounded-xl border border-[#F05D28] text-[#F05D28] text-[12px] font-bold inline-flex items-center justify-center gap-2 hover:bg-[#FFF7ED]"
+            >
+              <Plus size={15} />
+              Nova interferencia
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowInterferenciaForm(true)}
-            className="h-10 px-4 rounded-xl border border-[#F05D28] text-[#F05D28] text-[12px] font-bold inline-flex items-center justify-center gap-2 hover:bg-[#FFF7ED]"
-          >
-            <Plus size={15} />
-            Nova interferencia
-          </button>
-        </div>
 
-        <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {interferencias.length === 0 && (
-            <div className="lg:col-span-2 py-8 text-center text-[13px] font-medium text-[#757575]">
-              Nenhuma interferencia registrada nesta sessao.
-            </div>
-          )}
-
-          {interferencias.map((item) => (
-            <div key={item.id} className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[14px] font-bold text-[#2D2D2D]">{item.nome}</p>
-                  <p className="text-[11px] font-semibold text-[#757575] mt-1">{formatDateBR(item.data)} - OS {item.osImpactada}</p>
-                </div>
-                <AlertTriangle size={17} className="text-[#F59E0B] shrink-0" />
+          <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {interferencias.length === 0 && (
+              <div className="lg:col-span-2 py-8 text-center text-[13px] font-medium text-[#757575]">
+                Nenhuma interferencia registrada nesta sessao.
               </div>
-              <p className="mt-3 text-[13px] leading-relaxed text-[#4B5563]">{item.observacao}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-      )}
+            )}
 
-      {activeView === 'emergencia' && (
-        <EmergenciaCenter
-          currentUser={currentUser}
-          preloadedData={preloadedData}
-          activeContractCode={selectedContract}
-          lockedContractCode={lockedContractCode}
-          onDataChange={onEmergencyChanged}
-        />
+            {interferencias.map((item) => (
+              <div key={item.id} className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[14px] font-bold text-[#2D2D2D]">{item.nome}</p>
+                    <p className="text-[11px] font-semibold text-[#757575] mt-1">{formatDateBR(item.data)} - OS {item.osImpactada}</p>
+                  </div>
+                  <AlertTriangle size={17} className="text-[#F59E0B] shrink-0" />
+                </div>
+                <p className="mt-3 text-[13px] leading-relaxed text-[#4B5563]">{item.observacao}</p>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {activeView === 'cronograma' && (

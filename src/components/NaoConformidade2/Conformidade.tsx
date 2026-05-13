@@ -19,7 +19,6 @@ import TerceirizadasCadastro from '../TerceirizadasCadastro';
 import Cronograma from '../Cronograma';
 import type { TerceirizadaRecord } from '../Administracao';
 import type { AuthUser } from '../LoginScreen';
-import EmergenciaCenter from '../EmergenciaCenter';
 
 type RegistroContract = {
   id?: string;
@@ -250,8 +249,8 @@ function Dashboard({
 }
 
 interface ConformidadeProps {
-  activeTab: 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'emergencia' | 'cronograma';
-  onTabChange: (tab: 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'emergencia' | 'cronograma') => void;
+  activeTab: 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'cronograma';
+  onTabChange: (tab: 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'cronograma') => void;
   currentUser: AuthUser;
   activeContractCode?: string;
   preloadedData?: {
@@ -269,7 +268,6 @@ interface ConformidadeProps {
   onSaveTerceirizada?: (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => Promise<void>;
   onDeleteTerceirizada?: (id: string) => Promise<void>;
   onSavePendingInfo?: () => Promise<void>;
-  onEmergencyChanged?: () => void;
 }
 
 export default function Conformidade({
@@ -284,7 +282,6 @@ export default function Conformidade({
   onSaveTerceirizada,
   onDeleteTerceirizada,
   onSavePendingInfo,
-  onEmergencyChanged,
 }: ConformidadeProps) {
   const hasPendingTerceirizadas = pendingTerceirizadaIds.length > 0;
   const [savingPending, setSavingPending] = useState(false);
@@ -303,10 +300,9 @@ export default function Conformidade({
     <div className="w-full flex flex-col font-['Montserrat']">
       <div className="w-full">
         {activeTab === 'dashboard' && <Dashboard preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
-        {activeTab === 'preenchimento' && <Preenchimento preloadedData={preloadedData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />}
-        {activeTab === 'revisoes' && <Revisoes />}
-        {activeTab === 'emergencia' && <EmergenciaCenter currentUser={currentUser} preloadedData={preloadedData} activeContractCode={activeContractCode} lockedContractCode={lockedContractCode} onDataChange={onEmergencyChanged} />}
-        {activeTab === 'cronograma' && <Cronograma preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
+        {activeTab === 'preenchimento' && <Preenchimento currentUser={currentUser} preloadedData={preloadedData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />}
+        {activeTab === 'revisoes' && <Revisoes currentUser={currentUser} />}
+        {activeTab === 'cronograma' && <Cronograma preloadedData={preloadedData as any} lockedContractCode={lockedContractCode} />}
         {activeTab === 'terceirizadas' && (
           <>
             <TerceirizadasCadastro

@@ -16,6 +16,7 @@
  */
 
 var DEFAULT_EAP_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec";
+var DEFAULT_EAP_PUBLIC_JSON_URL = "https://raw.githubusercontent.com/igorfreire-sketch/Ecoquanta2/main/Publica/eap-unificada.json";
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
@@ -179,6 +180,14 @@ function doPost(e) {
 
     if (action === 'updateActivitiesBatch') {
       return updateActivitiesBatch_(ss, data);
+    }
+
+    if (action === 'saveNc2RecordsBatch') {
+      return saveNc2RecordsBatch_(ss, data);
+    }
+
+    if (action === 'updateNc2Record') {
+      return updateNc2Record_(ss, data);
     }
 
     var loginSheet = getOrCreateLoginSheet_(ss);
@@ -568,7 +577,11 @@ function doGet(e) {
     return json_(getRawCronogramaData_(ss));
   }
 
-  return json_({ error: 'Ação inválida' });
+  if (action === 'getNc2Records') {
+    return json_({ success: true, records: getNc2Records_(ss) });
+  }
+
+  return json_({ error: 'Acao invalida' });
 }
 
 function doOptions() {
@@ -1120,6 +1133,7 @@ function getUnifiedEapPublicDataSafe_() {
       props.getProperty("git_eap_unificada") ||
       props.getProperty("git_eap") ||
       props.getProperty("git_eap_public") ||
+      DEFAULT_EAP_PUBLIC_JSON_URL ||
       ""
     ).trim();
 
@@ -1159,7 +1173,22 @@ function getEapStructuredData_(ss) {
     };
   }
 
-  var sh = ss.getSheetByName('EAP') || ss.getSheetByName('Atual');
+  if (unifiedEap && Array.isArray(unifiedEap.atual) && unifiedEap.atual.length > 0) {
+    var rawRows = [];
+    for (var u = 0; u < unifiedEap.atual.length; u++) {
+      var raw = unifiedEap.atual[u] || [];
+      var code = String(raw[0] || '').trim();
+      var name = String(raw[1] || '').trim();
+      if (!code || !name) continue;
+      rawRows.push({ code: code, name: name });
+    }
+
+    if (rawRows.length > 0) {
+      return getEapStructuredDataFromRows_(rawRows);
+    }
+  }
+
+  var sh = ss.getSheetByName('EAP');
   if (!sh) return { contracts: [], osOptions: [], itemOptions: [], hierarchyNodes: [], childrenByParent: {}, rootCodes: [] };
 
   var values = sh.getDataRange().getValues();
@@ -1384,12 +1413,14 @@ function getProfessionalsByDisciplina_(ss, disciplina) {
 function getActivitiesForUser_(ss, userEmail, userRole) {
   var sh = getOrCreateActivitiesSheet_(ss);
   var values = sh.getDataRange().getValues();
+  var displayValues = sh.getDataRange().getDisplayValues();
 
   var activeActivities = [];
   var completedActivities = [];
 
   updateDelayedCompletedActivities_(ss);
   values = sh.getDataRange().getValues();
+  displayValues = sh.getDataRange().getDisplayValues();
 
   for (var i = 1; i < values.length; i++) {
     var createdByEmail = String(values[i][3] || '').trim().toLowerCase();
@@ -1400,27 +1431,27 @@ function getActivitiesForUser_(ss, userEmail, userRole) {
     }
 
     var rowObj = {
-      id: String(values[i][0] || ''),
-      dataRegistro: String(values[i][1] || ''),
-      createdByEmail: String(values[i][3] || ''),
-      contratoCodigo: String(values[i][6] || ''),
-      contratoNome: String(values[i][7] || ''),
-      osCodigo: String(values[i][8] || ''),
-      osNome: String(values[i][9] || ''),
-      itemCodigo: String(values[i][10] || ''),
-      itemNome: String(values[i][11] || ''),
-      setor: String(values[i][12] || ''),
-      profissionais: String(values[i][13] || '').split(' | ').filter(Boolean),
-      profissionaisEmails: String(values[i][14] || '').split(' | ').filter(Boolean),
-      dificuldade: String(values[i][15] || ''),
-      descricao: String(values[i][16] || ''),
+      id: String(displayValues[i][0] || values[i][0] || ''),
+      dataRegistro: String(displayValues[i][1] || values[i][1] || ''),
+      createdByEmail: String(displayValues[i][3] || values[i][3] || ''),
+      contratoCodigo: String(displayValues[i][6] || values[i][6] || ''),
+      contratoNome: String(displayValues[i][7] || values[i][7] || ''),
+      osCodigo: String(displayValues[i][8] || values[i][8] || ''),
+      osNome: String(displayValues[i][9] || values[i][9] || ''),
+      itemCodigo: String(displayValues[i][10] || values[i][10] || ''),
+      itemNome: String(displayValues[i][11] || values[i][11] || ''),
+      setor: String(displayValues[i][12] || values[i][12] || ''),
+      profissionais: String(displayValues[i][13] || values[i][13] || '').split(' | ').filter(Boolean),
+      profissionaisEmails: String(displayValues[i][14] || values[i][14] || '').split(' | ').filter(Boolean),
+      dificuldade: String(displayValues[i][15] || values[i][15] || ''),
+      descricao: String(displayValues[i][16] || values[i][16] || ''),
       avancoAtual: Number(values[i][17] || 0),
-      avaliacaoAtual: String(values[i][18] || ''),
-      observacaoAtual: String(values[i][19] || ''),
-      status: String(values[i][20] || 'em_andamento'),
-      data100: String(values[i][21] || ''),
-      dataConclusaoEfetiva: String(values[i][22] || ''),
-      ultimaAtualizacao: String(values[i][24] || '')
+      avaliacaoAtual: String(displayValues[i][18] || values[i][18] || ''),
+      observacaoAtual: String(displayValues[i][19] || values[i][19] || ''),
+      status: String(displayValues[i][20] || values[i][20] || 'em_andamento'),
+      data100: String(displayValues[i][21] || values[i][21] || ''),
+      dataConclusaoEfetiva: String(displayValues[i][22] || values[i][22] || ''),
+      ultimaAtualizacao: String(displayValues[i][24] || values[i][24] || '')
     };
 
     if (rowObj.status === 'concluida') {
@@ -1678,6 +1709,151 @@ function sendAdminTemporaryPasswordEmail_(to, tempPassword) {
   var subject = 'Senha temporária - Projetos Maricá';
   var body = 'Um administrador redefiniu seu acesso.\n\nSua senha temporária é: ' + tempPassword + '\n\nEntre no sistema e altere sua senha quando desejar.\n';
   MailApp.sendEmail(to, subject, body);
+}
+
+function getOrCreateNc2Sheet_(ss) {
+  var sh = ss.getSheetByName('NC2_Revisoes');
+  if (!sh) sh = ss.insertSheet('NC2_Revisoes');
+
+  var header = [
+    'Id', 'ContratoCodigo', 'ContratoNome', 'OS', 'OSCodigo', 'ObjetoOs',
+    'ObjetoOsCodigo', 'Disciplina', 'Avaliador', 'AvaliadorEmail', 'Observacoes',
+    'DataHora', 'ItensJson', 'Concluido', 'CreatedAt', 'UpdatedAt',
+    'UpdatedByNome', 'UpdatedByEmail'
+  ];
+
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1, 1, 1, header.length).setValues([header]);
+    sh.setFrozenRows(1);
+  }
+
+  return sh;
+}
+
+function normalizeNc2RecordForStore_(record, userName, userEmail) {
+  var normalized = record || {};
+  var itens = Array.isArray(normalized.itens) ? normalized.itens : [];
+  var itensT = itens.filter(function (item) { return Number(item && item.quantidadeT || 0) > 0; });
+  var concluido = Boolean(normalized.concluido);
+  if (itensT.length > 0) concluido = itensT.every(function (item) { return Boolean(item.revisado); });
+
+  return {
+    id: String(normalized.id || Utilities.getUuid()).trim(),
+    contratoCodigo: String(normalized.contratoCodigo || '').trim(),
+    contratoNome: String(normalized.contratoNome || '').trim(),
+    os: String(normalized.os || '').trim(),
+    osCodigo: String(normalized.osCodigo || '').trim(),
+    objetoOs: String(normalized.objetoOs || '').trim(),
+    objetoOsCodigo: String(normalized.objetoOsCodigo || '').trim(),
+    disciplina: String(normalized.disciplina || '').trim(),
+    avaliador: String(normalized.avaliador || '').trim(),
+    avaliadorEmail: normalizeEmail_(normalized.avaliadorEmail || ''),
+    observacoes: String(normalized.observacoes || '').trim(),
+    dataHora: String(normalized.dataHora || '').trim(),
+    itens: itens,
+    itensT: itensT,
+    concluido: concluido,
+    createdAt: String(normalized.createdAt || new Date().toISOString()).trim(),
+    updatedAt: new Date().toISOString(),
+    updatedByNome: String(userName || normalized.updatedByNome || '').trim(),
+    updatedByEmail: normalizeEmail_(userEmail || normalized.updatedByEmail || '')
+  };
+}
+
+function mapNc2RecordToRow_(record) {
+  return [
+    record.id || '', record.contratoCodigo || '', record.contratoNome || '', record.os || '',
+    record.osCodigo || '', record.objetoOs || '', record.objetoOsCodigo || '',
+    record.disciplina || '', record.avaliador || '', record.avaliadorEmail || '',
+    record.observacoes || '', record.dataHora || '', JSON.stringify(record.itens || []),
+    record.concluido ? 'true' : 'false', record.createdAt || '', record.updatedAt || '',
+    record.updatedByNome || '', record.updatedByEmail || ''
+  ];
+}
+
+function readNc2RecordsFromSheet_(ss) {
+  var sh = getOrCreateNc2Sheet_(ss);
+  var lastRow = sh.getLastRow();
+  if (lastRow <= 1) return [];
+
+  var rows = sh.getRange(2, 1, lastRow - 1, 18).getValues();
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    var itens = [];
+    try { itens = JSON.parse(String(row[12] || '[]')); } catch (err) { itens = []; }
+    var itensT = itens.filter(function (item) { return Number(item && item.quantidadeT || 0) > 0; });
+    out.push({
+      id: String(row[0] || '').trim(),
+      contratoCodigo: String(row[1] || '').trim(),
+      contratoNome: String(row[2] || '').trim(),
+      os: String(row[3] || '').trim(),
+      osCodigo: String(row[4] || '').trim(),
+      objetoOs: String(row[5] || '').trim(),
+      objetoOsCodigo: String(row[6] || '').trim(),
+      disciplina: String(row[7] || '').trim(),
+      avaliador: String(row[8] || '').trim(),
+      avaliadorEmail: String(row[9] || '').trim(),
+      observacoes: String(row[10] || '').trim(),
+      dataHora: String(row[11] || '').trim(),
+      itens: itens,
+      itensT: itensT,
+      concluido: String(row[13] || '').toLowerCase() === 'true',
+      createdAt: String(row[14] || '').trim(),
+      updatedAt: String(row[15] || '').trim(),
+      updatedByNome: String(row[16] || '').trim(),
+      updatedByEmail: String(row[17] || '').trim()
+    });
+  }
+
+  out.sort(function (a, b) {
+    return String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''));
+  });
+  return out;
+}
+
+function getNc2Records_(ss) {
+  return readNc2RecordsFromSheet_(ss);
+}
+
+function saveNc2RecordsBatch_(ss, data) {
+  var records = Array.isArray(data.records) ? data.records : [];
+  var userName = String(data.userName || '').trim();
+  var userEmail = normalizeEmail_(data.userEmail || '');
+  if (!records.length) return json_({ success: false, error: 'Nenhum registro de conformidade para salvar.' });
+
+  var sh = getOrCreateNc2Sheet_(ss);
+  var rows = [];
+  for (var i = 0; i < records.length; i++) {
+    rows.push(mapNc2RecordToRow_(normalizeNc2RecordForStore_(records[i], userName, userEmail)));
+  }
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, 18).setValues(rows);
+  return json_({ success: true, records: readNc2RecordsFromSheet_(ss) });
+}
+
+function updateNc2Record_(ss, data) {
+  var record = data.record || null;
+  var userName = String(data.userName || '').trim();
+  var userEmail = normalizeEmail_(data.userEmail || '');
+  if (!record || !record.id) return json_({ success: false, error: 'Registro de conformidade invalido.' });
+
+  var sh = getOrCreateNc2Sheet_(ss);
+  var lastRow = sh.getLastRow();
+  if (lastRow <= 1) return json_({ success: false, error: 'Nenhum registro encontrado para atualizar.' });
+
+  var ids = sh.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
+  var rowIndex = -1;
+  for (var i = 0; i < ids.length; i++) {
+    if (String(ids[i][0] || '').trim() === String(record.id || '').trim()) {
+      rowIndex = i + 2;
+      break;
+    }
+  }
+  if (rowIndex < 0) return json_({ success: false, error: 'Registro de conformidade nao encontrado.' });
+
+  var normalized = normalizeNc2RecordForStore_(record, userName, userEmail);
+  sh.getRange(rowIndex, 1, 1, 18).setValues([mapNc2RecordToRow_(normalized)]);
+  return json_({ success: true, records: [normalized] });
 }
 
 function json_(obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); }
@@ -2267,17 +2443,35 @@ function fetchRegistroAtividadesPayloadFromGit_() {
 function getAllActivitiesForPublicJson_(ss) {
   var shAct = getOrCreateActivitiesSheet_(ss);
   var values = shAct.getDataRange().getValues();
+  var displayValues = shAct.getDataRange().getDisplayValues();
   var acts = [];
   for(var i=1; i<values.length; i++){
     var r = values[i];
+    var d = displayValues[i] || [];
     if (!String(r[0] || '').trim()) continue;
     acts.push({
-      activityId: r[0], dataRegistro: r[1], criadoPorNome: r[2], criadoPorEmail: r[3],
-      criadoPorRole: r[4], criadoPorDisciplina: r[5],
-      contratoCodigo: r[6], contratoNome: r[7], osCodigo: r[8], osNome: r[9], itemCodigo: r[10], itemNome: r[11],
-      setor: r[12], profissionais: r[13], profissionaisEmails: r[14], dificuldade: r[15], descricao: r[16],
+      activityId: String(d[0] || r[0] || ''),
+      dataRegistro: String(d[1] || r[1] || ''),
+      criadoPorNome: String(d[2] || r[2] || ''),
+      criadoPorEmail: String(d[3] || r[3] || ''),
+      criadoPorRole: String(d[4] || r[4] || ''),
+      criadoPorDisciplina: String(d[5] || r[5] || ''),
+      contratoCodigo: String(d[6] || r[6] || ''),
+      contratoNome: String(d[7] || r[7] || ''),
+      osCodigo: String(d[8] || r[8] || ''),
+      osNome: String(d[9] || r[9] || ''),
+      itemCodigo: String(d[10] || r[10] || ''),
+      itemNome: String(d[11] || r[11] || ''),
+      setor: String(d[12] || r[12] || ''),
+      profissionais: String(d[13] || r[13] || ''),
+      profissionaisEmails: String(d[14] || r[14] || ''),
+      dificuldade: String(d[15] || r[15] || ''),
+      descricao: String(d[16] || r[16] || ''),
       avancoAtual: r[17], avaliacaoAtual: r[18], observacaoAtual: r[19],
-      status: r[20], data100: r[21], dataConclusaoEfetiva: r[22], ultimaAtualizacao: r[24]
+      status: String(d[20] || r[20] || ''),
+      data100: String(d[21] || r[21] || ''),
+      dataConclusaoEfetiva: String(d[22] || r[22] || ''),
+      ultimaAtualizacao: String(d[24] || r[24] || '')
     });
   }
   return acts;
@@ -2519,3 +2713,5 @@ function computeSha256Hex_(text) {
     return ("0" + (b & 255).toString(16)).slice(-2);
   }).join("");
 }
+
+

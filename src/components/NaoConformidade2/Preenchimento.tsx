@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { generateId, saveRecord, type Nc2Record } from './ncStore';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Plus, Send } from 'lucide-react';
+import type { AuthUser } from '../LoginScreen';
+import { generateId, saveRecordsBatch, type Nc2Record } from './ncStore';
 
 type ItemKey = 'carimbo' | 'desenho' | 'relatorio' | 'faltaArquivo';
 
@@ -55,7 +57,9 @@ type RegistroOs = {
   name?: string;
   nome?: string;
   contractCode?: string;
+  contractCodigo?: string;
   contrato?: string;
+  contratoCodigo?: string;
   contractId?: string;
 };
 
@@ -82,7 +86,7 @@ const getOsName = (os: RegistroOs) =>
   String(os.name || os.nome || getOsCode(os)).trim();
 
 const getOsContractCode = (os: RegistroOs) =>
-  String(os.contractCode || os.contrato || os.contractId || '').trim();
+  String(os.contractCode || os.contractCodigo || os.contratoCodigo || os.contrato || os.contractId || '').trim();
 
 const getItemCode = (item: RegistroItem) =>
   String(item.code || item.codigo || item.id || '').trim();
@@ -93,7 +97,12 @@ const getItemName = (item: RegistroItem) =>
 const getItemOsCode = (item: RegistroItem) =>
   String(item.osCodigo || item.osCode || '').trim();
 
+function normalizeText(value?: string) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
 interface PreenchimentoProps {
+  currentUser: AuthUser;
   preloadedData?: {
     registro?: {
       contracts?: RegistroContract[];
@@ -106,39 +115,75 @@ interface PreenchimentoProps {
 }
 
 export default function Preenchimento({
+  currentUser,
   preloadedData,
   lockedContractCode,
   disciplinas = [],
 }: PreenchimentoProps) {
   const [formData, setFormData] = useState({
-    avaliador: '',
-    contrato: '',
+    avaliador: currentUser.nome || '',
+    contrato: lockedContractCode || currentUser.contrato || '',
     os: '',
-    disciplina: '',
+    disciplina: currentUser.disciplina || '',
     objetoOs: '',
+    objetoOsCodigo: '',
     observacoes: '',
   });
   const [itens, setItens] = useState<Record<ItemKey, ItemState>>(EMPTY_ITENS);
   const [currentDateTime, setCurrentDateTime] = useState({ data: '', hora: '' });
+  const [draftRecords, setDraftRecords] = useState<Nc2Record[]>([]);
   const [saved, setSaved] = useState(false);
+  const [sending, setSending] = useState(false);
 
   const contracts = preloadedData?.registro?.contracts || [];
   const osOptions = preloadedData?.registro?.osOptions || [];
   const itemOptions = preloadedData?.registro?.itemOptions || [];
 
   useEffect(() => {
-    if (lockedContractCode) {
-      setFormData((prev) => ({ ...prev, contrato: lockedContractCode, os: '', objetoOs: '' }));
-    }
-  }, [lockedContractCode]);
+    setFormData((prev) => ({
+      ...prev,
+      avaliador: currentUser.nome || '',
+      contrato: lockedContractCode || prev.contrato || currentUser.contrato || '',
+      disciplina: prev.disciplina || currentUser.disciplina || '',
+    }));
+  }, [currentUser.contrato, currentUser.disciplina, currentUser.nome, lockedContractCode]);
 
   useEffect(() => {
-    const now = new Date();
-    setCurrentDateTime({
-      data: now.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-      hora: now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-    });
+    const updateClock = () => {
+      const now = new Date();
+      setCurrentDateTime({
+        data: now.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+        hora: now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      });
+    };
+    updateClock();
   }, []);
+
+  const filteredOsOptions = useMemo(() => (
+    osOptions.filter((os) => !formData.contrato || normalizeText(getOsContractCode(os)) === normalizeText(formData.contrato))
+  ), [formData.contrato, osOptions]);
+
+  const filteredItemOptions = useMemo(() => (
+    itemOptions.filter((item) => !formData.os || normalizeText(getItemOsCode(item)) === normalizeText(formData.os))
+  ), [formData.os, itemOptions]);
+
+  const checkedItems = ITEM_KEYS.filter((key) => itens[key].checked);
+  const totalC = checkedItems.reduce((sum, key) => sum + (parseInt(itens[key].c, 10) || 0), 0);
+  const totalT = checkedItems.reduce((sum, key) => sum + (parseInt(itens[key].t, 10) || 0), 0);
+
+  const resultado = checkedItems.length === 0
+    ? null
+    : {
+        detalhes: checkedItems.map((key) => {
+          const c = parseInt(itens[key].c, 10) || 0;
+          const t = parseInt(itens[key].t, 10) || 0;
+          return { label: `${ITEM_LABELS[key]}: C=${c} / T=${t}` };
+        }),
+        totalC,
+        totalT,
+      };
+
+  const inputBase = 'w-14 h-9 text-center text-[13px] font-bold rounded-lg border outline-none transition-colors';
 
   const toggleItem = (key: ItemKey) => {
     setItens((prev) => ({
@@ -152,84 +197,99 @@ export default function Preenchimento({
     setItens((prev) => ({ ...prev, [key]: { ...prev[key], [field]: num } }));
   };
 
-  const checkedItems = ITEM_KEYS.filter((key) => itens[key].checked);
-  const totalC = checkedItems.reduce((sum, key) => sum + (parseInt(itens[key].c, 10) || 0), 0);
-  const totalT = checkedItems.reduce((sum, key) => sum + (parseInt(itens[key].t, 10) || 0), 0);
-
-  const resultado =
-    checkedItems.length === 0
-      ? null
-      : {
-          detalhes: checkedItems.map((key) => {
-            const c = parseInt(itens[key].c, 10) || 0;
-            const t = parseInt(itens[key].t, 10) || 0;
-            const unit = ITEM_UNIT[key];
-            const plural = (n: number) => (n !== 1 ? (unit === 'folha' ? 'folhas' : 'arquivos') : unit);
-            return { label: `${ITEM_LABELS[key]}: C=${c} ${plural(c)} / T=${t} ${plural(t)}` };
-          }),
-          totalC,
-          totalT,
-        };
-
   const handleLimpar = () => {
     setFormData({
-      avaliador: '',
-      contrato: lockedContractCode || '',
+      avaliador: currentUser.nome || '',
+      contrato: lockedContractCode || currentUser.contrato || '',
       os: '',
-      disciplina: '',
+      disciplina: currentUser.disciplina || '',
       objetoOs: '',
+      objetoOsCodigo: '',
       observacoes: '',
     });
     setItens(EMPTY_ITENS);
   };
 
-  const filteredOsOptions = osOptions.filter((os) =>
-    !formData.contrato || getOsContractCode(os) === formData.contrato
-  );
+  const buildRecord = (): Nc2Record | null => {
+    if (!formData.avaliador || !formData.contrato || !formData.os || !formData.disciplina || !formData.objetoOs) {
+      return null;
+    }
 
-  const filteredItemOptions = itemOptions.filter((item) =>
-    !formData.os || getItemOsCode(item) === formData.os
-  );
-
-  const handleSalvar = () => {
-    const itensT = ITEM_KEYS
-      .filter((key) => itens[key].checked && parseInt(itens[key].t, 10) > 0)
+    const selectedContract = contracts.find((item) => normalizeText(getContractCode(item)) === normalizeText(formData.contrato));
+    const selectedOs = filteredOsOptions.find((item) => normalizeText(getOsCode(item)) === normalizeText(formData.os));
+    const itensRegistrados = ITEM_KEYS
+      .filter((key) => itens[key].checked)
       .map((key) => ({
         itemKey: key,
         itemLabel: ITEM_LABELS[key],
+        quantidadeC: parseInt(itens[key].c, 10) || 0,
         quantidadeT: parseInt(itens[key].t, 10) || 0,
         unit: ITEM_UNIT[key],
         revisado: false,
       }));
 
-    if (itensT.length > 0) {
-      const now = new Date();
-      const dataHora = `${now.toLocaleDateString('pt-BR')} as ${now.toLocaleTimeString('pt-BR', {
-        hour: '2-digit',
-        minute: '2-digit',
-      })} por ${formData.avaliador || 'Avaliador'}`;
-      const record: Nc2Record = {
-        id: generateId(),
-        os: formData.os || 'OS -',
-        objetoOs: formData.objetoOs || 'Sem projeto',
-        disciplina: formData.disciplina || '-',
-        avaliador: formData.avaliador || '',
-        dataHora,
-        itensT,
-        concluido: false,
-      };
-      saveRecord(record);
-    }
+    const now = new Date();
+    const dataHora = `${now.toLocaleDateString('pt-BR')} as ${now.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })} por ${formData.avaliador}`;
 
-    setSaved(true);
-    handleLimpar();
-    setTimeout(() => setSaved(false), 2500);
+    return {
+      id: generateId(),
+      contratoCodigo: formData.contrato,
+      contratoNome: selectedContract ? getContractName(selectedContract) : formData.contrato,
+      os: selectedOs ? `${getOsCode(selectedOs)} - ${getOsName(selectedOs)}` : formData.os,
+      osCodigo: formData.os,
+      objetoOs: formData.objetoOs,
+      objetoOsCodigo: formData.objetoOsCodigo || formData.objetoOs,
+      disciplina: formData.disciplina,
+      avaliador: formData.avaliador,
+      avaliadorEmail: currentUser.email || '',
+      observacoes: formData.observacoes,
+      dataHora,
+      itens: itensRegistrados,
+      itensT: itensRegistrados.filter((item) => item.quantidadeT > 0),
+      concluido: itensRegistrados.filter((item) => item.quantidadeT > 0).length === 0,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      updatedByNome: currentUser.nome || '',
+      updatedByEmail: currentUser.email || '',
+    };
   };
 
-  const inputBase = 'w-14 h-9 text-center text-[13px] font-bold rounded-lg border outline-none transition-colors';
+  const handleRegistrarProxima = () => {
+    const record = buildRecord();
+    if (!record) return;
+    setDraftRecords((prev) => [record, ...prev]);
+    handleLimpar();
+  };
+
+  const handleEnviarAtividades = async () => {
+    let queue = draftRecords;
+    const currentRecord = buildRecord();
+    if (currentRecord) {
+      queue = [currentRecord, ...queue];
+    }
+    if (queue.length === 0) return;
+
+    setSending(true);
+    try {
+      await saveRecordsBatch(queue, { nome: currentUser.nome, email: currentUser.email });
+      setDraftRecords([]);
+      handleLimpar();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const canRegisterCurrent = Boolean(
+    formData.avaliador && formData.contrato && formData.os && formData.disciplina && formData.objetoOs
+  );
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[900px] mx-auto animate-in fade-in duration-500 pb-10">
+    <div className="flex flex-col gap-6 w-full max-w-[980px] mx-auto animate-in fade-in duration-500 pb-10">
       <div className="mb-2">
         <h2 className="text-[24px] font-bold text-[#2D2D2D] mb-1">Registro de Conformidade</h2>
         <p className="text-[15px] font-medium text-[#757575]">Preenchimento da analise documental</p>
@@ -243,23 +303,18 @@ export default function Preenchimento({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div className="space-y-2">
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Avaliador *</label>
-              <select
+              <input
                 value={formData.avaliador}
-                onChange={(e) => setFormData({ ...formData, avaliador: e.target.value })}
-                className="w-full h-11 px-3 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer"
-                style={selectStyle}
-              >
-                <option value="">Selecione...</option>
-                <option value="Joao Silva">Joao Silva</option>
-                <option value="Maria Souza">Maria Souza</option>
-              </select>
+                disabled
+                className="w-full h-11 px-3 bg-[#F3F4F6] border border-[#E5E7EB] rounded-lg text-[13px] text-[#2D2D2D] outline-none"
+              />
             </div>
 
             <div className="space-y-2">
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Contrato *</label>
               <select
                 value={formData.contrato}
-                onChange={(e) => setFormData({ ...formData, contrato: e.target.value, os: '', objetoOs: '' })}
+                onChange={(e) => setFormData({ ...formData, contrato: e.target.value, os: '', objetoOs: '', objetoOsCodigo: '' })}
                 disabled={Boolean(lockedContractCode)}
                 className="w-full h-11 px-3 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer"
                 style={selectStyle}
@@ -280,10 +335,8 @@ export default function Preenchimento({
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">OS *</label>
               <select
                 value={formData.os}
-                onChange={(e) => setFormData({ ...formData, os: e.target.value, objetoOs: '' })}
-                className={`w-full h-11 px-3 bg-[#F9FAFB] border ${
-                  formData.os ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'
-                } rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer`}
+                onChange={(e) => setFormData({ ...formData, os: e.target.value, objetoOs: '', objetoOsCodigo: '' })}
+                className={`w-full h-11 px-3 bg-[#F9FAFB] border ${formData.os ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'} rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer`}
                 style={selectStyle}
               >
                 <option value="">Selecione...</option>
@@ -318,18 +371,23 @@ export default function Preenchimento({
             <div className="space-y-2 md:col-span-2">
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Objeto da OS *</label>
               <select
-                value={formData.objetoOs}
-                onChange={(e) => setFormData({ ...formData, objetoOs: e.target.value })}
-                className={`w-full h-11 px-3 bg-[#F9FAFB] border ${
-                  formData.objetoOs ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'
-                } rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer`}
+                value={formData.objetoOsCodigo}
+                onChange={(e) => {
+                  const selected = filteredItemOptions.find((item) => normalizeText(getItemCode(item)) === normalizeText(e.target.value));
+                  setFormData({
+                    ...formData,
+                    objetoOsCodigo: e.target.value,
+                    objetoOs: selected ? getItemName(selected) : '',
+                  });
+                }}
+                className={`w-full h-11 px-3 bg-[#F9FAFB] border ${formData.objetoOs ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'} rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer`}
                 style={selectStyle}
               >
-                <option value="">Selecione a atividade filha...</option>
+                <option value="">Selecione a atividade item 4...</option>
                 {filteredItemOptions.map((item) => {
                   const code = getItemCode(item);
                   return (
-                    <option key={code} value={getItemName(item)}>
+                    <option key={code} value={code}>
                       {code} - {getItemName(item)}
                     </option>
                   );
@@ -352,7 +410,7 @@ export default function Preenchimento({
       <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm p-6">
         <div className="mb-6 border-b border-[#E5E7EB] pb-4">
           <h3 className="text-[16px] font-bold text-[#2D2D2D] mb-1">Itens verificados no documento</h3>
-          <p className="text-[13px] text-[#757575]">Marque todas as nao conformidades encontradas no arquivo avaliado.</p>
+          <p className="text-[13px] text-[#757575]">Marque carimbo, desenho, relatorio, falta de arquivo e os quantitativos encontrados.</p>
         </div>
 
         <div className="w-full">
@@ -372,9 +430,7 @@ export default function Preenchimento({
                     <span className={`text-[13px] font-medium transition-colors ${item.checked ? 'text-[#2D2D2D]' : 'text-[#9CA3AF]'}`}>
                       {ITEM_LABELS[key]}
                     </span>
-                    <span className={`ml-2 text-[10px] font-bold uppercase tracking-wide ${
-                      item.checked ? 'text-[#F05D28]' : 'text-[#D1D5DB]'
-                    }`}>
+                    <span className={`ml-2 text-[10px] font-bold uppercase tracking-wide ${item.checked ? 'text-[#F05D28]' : 'text-[#D1D5DB]'}`}>
                       {ITEM_UNIT[key]}
                     </span>
                   </div>
@@ -382,9 +438,7 @@ export default function Preenchimento({
                   <button
                     type="button"
                     onClick={() => toggleItem(key)}
-                    className={`w-7 h-7 rounded-md border flex items-center justify-center transition-all ${
-                      item.checked ? 'bg-[#F05D28] border-[#F05D28]' : 'bg-white border-[#D1D5DB]'
-                    }`}
+                    className={`w-7 h-7 rounded-md border flex items-center justify-center transition-all ${item.checked ? 'bg-[#F05D28] border-[#F05D28]' : 'bg-white border-[#D1D5DB]'}`}
                   >
                     {item.checked && (
                       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -397,22 +451,14 @@ export default function Preenchimento({
                     value={item.c}
                     onChange={(e) => setItemQty(key, 'c', e.target.value)}
                     disabled={!item.checked}
-                    className={`${inputBase} ${
-                      item.checked
-                        ? 'border-[#E5E7EB] bg-white text-[#2D2D2D] focus:border-[#F05D28]'
-                        : 'border-[#F3F4F6] bg-[#F9FAFB] text-[#D1D5DB]'
-                    }`}
+                    className={`${inputBase} ${item.checked ? 'border-[#E5E7EB] bg-white text-[#2D2D2D] focus:border-[#F05D28]' : 'border-[#F3F4F6] bg-[#F9FAFB] text-[#D1D5DB]'}`}
                   />
 
                   <input
                     value={item.t}
                     onChange={(e) => setItemQty(key, 't', e.target.value)}
                     disabled={!item.checked}
-                    className={`${inputBase} ${
-                      item.checked
-                        ? 'border-[#E5E7EB] bg-white text-[#2D2D2D] focus:border-[#F05D28]'
-                        : 'border-[#F3F4F6] bg-[#F9FAFB] text-[#D1D5DB]'
-                    }`}
+                    className={`${inputBase} ${item.checked ? 'border-[#E5E7EB] bg-white text-[#2D2D2D] focus:border-[#F05D28]' : 'border-[#F3F4F6] bg-[#F9FAFB] text-[#D1D5DB]'}`}
                   />
                 </div>
               );
@@ -478,16 +524,56 @@ export default function Preenchimento({
         </button>
         <button
           type="button"
-          onClick={handleSalvar}
-          className="h-12 px-6 rounded-xl bg-[#F05D28] text-white text-[14px] font-bold hover:bg-[#D94E1F] transition-colors shadow-lg shadow-[#F05D28]/20"
+          onClick={handleRegistrarProxima}
+          disabled={!canRegisterCurrent}
+          className="h-12 px-6 rounded-xl border border-[#F05D28] bg-white text-[#F05D28] text-[14px] font-bold hover:bg-[#FFF7ED] transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-50"
         >
-          Salvar registro
+          <Plus size={16} />
+          Registrar proxima atividade +
         </button>
       </div>
 
+      {(draftRecords.length > 0 || canRegisterCurrent) && (
+        <div className="sticky bottom-6 z-20 flex justify-end">
+          <button
+            type="button"
+            onClick={() => void handleEnviarAtividades()}
+            disabled={sending || (!canRegisterCurrent && draftRecords.length === 0)}
+            className="h-14 px-6 rounded-2xl bg-[#FACC15] text-[#5B4300] text-[14px] font-black shadow-xl shadow-[#FACC15]/30 inline-flex items-center justify-center gap-2 hover:bg-[#EAB308] disabled:opacity-60"
+          >
+            <Send size={18} />
+            {sending ? 'Enviando atividade...' : 'Enviar atividade'}
+          </button>
+        </div>
+      )}
+
+      {draftRecords.length > 0 && (
+        <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm p-6">
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <div>
+              <h3 className="text-[16px] font-bold text-[#2D2D2D]">Atividades registradas nessa janela</h3>
+              <p className="text-[13px] text-[#757575]">Essas atividades serao enviadas para Revisoes.</p>
+            </div>
+            <span className="rounded-full bg-[#FFF7ED] px-3 py-1 text-[11px] font-bold text-[#C2410C]">
+              {draftRecords.length} pendente(s)
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {draftRecords.map((record) => (
+              <div key={record.id} className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+                <div className="text-[13px] font-bold text-[#2D2D2D]">{record.os}</div>
+                <div className="mt-1 text-[12px] font-medium text-[#64748B]">{record.objetoOs} - {record.disciplina}</div>
+                <div className="mt-2 text-[12px] text-[#4B5563]">{record.observacoes || 'Sem observacoes'}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {saved && (
         <div className="fixed right-8 bottom-8 z-30 px-5 py-4 rounded-2xl bg-[#ECFDF5] border border-[#A7F3D0] text-[#047857] text-[14px] font-bold shadow-lg">
-          Registro salvo com sucesso.
+          Atividades enviadas com sucesso.
         </div>
       )}
     </div>

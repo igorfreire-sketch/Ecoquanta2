@@ -4,10 +4,9 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import DashboardEngenharia from './CoordenacaoEngenharia/DashboardEngenharia';
-import Alocacoes from './CoordenacaoEngenharia/Alocacoes';
+import Alertas from './CoordenacaoEngenharia/Alertas';
 import CurvaS from './CoordenacaoEngenharia/CurvaS';
 import Cronograma from './Cronograma';
-import EmergenciaCenter from './EmergenciaCenter';
 import type { AuthUser } from './LoginScreen';
 
 interface CoordenacaoEngenhariaProps {
@@ -24,9 +23,8 @@ interface CoordenacaoEngenhariaProps {
     admin?: any;
     eap?: any;
   };
-  subTab: 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'emergencia' | 'cronograma';
-  onSubTabChange: (tab: 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'emergencia' | 'cronograma') => void;
-  onEmergencyChanged?: () => void;
+  subTab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma';
+  onSubTabChange: (tab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma') => void;
 }
 
 function formatLatestEapDate(value?: string) {
@@ -78,13 +76,12 @@ function getLatestEapDisplayDate(eap?: any) {
   return 'Nao publicada';
 }
 
-export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, subTab, lockedContractCode, onEmergencyChanged }: CoordenacaoEngenhariaProps) {
+export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
   const tabs = [
-    { id: 'dashboard', label: 'Dashboard' },
-    { id: 'alocacoes', label: 'Alocacoes' },
+    { id: 'profissionais', label: 'Profissionais' },
     { id: 'curva-s', label: 'Curva S' },
     { id: 'planejamento', label: 'Planejamento' },
-    { id: 'emergencia', label: 'Atividades' },
+    { id: 'alertas', label: 'Alertas' },
     { id: 'cronograma', label: 'Cronograma' },
   ];
   const latestEapDate = getLatestEapDisplayDate(preloadedData?.eap);
@@ -97,7 +94,7 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
           <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
             <span>Coordenacao de Engenharia</span>
             <ChevronRight size={12} />
-            <span className="text-[#F05D28]">{tabs.find(t => t.id === subTab)?.label}</span>
+            <span className="text-[#F05D28]">{tabs.find(t => t.id === (subTab === 'dashboard' || subTab === 'alocacoes' ? 'profissionais' : subTab))?.label}</span>
           </div>
         </div>
 
@@ -109,11 +106,10 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
       </div>
 
       <div className="pb-10">
-        {subTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="dashboard" />}
-        {subTab === 'alocacoes' && <Alocacoes preloadedData={preloadedData} activeContractCode={activeContractCode} />}
+        {(subTab === 'profissionais' || subTab === 'dashboard' || subTab === 'alocacoes') && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="profissionais" activeContractCode={activeContractCode} />}
         {subTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
         {subTab === 'planejamento' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="planejamento" />}
-        {subTab === 'emergencia' && <EmergenciaCenter currentUser={currentUser} preloadedData={preloadedData} activeContractCode={activeContractCode} lockedContractCode={lockedContractCode} onDataChange={onEmergencyChanged} />}
+        {subTab === 'alertas' && <Alertas preloadedData={preloadedData} activeContractCode={activeContractCode} />}
         {subTab === 'cronograma' && <Cronograma preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
       </div>
     </div>

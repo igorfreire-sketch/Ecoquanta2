@@ -11,7 +11,7 @@
  * Se este arquivo for alterado em uma entrega, a versao precisa ser atualizada
  * aqui manualmente com base na versao anterior.
  */
-export const APP_VERSION = '1.0.3';
+export const APP_VERSION = '1.0.4';
 
 export function getAppVersionLabel() {
   return `v${APP_VERSION}`;

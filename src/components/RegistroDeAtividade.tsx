@@ -54,7 +54,7 @@ interface RegistroAtividade {
 interface RegistroDataResponse {
   success: boolean; error?: string; contracts: EapContractOption[]; osOptions: EapOsOption[];
   itemOptions: EapItemOption[]; hierarchyNodes?: EapHierarchyNode[]; childrenByParent?: Record<string, EapHierarchyNode[]>; rootCodes?: string[];
-  professionals: ProfessionalOption[]; activeActivities: RegistroAtividade[]; completedActivities: RegistroAtividade[];
+  professionals: ProfessionalOption[]; activitiesList?: any[]; activeActivities: RegistroAtividade[]; completedActivities: RegistroAtividade[];
 }
 
 interface PublicRegistroEnvelope {
@@ -165,6 +165,46 @@ function getVisualLabel(primary?: string, fallback?: string, emptyLabel = '') {
   return emptyLabel || first || second;
 }
 
+function splitPipeList(value: any): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  return String(value || '').split(' | ').map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeRegistroActivity(
+  item: any,
+  osNameByCode: Map<string, string> = new Map(),
+  itemNameByCode: Map<string, string> = new Map(),
+): RegistroAtividade {
+  const osCodigo = String(item?.osCodigo || '').trim();
+  const itemCodigo = String(item?.itemCodigo || '').trim();
+
+  return {
+    id: String(item?.id || item?.activityId || '').trim(),
+    dataRegistro: String(item?.dataRegistro || ''),
+    createdByEmail: String(item?.createdByEmail || item?.criadoPorEmail || ''),
+    contratoCodigo: String(item?.contratoCodigo || ''),
+    contratoNome: String(item?.contratoNome || ''),
+    osCodigo,
+    osNome: getVisualLabel(String(item?.osNome || ''), osNameByCode.get(osCodigo) || '', String(item?.osNome || '')),
+    setor: String(item?.setor || ''),
+    itemCodigo,
+    itemNome: getVisualLabel(String(item?.itemNome || ''), itemNameByCode.get(itemCodigo) || String(item?.descricao || ''), String(item?.itemNome || '')),
+    profissionais: splitPipeList(item?.profissionais),
+    profissionaisEmails: splitPipeList(item?.profissionaisEmails),
+    dificuldade: String(item?.dificuldade || 'Moderada') as DifficultyLevel,
+    descricao: String(item?.descricao || ''),
+    avancoAtual: Number(item?.avancoAtual || 0),
+    avaliacaoAtual: String(item?.avaliacaoAtual || ''),
+    observacaoAtual: String(item?.observacaoAtual || ''),
+    status: String(item?.status || 'em_andamento') as RegistroAtividade['status'],
+    data100: String(item?.data100 || ''),
+    dataConclusaoEfetiva: String(item?.dataConclusaoEfetiva || ''),
+    ultimaAtualizacao: String(item?.ultimaAtualizacao || ''),
+    disciplina: String(item?.disciplina || item?.criadoPorDisciplina || ''),
+    criadoPorDisciplina: String(item?.criadoPorDisciplina || item?.disciplina || ''),
+  };
+}
+
 function activityMatchesUserDiscipline(activity: Partial<RegistroAtividade> | any, currentUser: AuthUser, professionals: ProfessionalOption[] = []) {
   const currentDisciplina = normalizeDiscipline(currentUser.disciplina);
   if (!currentDisciplina) return true;
@@ -251,6 +291,9 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser, viewM
 
   if (!preloadedData || typeof preloadedData !== 'object') return empty;
 
+  const osNameByCode = new Map<string, string>((preloadedData.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
+  const itemNameByCode = new Map<string, string>((preloadedData.itemOptions || []).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
+
   if (Array.isArray(preloadedData.activeActivities) || Array.isArray(preloadedData.completedActivities)) {
     return {
       contracts: preloadedData.contracts || [],
@@ -260,41 +303,14 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser, viewM
       childrenByParent: preloadedData.childrenByParent || {},
       rootCodes: preloadedData.rootCodes || [],
       professionals: preloadedData.professionals || [],
-      activeActivities: preloadedData.activeActivities || [],
-      completedActivities: preloadedData.completedActivities || [],
+      activeActivities: (preloadedData.activeActivities || []).map((item: any) => normalizeRegistroActivity(item, osNameByCode, itemNameByCode)),
+      completedActivities: (preloadedData.completedActivities || []).map((item: any) => normalizeRegistroActivity(item, osNameByCode, itemNameByCode)),
     };
   }
 
   const allActivities = Array.isArray(preloadedData.activitiesList) ? preloadedData.activitiesList : [];
   const visibleActivities = getVisibleRegistroActivities(allActivities, currentUser, viewMode);
-  const osNameByCode = new Map<string, string>((preloadedData.osOptions || []).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
-  const itemNameByCode = new Map<string, string>((preloadedData.itemOptions || []).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
-
-  const mappedActivities: RegistroAtividade[] = visibleActivities.map((item) => ({
-    id: String(item.activityId || ''),
-    dataRegistro: String(item.dataRegistro || ''),
-    createdByEmail: String(item.criadoPorEmail || ''),
-    contratoCodigo: String(item.contratoCodigo || ''),
-    contratoNome: String(item.contratoNome || ''),
-    osCodigo: String(item.osCodigo || ''),
-    osNome: getVisualLabel(String(item.osNome || ''), osNameByCode.get(String(item.osCodigo || '')) || '', String(item.osNome || '')),
-    setor: String(item.setor || ''),
-    itemCodigo: String(item.itemCodigo || ''),
-    itemNome: getVisualLabel(String(item.itemNome || ''), itemNameByCode.get(String(item.itemCodigo || '')) || String(item.descricao || ''), String(item.itemNome || '')),
-    profissionais: String(item.profissionais || '').split(' | ').filter(Boolean),
-    profissionaisEmails: String(item.profissionaisEmails || '').split(' | ').filter(Boolean),
-    dificuldade: String(item.dificuldade || 'Moderada') as DifficultyLevel,
-    descricao: String(item.descricao || ''),
-    avancoAtual: Number(item.avancoAtual || 0),
-    avaliacaoAtual: String(item.avaliacaoAtual || ''),
-    observacaoAtual: String(item.observacaoAtual || ''),
-    status: String(item.status || 'em_andamento') as RegistroAtividade['status'],
-    data100: String(item.data100 || ''),
-    dataConclusaoEfetiva: String(item.dataConclusaoEfetiva || ''),
-    ultimaAtualizacao: String(item.ultimaAtualizacao || ''),
-    disciplina: String(item.disciplina || item.criadoPorDisciplina || ''),
-    criadoPorDisciplina: String(item.criadoPorDisciplina || item.disciplina || ''),
-  }));
+  const mappedActivities: RegistroAtividade[] = visibleActivities.map((item) => normalizeRegistroActivity(item, osNameByCode, itemNameByCode));
 
   return {
     contracts: preloadedData.contracts || [],
@@ -600,8 +616,8 @@ function normalizePercentage(value: number) {
 
 function mergeActivitiesWithCache(serverItems: RegistroAtividade[], cachedItems: RegistroAtividade[]) {
   const byId = new Map<string, RegistroAtividade>();
-  serverItems.forEach((item) => { if (item?.id) byId.set(item.id, item); });
-  cachedItems.forEach((item) => { if (item?.id) byId.set(item.id, item); });
+  serverItems.map((item) => normalizeRegistroActivity(item)).forEach((item) => { if (item?.id) byId.set(item.id, item); });
+  cachedItems.map((item) => normalizeRegistroActivity(item)).forEach((item) => { if (item?.id) byId.set(item.id, item); });
   return Array.from(byId.values()).sort((a, b) => {
     const aTime = parsePtBrDateTime(a.dataRegistro)?.getTime() || 0;
     const bTime = parsePtBrDateTime(b.dataRegistro)?.getTime() || 0;
@@ -609,7 +625,7 @@ function mergeActivitiesWithCache(serverItems: RegistroAtividade[], cachedItems:
   });
 }
 
-function filterRegistroPayloadByContract<T extends { contracts?: any[]; osOptions?: any[]; itemOptions?: any[]; activeActivities?: any[]; completedActivities?: any[] }>(payload: T, contractCode: string): T {
+function filterRegistroPayloadByContract<T extends { contracts?: any[]; osOptions?: any[]; itemOptions?: any[]; activitiesList?: any[]; activeActivities?: any[]; completedActivities?: any[] }>(payload: T, contractCode: string): T {
   const target = String(contractCode || '').trim();
   if (!target) return payload;
   return {
@@ -617,6 +633,7 @@ function filterRegistroPayloadByContract<T extends { contracts?: any[]; osOption
     contracts: (payload.contracts || []).filter((item: any) => String(item?.codigo || '').trim() === target),
     osOptions: (payload.osOptions || []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target),
     itemOptions: (payload.itemOptions || []).filter((item: any) => String(item?.osCodigo || '').trim().startsWith(`${target}.`)),
+    activitiesList: (payload.activitiesList || []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target),
     activeActivities: (payload.activeActivities || []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target),
     completedActivities: (payload.completedActivities || []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target),
   };
@@ -742,7 +759,12 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
     }
     if (Array.isArray(snapshot.professionals)) setProfessionals(snapshot.professionals);
     if (Array.isArray(snapshot.activeActivities) || Array.isArray(snapshot.completedActivities)) {
-      applyActivitiesState(snapshot.activeActivities || [], snapshot.completedActivities || []);
+      const osNameByCode = new Map<string, string>((snapshot.osOptions || osOptions).map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
+      const itemNameByCode = new Map<string, string>((snapshot.itemOptions || itemOptions).map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
+      applyActivitiesState(
+        (snapshot.activeActivities || []).map((item: any) => normalizeRegistroActivity(item, osNameByCode, itemNameByCode)),
+        (snapshot.completedActivities || []).map((item: any) => normalizeRegistroActivity(item, osNameByCode, itemNameByCode)),
+      );
     }
   };
 
@@ -899,31 +921,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       const osNameByCode = new Map<string, string>(nextOsOptions.map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
       const itemNameByCode = new Map<string, string>(nextItemOptions.map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
 
-      const mappedActivities: RegistroAtividade[] = visibleActivities.map((item) => ({
-        id: String(item.activityId || ''),
-        dataRegistro: String(item.dataRegistro || ''),
-        createdByEmail: String(item.criadoPorEmail || ''),
-        contratoCodigo: String(item.contratoCodigo || ''),
-        contratoNome: String(item.contratoNome || ''),
-        osCodigo: String(item.osCodigo || ''),
-        osNome: getVisualLabel(String(item.osNome || ''), osNameByCode.get(String(item.osCodigo || '')) || '', String(item.osNome || '')),
-        setor: String(item.setor || ''),
-        itemCodigo: String(item.itemCodigo || ''),
-        itemNome: getVisualLabel(String(item.itemNome || ''), itemNameByCode.get(String(item.itemCodigo || '')) || String(item.descricao || ''), String(item.itemNome || '')),
-        profissionais: String(item.profissionais || '').split(' | ').filter(Boolean),
-        profissionaisEmails: String(item.profissionaisEmails || '').split(' | ').filter(Boolean),
-        dificuldade: String(item.dificuldade || 'Moderada') as DifficultyLevel,
-        descricao: String(item.descricao || ''),
-        avancoAtual: Number(item.avancoAtual || 0),
-        avaliacaoAtual: String(item.avaliacaoAtual || ''),
-        observacaoAtual: String(item.observacaoAtual || ''),
-        status: String(item.status || 'em_andamento') as RegistroAtividade['status'],
-        data100: String(item.data100 || ''),
-        dataConclusaoEfetiva: String(item.dataConclusaoEfetiva || ''),
-        ultimaAtualizacao: String(item.ultimaAtualizacao || ''),
-        disciplina: String(item.disciplina || item.criadoPorDisciplina || ''),
-        criadoPorDisciplina: String(item.criadoPorDisciplina || item.disciplina || ''),
-      }));
+      const mappedActivities: RegistroAtividade[] = visibleActivities.map((item) => normalizeRegistroActivity(item, osNameByCode, itemNameByCode));
 
       setContracts(nextContracts);
       setOsOptions(nextOsOptions);
@@ -1026,13 +1024,39 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   };
   const restoreLocalDraft = () => {
     if (!restorableDraft) return;
-    setFormData({ contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', todoId: '', profissionaisEmails: [], dificuldade: '', descricao: '', avancoInicial: 0, ...(restorableDraft.formData || {}) });
+    const restoredFormData = restorableDraft.formData || {};
+    setFormData({
+      contratoCodigo: '',
+      osCodigo: '',
+      setor: 'Engenharia',
+      itemCodigo: '',
+      todoId: '',
+      dificuldade: '',
+      descricao: '',
+      avancoInicial: 0,
+      ...restoredFormData,
+      profissionaisEmails: splitPipeList(restoredFormData.profissionaisEmails),
+    });
     setDraftQueue(restorableDraft.draftQueue || []); setPendingChanges(restorableDraft.pendingChanges || {}); setExpandedActivities(restorableDraft.expandedActivities || {});
     setShowRestorePrompt(false); setRestorableDraft(null); setBalloonMessage('Últimas alterações restauradas com sucesso.');
   };
   const discardLocalDraft = () => { clearLocalDraft(); setShowRestorePrompt(false); setRestorableDraft(null); };
 
-  const getDraftForActivity = (activity: RegistroAtividade): ActivityUpdateDraft => (pendingChanges[activity.id] || { profissionaisEmails: activity.profissionaisEmails, profissionaisNomes: activity.profissionais, avancoAtual: activity.avancoAtual, avaliacaoAtual: activity.avaliacaoAtual, observacaoAtual: activity.observacaoAtual });
+  const getDraftForActivity = (activity: RegistroAtividade): ActivityUpdateDraft => {
+    const draft = pendingChanges[activity.id] || {
+      profissionaisEmails: activity.profissionaisEmails,
+      profissionaisNomes: activity.profissionais,
+      avancoAtual: activity.avancoAtual,
+      avaliacaoAtual: activity.avaliacaoAtual,
+      observacaoAtual: activity.observacaoAtual,
+    };
+
+    return {
+      ...draft,
+      profissionaisEmails: splitPipeList(draft.profissionaisEmails),
+      profissionaisNomes: splitPipeList(draft.profissionaisNomes),
+    };
+  };
 
   const queueCurrentActivity = () => {
     if (!formData.contratoCodigo || !formData.osCodigo || !formData.itemCodigo) return setBalloonMessage('Preencha contrato, OS e atividade.');
@@ -1289,7 +1313,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
                   <div key={item.localId} className="rounded-xl border border-bentham-border bg-[#F9FAFB] px-4 py-3">
                     <div className="text-[13px] font-bold text-bentham-dark">{index + 1}. {item.osNome} - {item.itemNome}</div>
                     {item.todoTitulo && <div className="text-[12px] text-[#F05D28] font-semibold mt-1">Item a fazer: {item.todoTitulo}</div>}
-                    <div className="text-[12px] text-bentham-gray mt-1">{item.profissionaisNomes.join(', ')}</div>
+                    <div className="text-[12px] text-bentham-gray mt-1">{splitPipeList(item.profissionaisNomes).join(', ')}</div>
                     <div className="text-[12px] text-bentham-gray mt-1">AvanÃ§o inicial: {item.avancoInicial}%</div>
                   </div>
                 ))}

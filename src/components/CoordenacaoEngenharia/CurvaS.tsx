@@ -329,11 +329,8 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
     try {
       let nextData: CompressedPayload | null = null;
 
-      if (!isFirebaseConfigured()) {
-        throw new Error('Firebase nao configurado no ambiente publicado.');
-      }
       nextData = await fetchEapDataFromFirebase() as CompressedPayload;
-      if (!nextData) throw new Error('Nenhum dado encontrado no Firebase da Curva S.');
+      if (!nextData) throw new Error('Nenhum dado publicado encontrado para a Curva S.');
 
       if (nextData) {
         localStorage.setItem('curvasAppData', JSON.stringify(nextData));
@@ -343,7 +340,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
           setSelectedOsList([]);
         }
       } else {
-        throw new Error('Nenhum dado encontrado no Firebase da Curva S.');
+        throw new Error('Nenhum dado publicado encontrado para a Curva S.');
       }
     } catch (err) { setError(err instanceof Error ? err.message : 'Falha ao carregar dados da Curva S.'); } 
     finally { setLoading(false); setLocalIsSyncing(false); }
@@ -363,7 +360,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
 
   const saveReajusteToFirebase = async (osCode: string, rows: any[][]) => {
     if (!rawData) throw new Error('Dados da Curva S nao carregados.');
-    if (!isFirebaseConfigured()) throw new Error('Firebase nao configurado no ambiente publicado.');
+    if (!isFirebaseConfigured()) throw new Error('Salvar reajuste requer Firebase configurado.');
     const header = rows[0] || ["OS", "Data Base", "Ideal Acumulado (%)", "Real Acumulado (%)"];
     const body = rows.slice(1);
     const previousRows = Array.isArray(rawData.reajustado) ? rawData.reajustado : [];

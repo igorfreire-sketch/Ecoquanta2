@@ -31,7 +31,6 @@ import {
   fetchCronogramaDataFromFirebase,
   fetchEapDataFromFirebase,
   fetchRegistroDataFromFirebase,
-  isFirebaseConfigured,
 } from './lib/firebaseDb';
 
 const RegistroDeAtividade = React.lazy(() => import('./components/RegistroDeAtividade'));
@@ -337,7 +336,22 @@ function getGlobalDataCache(): GlobalData | null {
 }
 
 async function postToAppsScript<T>(payload: Record<string, unknown>): Promise<T> {
-  const allowedActions = new Set(['authUser', 'registerUser', 'forgotPassword', 'resetPassword', 'adminResetPassword']);
+  const allowedActions = new Set([
+    'authUser',
+    'registerUser',
+    'forgotPassword',
+    'resetPassword',
+    'adminResetPassword',
+    'approveUser',
+    'blockUser',
+    'saveUserAccess',
+    'saveConfigOptions',
+    'saveRoleTabPermissions',
+    'saveDatabaseLink',
+    'deleteDatabaseLink',
+    'saveTerceirizada',
+    'deleteTerceirizada',
+  ]);
   const action = String(payload.action || '').trim();
   if (!allowedActions.has(action)) {
     throw new Error('Esta acao nao usa mais a planilha pelo site. Atualize os dados diretamente no Firebase ou pela interface administrativa da planilha.');
@@ -843,20 +857,12 @@ export default function App() {
     try {
       let fullData: GlobalData = {};
       
-      // Se Firebase não está configurado, tenta carregar do AppScript
-      if (!isFirebaseConfigured()) {
-        console.warn('⚠️ Firebase não configurado. Tentando carregar dados do AppScript...');
-        if (!isBackgroundSync) setLoadText('Firebase não configurado. Usando dados alternativos...');
-        // Deixa vazio - usará dados em cache ou padrão
+      try {
+        fullData = await fetchBootstrapDataFromFirebase();
+      } catch (fbError) {
+        console.error('Erro ao carregar dados publicados:', fbError);
+        if (!isBackgroundSync) setLoadText('Erro ao conectar dados publicados. Usando cache...');
         fullData = {};
-      } else {
-        try {
-          fullData = await fetchBootstrapDataFromFirebase();
-        } catch (fbError) {
-          console.error('❌ Erro ao carregar do Firebase:', fbError);
-          if (!isBackgroundSync) setLoadText('Erro ao conectar Firebase. Usando cache...');
-          fullData = {};
-        }
       }
 
       fullData = filterGlobalDataByContract(fullData, shouldLockUserToContract(user) ? user.contrato || '' : '');
@@ -912,7 +918,6 @@ export default function App() {
 
   const loadFirebaseModule = useCallback(async (moduleName: 'registro' | 'cronograma' | 'eap') => {
     if (!currentUser || loadedModules[moduleName]) return;
-    if (!isFirebaseConfigured()) return;
 
     setIsBackgroundSyncing(true);
     try {
@@ -975,7 +980,6 @@ export default function App() {
     if (!currentUser) return;
     setIsBackgroundSyncing(true);
     try {
-      if (!isFirebaseConfigured()) throw new Error('Firebase nao configurado no ambiente publicado.');
       const fullData = await fetchBootstrapDataFromFirebase();
       if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
 

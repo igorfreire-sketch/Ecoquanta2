@@ -14,6 +14,13 @@ import {
   writeBatch,
   type Firestore,
 } from 'firebase/firestore';
+import {
+  fetchAdminModulePublicData,
+  fetchCronogramaModulePublicData,
+  fetchEapAppsScriptData,
+  fetchEapPublicData,
+  fetchRegistroModulePublicData,
+} from './publicJson';
 
 interface FirebaseRuntimeConfig {
   apiKey: string;
@@ -91,17 +98,34 @@ let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 let authPromise: Promise<void> | null = null;
 
+const DEFAULT_FIREBASE_CONFIG: FirebaseRuntimeConfig = {
+  apiKey: 'AIzaSyCGJ4UHPGyaf1GqayvTXUhvn3eLdu9ZW9g',
+  authDomain: 'ecoquanta-c2720.firebaseapp.com',
+  projectId: 'ecoquanta-c2720',
+  storageBucket: 'ecoquanta-c2720.firebasestorage.app',
+  messagingSenderId: '321062094939',
+  appId: '1:321062094939:web:918e7a128f6c2825edd77e',
+};
+
+function readEnv(name: string) {
+  return String(import.meta.env[name] || '').trim();
+}
+
+function isExplicitlyDisabled(value: string) {
+  return ['false', '0', 'no', 'nao', 'não', 'off'].includes(value.trim().toLowerCase());
+}
+
 function readFirebaseConfig(): FirebaseRuntimeConfig | null {
-  const enabled = String(import.meta.env.VITE_FIREBASE_ENABLED || '').trim().toLowerCase();
-  if (!['true', '1', 'yes', 'sim'].includes(enabled)) return null;
+  const enabled = readEnv('VITE_FIREBASE_ENABLED');
+  if (isExplicitlyDisabled(enabled)) return null;
 
   const config = {
-    apiKey: String(import.meta.env.VITE_FIREBASE_API_KEY || '').trim(),
-    authDomain: String(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '').trim(),
-    projectId: String(import.meta.env.VITE_FIREBASE_PROJECT_ID || '').trim(),
-    storageBucket: String(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || '').trim(),
-    messagingSenderId: String(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '').trim(),
-    appId: String(import.meta.env.VITE_FIREBASE_APP_ID || '').trim(),
+    apiKey: readEnv('VITE_FIREBASE_API_KEY') || DEFAULT_FIREBASE_CONFIG.apiKey,
+    authDomain: readEnv('VITE_FIREBASE_AUTH_DOMAIN') || DEFAULT_FIREBASE_CONFIG.authDomain,
+    projectId: readEnv('VITE_FIREBASE_PROJECT_ID') || DEFAULT_FIREBASE_CONFIG.projectId,
+    storageBucket: readEnv('VITE_FIREBASE_STORAGE_BUCKET') || DEFAULT_FIREBASE_CONFIG.storageBucket,
+    messagingSenderId: readEnv('VITE_FIREBASE_MESSAGING_SENDER_ID') || DEFAULT_FIREBASE_CONFIG.messagingSenderId,
+    appId: readEnv('VITE_FIREBASE_APP_ID') || DEFAULT_FIREBASE_CONFIG.appId,
   };
 
   if (!config.apiKey || !config.authDomain || !config.projectId || !config.appId) return null;
@@ -116,7 +140,7 @@ function getDb() {
   const config = readFirebaseConfig();
   if (!config) {
     console.warn('⚠️ Firebase nao configurado. Verifique as variaveis de ambiente VITE_FIREBASE_*');
-    throw new Error('Firebase nao configurado no ambiente publicado. Alguns recursos podem estar indisponíveis.');
+    throw new Error('Firebase indisponivel para esta operacao. A leitura tenta usar os dados publicados.');
   }
 
   if (!app) app = initializeApp(config);
@@ -125,8 +149,8 @@ function getDb() {
 }
 
 async function ensureFirebaseAuth() {
-  const anonymousEnabled = String(import.meta.env.VITE_FIREBASE_ANONYMOUS_AUTH || '').trim().toLowerCase();
-  if (!['true', '1', 'yes', 'sim'].includes(anonymousEnabled)) return;
+  const anonymousEnabled = readEnv('VITE_FIREBASE_ANONYMOUS_AUTH');
+  if (isExplicitlyDisabled(anonymousEnabled)) return;
 
   if (!app) getDb();
   if (!app) return;
@@ -216,7 +240,75 @@ async function getAppDataDoc<T>(dbRef: Firestore, name: string): Promise<T | nul
   return ((payload.data && typeof payload.data === 'object') ? payload.data : payload) as T;
 }
 
+function unwrapPublicData(payload: any, key?: string) {
+  const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
+  if (key && data?.[key] !== undefined) return data[key];
+  return data;
+}
+
+async function tryPublic<T>(label: string, loader: () => Promise<T>): Promise<T | null> {
+  try {
+    return await loader();
+  } catch (error) {
+    console.warn(`Falha ao carregar fallback publico (${label}):`, error);
+    return null;
+  }
+}
+
+async function fetchBootstrapDataFromPublicJson(): Promise<GlobalData> {
+  const [registroPayload, adminPayload, eapPayload] = await Promise.all([
+    tryPublic('app-registro.json', () => fetchRegistroModulePublicData<any>()),
+    tryPublic('app-administracao.json', () => fetchAdminModulePublicData<any>()),
+    tryPublic('eap-unificada.json', () => fetchEapPublicData<any>()),
+  ]);
+
+  return {
+    registro: unwrapPublicData(registroPayload, 'registro') || undefined,
+    admin: unwrapPublicData(adminPayload, 'admin') || undefined,
+    eap: unwrapPublicData(eapPayload) || undefined,
+  };
+}
+
+async function fetchEapDataFromPublicSources(): Promise<any | null> {
+  const publicPayload = await tryPublic('eap-unificada.json', () => fetchEapPublicData<any>());
+  const publicData = unwrapPublicData(publicPayload);
+  if (publicData) return publicData;
+
+  return tryPublic('EAP Apps Script', () => fetchEapAppsScriptData<any>());
+}
+
+async function fetchCronogramaDataFromPublicJson(): Promise<any[]> {
+  const payload = await tryPublic('app-cronograma.json', () => fetchCronogramaModulePublicData<any>());
+  const data = unwrapPublicData(payload);
+  if (Array.isArray(data?.cronograma)) return data.cronograma;
+  if (Array.isArray(data)) return data;
+  return [];
+}
+
+async function fetchRegistroDataFromPublicJson(user: AuthUserLike): Promise<RegistroDataResponse> {
+  const payload = await tryPublic('app-registro.json', () => fetchRegistroModulePublicData<any>());
+  const registro = unwrapPublicData(payload, 'registro') || {};
+  const activitiesList = Array.isArray(registro.activitiesList) ? registro.activitiesList.map(normalizeFirestoreRecord) : [];
+  const professionals = getProfessionalsForUser(registro, user);
+  const split = splitActivitiesForUser(activitiesList, user, professionals);
+
+  return {
+    success: true,
+    contracts: registro.contracts || [],
+    osOptions: registro.osOptions || [],
+    itemOptions: registro.itemOptions || [],
+    hierarchyNodes: registro.hierarchyNodes || [],
+    childrenByParent: registro.childrenByParent || {},
+    rootCodes: registro.rootCodes || [],
+    professionals,
+    activeActivities: split.activeActivities,
+    completedActivities: split.completedActivities,
+  };
+}
+
 export async function fetchGlobalDataFromFirebase(user?: AuthUserLike): Promise<GlobalData> {
+  if (!isFirebaseConfigured()) return fetchBootstrapDataFromPublicJson();
+
   await ensureFirebaseAuth();
   const dbRef = getDb();
   const [registro, admin, cronograma, eap] = await Promise.all([
@@ -263,7 +355,7 @@ export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
   try {
     if (!isFirebaseConfigured()) {
       console.warn('⚠️ Firebase não configurado - retornando dados vazios');
-      return {};
+      return fetchBootstrapDataFromPublicJson();
     }
     await ensureFirebaseAuth();
     const dbRef = getDb();
@@ -284,34 +376,34 @@ export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
     };
   } catch (error) {
     console.error('❌ Erro ao fetch bootstrap data:', error);
-    return {};
+    return fetchBootstrapDataFromPublicJson();
   }
 }
 
 export async function fetchEapDataFromFirebase(): Promise<any> {
   try {
-    if (!isFirebaseConfigured()) return null;
+    if (!isFirebaseConfigured()) return fetchEapDataFromPublicSources();
     await ensureFirebaseAuth();
     const dbRef = getDb();
-    return getAppDataDoc<any>(dbRef, 'eap');
+    return await getAppDataDoc<any>(dbRef, 'eap') || await fetchEapDataFromPublicSources();
   } catch (error) {
     console.error('❌ Erro ao fetch EAP data:', error);
-    return null;
+    return fetchEapDataFromPublicSources();
   }
 }
 
 export async function fetchCronogramaDataFromFirebase(): Promise<any[]> {
   try {
-    if (!isFirebaseConfigured()) return [];
+    if (!isFirebaseConfigured()) return fetchCronogramaDataFromPublicJson();
     await ensureFirebaseAuth();
     const dbRef = getDb();
     const cronograma = await getAppDataDoc<any>(dbRef, 'cronograma');
     if (Array.isArray(cronograma)) return cronograma;
     if (Array.isArray(cronograma?.cronograma)) return cronograma.cronograma;
-    return [];
+    return fetchCronogramaDataFromPublicJson();
   } catch (error) {
     console.error('❌ Erro ao fetch cronograma data:', error);
-    return [];
+    return fetchCronogramaDataFromPublicJson();
   }
 }
 
@@ -331,15 +423,7 @@ function getProfessionalsForUser(registro: any, user: AuthUserLike) {
 export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise<RegistroDataResponse> {
   try {
     if (!isFirebaseConfigured()) {
-      return {
-        success: true,
-        contracts: [],
-        osOptions: [],
-        itemOptions: [],
-        professionals: [],
-        activeActivities: [],
-        completedActivities: [],
-      };
+      return fetchRegistroDataFromPublicJson(user);
     }
     
     await ensureFirebaseAuth();
@@ -355,21 +439,25 @@ export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise
       ...(menu?.registro || {}),
       activitiesList,
     };
-  const professionals = getProfessionalsForUser(registro, user);
-  const split = splitActivitiesForUser(activitiesList, user, professionals);
+    const professionals = getProfessionalsForUser(registro, user);
+    const split = splitActivitiesForUser(activitiesList, user, professionals);
 
-  return {
-    success: true,
-    contracts: registro.contracts || [],
-    osOptions: registro.osOptions || [],
-    itemOptions: registro.itemOptions || [],
-    hierarchyNodes: registro.hierarchyNodes || [],
-    childrenByParent: registro.childrenByParent || {},
-    rootCodes: registro.rootCodes || [],
-    professionals,
-    activeActivities: split.activeActivities,
-    completedActivities: split.completedActivities,
-  };
+    return {
+      success: true,
+      contracts: registro.contracts || [],
+      osOptions: registro.osOptions || [],
+      itemOptions: registro.itemOptions || [],
+      hierarchyNodes: registro.hierarchyNodes || [],
+      childrenByParent: registro.childrenByParent || {},
+      rootCodes: registro.rootCodes || [],
+      professionals,
+      activeActivities: split.activeActivities,
+      completedActivities: split.completedActivities,
+    };
+  } catch (error) {
+    console.error('Erro ao fetch registro data:', error);
+    return fetchRegistroDataFromPublicJson(user);
+  }
 }
 
 export async function registerActivitiesInFirebase(user: AuthUserLike, activities: NewActivityDraftLike[]): Promise<BatchWriteResponse> {

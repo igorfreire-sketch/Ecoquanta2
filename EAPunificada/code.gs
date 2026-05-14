@@ -191,6 +191,7 @@ function publishCompressedDataToFirebaseNow() {
   var version = updateVersion_();
   var publishedAt = new Date().toISOString();
   data.latestEapPublishedAt = publishedAt;
+  firestoreSetAppData_("menu", buildEapMenuData_(data, publishedAt));
   firestoreSetAppData_("eap", data);
   return "EAP publicada no Firebase. Versao: " + version;
 }
@@ -352,6 +353,7 @@ function publishCompressedDataToPublicJson() {
     var publishedAt = new Date().toISOString();
     data.latestEapPublishedAt = publishedAt;
 
+    firestoreSetAppData_("menu", buildEapMenuData_(data, publishedAt));
     firestoreSetAppData_("eap", data);
 
     publishEncryptedJsonToGithub_(
@@ -505,6 +507,10 @@ function getCompressedData_(ss) {
     atual: [],
     dates: [],
     timeline: {},
+    timelineCompression: {
+      mode: 'rle-ranges',
+      repeatedMonths: 'stored_as_single_range_and_expanded_by_site'
+    },
     reajustado: [],
     latestEapSheet: '',
     latestEapDate: '',
@@ -679,6 +685,30 @@ function getCompressedData_(ss) {
   }
 
   return out;
+}
+
+function buildEapMenuData_(data, publishedAt) {
+  data = data || {};
+  var registro = data.registro || {};
+
+  return {
+    source: "EAPunificada",
+    updatedAt: publishedAt || new Date().toISOString(),
+    eapResumo: {
+      latestEapSheet: data.latestEapSheet || '',
+      latestEapDate: data.latestEapDate || '',
+      latestEapPublishedAt: data.latestEapPublishedAt || publishedAt || '',
+      dates: Array.isArray(data.dates) ? data.dates : []
+    },
+    registro: {
+      contracts: Array.isArray(registro.contracts) ? registro.contracts : [],
+      osOptions: Array.isArray(registro.osOptions) ? registro.osOptions : [],
+      itemOptions: Array.isArray(registro.itemOptions) ? registro.itemOptions : [],
+      hierarchyNodes: Array.isArray(registro.hierarchyNodes) ? registro.hierarchyNodes : [],
+      childrenByParent: registro.childrenByParent || {},
+      rootCodes: Array.isArray(registro.rootCodes) ? registro.rootCodes : []
+    }
+  };
 }
 
 function getLatestEapSheet_(ss, snapshotSheets) {

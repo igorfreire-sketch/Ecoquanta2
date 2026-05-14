@@ -26,7 +26,13 @@ import type {
 } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
 import { getAppVersionLabel } from './config/appVersion';
-import { fetchGlobalDataFromFirebase, isFirebaseConfigured } from './lib/firebaseDb';
+import {
+  fetchBootstrapDataFromFirebase,
+  fetchCronogramaDataFromFirebase,
+  fetchEapDataFromFirebase,
+  fetchRegistroDataFromFirebase,
+  isFirebaseConfigured,
+} from './lib/firebaseDb';
 
 const RegistroDeAtividade = React.lazy(() => import('./components/RegistroDeAtividade'));
 const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEngenharia'));
@@ -765,6 +771,7 @@ export default function App() {
   const [roleTabPermissions, setRoleTabPermissions] = useState<RoleTabPermissions>({});
   const [databaseLinks, setDatabaseLinks] = useState<DatabaseLinkRecord[]>([]);
   const [dirtyUserIds, setDirtyUserIds] = useState<string[]>([]);
+  const [loadedModules, setLoadedModules] = useState<Record<string, boolean>>({});
 
   // Filter States (Dashboard/Tech Mock)
   const [filtrosAtivos, setFiltrosAtivos] = React.useState({ contrato: 'Todos', os: 'Todos', disciplina: 'Todos' });
@@ -825,8 +832,8 @@ export default function App() {
         currentProgress += Math.floor(Math.random() * 15) + 5;
         if (currentProgress > 90) currentProgress = 90;
         setLoadProgress(currentProgress);
-        if (currentProgress > 20 && currentProgress <= 45) setLoadText('Baixando dados da EAP e Cronograma...');
-        else if (currentProgress > 45 && currentProgress <= 75) setLoadText('Lendo atividades e status no Firebase...');
+        if (currentProgress > 20 && currentProgress <= 45) setLoadText('Carregando menus e permissoes...');
+        else if (currentProgress > 45 && currentProgress <= 75) setLoadText('Preparando ambiente do Firebase...');
         else if (currentProgress > 75) setLoadText('Quase lá, estruturando as informações...');
       }, 600);
     } else {
@@ -834,12 +841,10 @@ export default function App() {
     }
 
     try {
-      let fullData: GlobalData = {};
-
       if (!isFirebaseConfigured()) {
         throw new Error('Firebase nao configurado no ambiente publicado.');
       }
-      fullData = await fetchGlobalDataFromFirebase(user);
+      let fullData = await fetchBootstrapDataFromFirebase();
 
       if (!hasAnyGlobalData(fullData)) {
         throw new Error('Nenhum dado disponivel no Firebase.');
@@ -852,6 +857,7 @@ export default function App() {
 
         setGlobalData(fullData); 
         saveGlobalDataCache(fullData);
+        setLoadedModules({});
         if (fullData.admin) {
           const adminState = getAdminState(fullData);
           setUsuarios(adminState.usuarios);
@@ -894,12 +900,73 @@ export default function App() {
     }
   }, [currentUser, activeTab, roleTabPermissions]);
 
+  const loadFirebaseModule = useCallback(async (moduleName: 'registro' | 'cronograma' | 'eap') => {
+    if (!currentUser || loadedModules[moduleName]) return;
+    if (!isFirebaseConfigured()) return;
+
+    setIsBackgroundSyncing(true);
+    try {
+      if (moduleName === 'registro') {
+        const registro = await fetchRegistroDataFromFirebase(currentUser);
+        setGlobalData((prev) => {
+          const next = { ...prev, registro: { ...(prev.registro || {}), ...registro } };
+          saveGlobalDataCache(next);
+          return next;
+        });
+      } else if (moduleName === 'cronograma') {
+        const cronograma = await fetchCronogramaDataFromFirebase();
+        setGlobalData((prev) => {
+          const next = { ...prev, cronograma };
+          saveGlobalDataCache(next);
+          return next;
+        });
+      } else if (moduleName === 'eap') {
+        const eap = await fetchEapDataFromFirebase();
+        setGlobalData((prev) => {
+          const next = {
+            ...prev,
+            eap,
+            registro: eap?.registro ? { ...(prev.registro || {}), ...eap.registro } : prev.registro,
+          };
+          saveGlobalDataCache(next);
+          return next;
+        });
+      }
+      setLoadedModules((prev) => ({ ...prev, [moduleName]: true }));
+    } finally {
+      setIsBackgroundSyncing(false);
+    }
+  }, [currentUser, loadedModules]);
+
+  useEffect(() => {
+    if (!currentUser || preloading) return;
+
+    const wantsCronograma =
+      (activeTab === 'registro' && areaTecnicaSubTab === 'cronograma') ||
+      (activeTab === 'controle' && subTab === 'cronograma') ||
+      (activeTab === 'planejamento' && planejamentoSubTab === 'cronograma') ||
+      (activeTab === 'contrato' && contratoSubTab === 'cronograma') ||
+      (activeTab === 'nc2' && nc2SubTab === 'cronograma');
+
+    const wantsEap = activeTab === 'controle' && subTab === 'curva-s';
+    const wantsRegistro =
+      (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ||
+      activeTab === 'controle' ||
+      activeTab === 'planejamento' ||
+      activeTab === 'contrato' ||
+      activeTab === 'nc2';
+
+    if (wantsRegistro) void loadFirebaseModule('registro');
+    if (wantsCronograma) void loadFirebaseModule('cronograma');
+    if (wantsEap) void loadFirebaseModule('eap');
+  }, [activeTab, areaTecnicaSubTab, contratoSubTab, currentUser, loadFirebaseModule, nc2SubTab, planejamentoSubTab, preloading, subTab]);
+
   const loadAdminData = useCallback(async () => {
     if (!currentUser) return;
     setIsBackgroundSyncing(true);
     try {
       if (!isFirebaseConfigured()) throw new Error('Firebase nao configurado no ambiente publicado.');
-      const fullData = await fetchGlobalDataFromFirebase(currentUser);
+      const fullData = await fetchBootstrapDataFromFirebase();
       if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
 
       setGlobalData((prev) => {

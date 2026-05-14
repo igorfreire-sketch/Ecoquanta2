@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 
-import { fetchGlobalDataFromFirebase, isFirebaseConfigured, upsertFirebaseAppData } from '../../lib/firebaseDb';
+import { fetchEapDataFromFirebase, isFirebaseConfigured, upsertFirebaseAppData } from '../../lib/firebaseDb';
 
 // NOVOS TIPOS COMPRIMIDOS
 interface CompressedPayload {
@@ -332,9 +332,8 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
       if (!isFirebaseConfigured()) {
         throw new Error('Firebase nao configurado no ambiente publicado.');
       }
-      const payload = await fetchGlobalDataFromFirebase();
-      if (!payload.eap) throw new Error('Nenhum dado encontrado no Firebase da Curva S.');
-      nextData = payload.eap as CompressedPayload;
+      nextData = await fetchEapDataFromFirebase() as CompressedPayload;
+      if (!nextData) throw new Error('Nenhum dado encontrado no Firebase da Curva S.');
 
       if (nextData) {
         localStorage.setItem('curvasAppData', JSON.stringify(nextData));

@@ -256,6 +256,41 @@ export async function fetchGlobalDataFromFirebase(user?: AuthUserLike): Promise<
   return fullData;
 }
 
+export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const [menu, admin] = await Promise.all([
+    getAppDataDoc<any>(dbRef, 'menu'),
+    getAppDataDoc<any>(dbRef, 'admin'),
+  ]);
+
+  return {
+    admin: admin || undefined,
+    registro: menu?.registro || menu || undefined,
+    eap: menu?.eapResumo ? {
+      latestEapSheet: menu.eapResumo.latestEapSheet || '',
+      latestEapDate: menu.eapResumo.latestEapDate || '',
+      latestEapPublishedAt: menu.eapResumo.latestEapPublishedAt || '',
+      dates: Array.isArray(menu.eapResumo.dates) ? menu.eapResumo.dates : [],
+    } : undefined,
+  };
+}
+
+export async function fetchEapDataFromFirebase(): Promise<any> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  return getAppDataDoc<any>(dbRef, 'eap');
+}
+
+export async function fetchCronogramaDataFromFirebase(): Promise<any[]> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const cronograma = await getAppDataDoc<any>(dbRef, 'cronograma');
+  if (Array.isArray(cronograma)) return cronograma;
+  if (Array.isArray(cronograma?.cronograma)) return cronograma.cronograma;
+  return [];
+}
+
 function getProfessionalsForUser(registro: any, user: AuthUserLike) {
   const byDiscipline = registro?.professionalsByDisciplina;
   if (!byDiscipline || typeof byDiscipline !== 'object') return Array.isArray(registro?.professionals) ? registro.professionals : [];
@@ -270,10 +305,21 @@ function getProfessionalsForUser(registro: any, user: AuthUserLike) {
 }
 
 export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise<RegistroDataResponse> {
-  const fullData = await fetchGlobalDataFromFirebase(user);
-  const registro = fullData.registro || {};
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const [registroBase, menu] = await Promise.all([
+    getAppDataDoc<any>(dbRef, 'registro'),
+    getAppDataDoc<any>(dbRef, 'menu'),
+  ]);
+  const activitiesSnapshot = await getDocs(collection(dbRef, 'registroAtividades'));
+  const activitiesList = activitiesSnapshot.docs.map(normalizeFirestoreRecord);
+  const registro = {
+    ...(registroBase || {}),
+    ...(menu?.registro || {}),
+    activitiesList,
+  };
   const professionals = getProfessionalsForUser(registro, user);
-  const split = splitActivitiesForUser(Array.isArray(registro.activitiesList) ? registro.activitiesList : [], user, professionals);
+  const split = splitActivitiesForUser(activitiesList, user, professionals);
 
   return {
     success: true,

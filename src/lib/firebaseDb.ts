@@ -114,7 +114,10 @@ export function isFirebaseConfigured() {
 
 function getDb() {
   const config = readFirebaseConfig();
-  if (!config) throw new Error('Firebase nao configurado.');
+  if (!config) {
+    console.warn('⚠️ Firebase nao configurado. Verifique as variaveis de ambiente VITE_FIREBASE_*');
+    throw new Error('Firebase nao configurado no ambiente publicado. Alguns recursos podem estar indisponíveis.');
+  }
 
   if (!app) app = initializeApp(config);
   if (!db) db = getFirestore(app);
@@ -257,38 +260,59 @@ export async function fetchGlobalDataFromFirebase(user?: AuthUserLike): Promise<
 }
 
 export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
-  await ensureFirebaseAuth();
-  const dbRef = getDb();
-  const [menu, admin] = await Promise.all([
-    getAppDataDoc<any>(dbRef, 'menu'),
-    getAppDataDoc<any>(dbRef, 'admin'),
-  ]);
+  try {
+    if (!isFirebaseConfigured()) {
+      console.warn('⚠️ Firebase não configurado - retornando dados vazios');
+      return {};
+    }
+    await ensureFirebaseAuth();
+    const dbRef = getDb();
+    const [menu, admin] = await Promise.all([
+      getAppDataDoc<any>(dbRef, 'menu'),
+      getAppDataDoc<any>(dbRef, 'admin'),
+    ]);
 
-  return {
-    admin: admin || undefined,
-    registro: menu?.registro || menu || undefined,
-    eap: menu?.eapResumo ? {
-      latestEapSheet: menu.eapResumo.latestEapSheet || '',
-      latestEapDate: menu.eapResumo.latestEapDate || '',
-      latestEapPublishedAt: menu.eapResumo.latestEapPublishedAt || '',
-      dates: Array.isArray(menu.eapResumo.dates) ? menu.eapResumo.dates : [],
-    } : undefined,
-  };
+    return {
+      admin: admin || undefined,
+      registro: menu?.registro || menu || undefined,
+      eap: menu?.eapResumo ? {
+        latestEapSheet: menu.eapResumo.latestEapSheet || '',
+        latestEapDate: menu.eapResumo.latestEapDate || '',
+        latestEapPublishedAt: menu.eapResumo.latestEapPublishedAt || '',
+        dates: Array.isArray(menu.eapResumo.dates) ? menu.eapResumo.dates : [],
+      } : undefined,
+    };
+  } catch (error) {
+    console.error('❌ Erro ao fetch bootstrap data:', error);
+    return {};
+  }
 }
 
 export async function fetchEapDataFromFirebase(): Promise<any> {
-  await ensureFirebaseAuth();
-  const dbRef = getDb();
-  return getAppDataDoc<any>(dbRef, 'eap');
+  try {
+    if (!isFirebaseConfigured()) return null;
+    await ensureFirebaseAuth();
+    const dbRef = getDb();
+    return getAppDataDoc<any>(dbRef, 'eap');
+  } catch (error) {
+    console.error('❌ Erro ao fetch EAP data:', error);
+    return null;
+  }
 }
 
 export async function fetchCronogramaDataFromFirebase(): Promise<any[]> {
-  await ensureFirebaseAuth();
-  const dbRef = getDb();
-  const cronograma = await getAppDataDoc<any>(dbRef, 'cronograma');
-  if (Array.isArray(cronograma)) return cronograma;
-  if (Array.isArray(cronograma?.cronograma)) return cronograma.cronograma;
-  return [];
+  try {
+    if (!isFirebaseConfigured()) return [];
+    await ensureFirebaseAuth();
+    const dbRef = getDb();
+    const cronograma = await getAppDataDoc<any>(dbRef, 'cronograma');
+    if (Array.isArray(cronograma)) return cronograma;
+    if (Array.isArray(cronograma?.cronograma)) return cronograma.cronograma;
+    return [];
+  } catch (error) {
+    console.error('❌ Erro ao fetch cronograma data:', error);
+    return [];
+  }
 }
 
 function getProfessionalsForUser(registro: any, user: AuthUserLike) {
@@ -305,19 +329,32 @@ function getProfessionalsForUser(registro: any, user: AuthUserLike) {
 }
 
 export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise<RegistroDataResponse> {
-  await ensureFirebaseAuth();
-  const dbRef = getDb();
-  const [registroBase, menu] = await Promise.all([
-    getAppDataDoc<any>(dbRef, 'registro'),
-    getAppDataDoc<any>(dbRef, 'menu'),
-  ]);
-  const activitiesSnapshot = await getDocs(collection(dbRef, 'registroAtividades'));
-  const activitiesList = activitiesSnapshot.docs.map(normalizeFirestoreRecord);
-  const registro = {
-    ...(registroBase || {}),
-    ...(menu?.registro || {}),
-    activitiesList,
-  };
+  try {
+    if (!isFirebaseConfigured()) {
+      return {
+        success: true,
+        contracts: [],
+        osOptions: [],
+        itemOptions: [],
+        professionals: [],
+        activeActivities: [],
+        completedActivities: [],
+      };
+    }
+    
+    await ensureFirebaseAuth();
+    const dbRef = getDb();
+    const [registroBase, menu] = await Promise.all([
+      getAppDataDoc<any>(dbRef, 'registro'),
+      getAppDataDoc<any>(dbRef, 'menu'),
+    ]);
+    const activitiesSnapshot = await getDocs(collection(dbRef, 'registroAtividades'));
+    const activitiesList = activitiesSnapshot.docs.map(normalizeFirestoreRecord);
+    const registro = {
+      ...(registroBase || {}),
+      ...(menu?.registro || {}),
+      activitiesList,
+    };
   const professionals = getProfessionalsForUser(registro, user);
   const split = splitActivitiesForUser(activitiesList, user, professionals);
 

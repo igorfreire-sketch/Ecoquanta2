@@ -833,7 +833,7 @@ export default function App() {
         if (currentProgress > 90) currentProgress = 90;
         setLoadProgress(currentProgress);
         if (currentProgress > 20 && currentProgress <= 45) setLoadText('Carregando menus e permissoes...');
-        else if (currentProgress > 45 && currentProgress <= 75) setLoadText('Preparando ambiente do Firebase...');
+        else if (currentProgress > 45 && currentProgress <= 75) setLoadText('Preparando ambiente...');
         else if (currentProgress > 75) setLoadText('Quase lá, estruturando as informações...');
       }, 600);
     } else {
@@ -841,13 +841,22 @@ export default function App() {
     }
 
     try {
+      let fullData: GlobalData = {};
+      
+      // Se Firebase não está configurado, tenta carregar do AppScript
       if (!isFirebaseConfigured()) {
-        throw new Error('Firebase nao configurado no ambiente publicado.');
-      }
-      let fullData = await fetchBootstrapDataFromFirebase();
-
-      if (!hasAnyGlobalData(fullData)) {
-        throw new Error('Nenhum dado disponivel no Firebase.');
+        console.warn('⚠️ Firebase não configurado. Tentando carregar dados do AppScript...');
+        if (!isBackgroundSync) setLoadText('Firebase não configurado. Usando dados alternativos...');
+        // Deixa vazio - usará dados em cache ou padrão
+        fullData = {};
+      } else {
+        try {
+          fullData = await fetchBootstrapDataFromFirebase();
+        } catch (fbError) {
+          console.error('❌ Erro ao carregar do Firebase:', fbError);
+          if (!isBackgroundSync) setLoadText('Erro ao conectar Firebase. Usando cache...');
+          fullData = {};
+        }
       }
 
       fullData = filterGlobalDataByContract(fullData, shouldLockUserToContract(user) ? user.contrato || '' : '');
@@ -873,8 +882,9 @@ export default function App() {
         setTimeout(() => { setPreloading(false); setBooting(false); }, 500);
       }
     } catch (error) {
+      console.error('❌ Erro ao carregar ambiente:', error);
       if (!isBackgroundSync && progressInterval) {
-        clearInterval(progressInterval); setLoadText('Ocorreu um erro ao carregar. Tente atualizar a página.');
+        clearInterval(progressInterval); setLoadText('Ocorreu um erro. Tente atualizar a página.');
         setTimeout(() => { setPreloading(false); setBooting(false); }, 2000);
       }
     } finally {

@@ -21,6 +21,7 @@ import TerceirizadasCadastro from './TerceirizadasCadastro';
 export type AppTabKey =
   | 'registro'
   | 'controle'
+  | 'planejamento'
   | 'contrato'
   | 'alocacoes'
   | 'nc'

@@ -209,7 +209,7 @@ export default function EmergenciaCenter({
   }, [activities, selectedContract]);
 
   const disciplinaOptions = useMemo(() => {
-    return Array.from(new Set(activities.map((item) => item.disciplina).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return Array.from<string>(new Set(activities.map((item) => String(item.disciplina || '')).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [activities]);
 
   const emergencies = useMemo(() => {

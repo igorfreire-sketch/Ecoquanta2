@@ -25,17 +25,8 @@ import type {
   RoleTabPermissions,
 } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
-import {
-  fetchAdminModulePublicData,
-  fetchContratoModulePublicData,
-  fetchControleModulePublicData,
-  fetchCronogramaModulePublicData,
-  fetchEapAppsScriptData,
-  fetchEapPublicData,
-  fetchRegistroModulePublicData,
-  fetchRegistroPublicData,
-} from './lib/publicJson';
 import { getAppVersionLabel } from './config/appVersion';
+import { fetchGlobalDataFromFirebase, isFirebaseConfigured } from './lib/firebaseDb';
 
 const RegistroDeAtividade = React.lazy(() => import('./components/RegistroDeAtividade'));
 const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEngenharia'));
@@ -252,52 +243,6 @@ function mergeGlobalData(base: GlobalData, incoming?: Partial<GlobalData> | null
 
 function hasAnyGlobalData(data: GlobalData) {
   return Boolean(data.registro || data.admin || data.cronograma || data.eap);
-}
-
-async function fetchGlobalPublicDataFromJson() {
-  const [
-    registroPayload,
-    controlePayload,
-    contratoPayload,
-    cronogramaPayload,
-    adminPayload,
-    eapPayload,
-  ] = await Promise.all([
-    fetchRegistroModulePublicData<PublicModulePayload>().catch(() => null),
-    fetchControleModulePublicData<PublicModulePayload>().catch(() => null),
-    fetchContratoModulePublicData<PublicModulePayload>().catch(() => null),
-    fetchCronogramaModulePublicData<PublicModulePayload>().catch(() => null),
-    fetchAdminModulePublicData<PublicModulePayload>().catch(() => null),
-    fetchEapPublicData<PublicEapPayload>()
-      .catch(async () => ({ data: await fetchEapAppsScriptData<any>() } as PublicEapPayload))
-      .catch(() => null),
-  ]);
-
-  let fullData: GlobalData = {};
-  fullData = mergeGlobalData(fullData, registroPayload?.data);
-  fullData = mergeGlobalData(fullData, controlePayload?.data);
-  fullData = mergeGlobalData(fullData, contratoPayload?.data);
-  fullData = mergeGlobalData(fullData, adminPayload?.data);
-  fullData = mergeGlobalData(fullData, cronogramaPayload?.data);
-
-  if (!fullData.registro || !fullData.admin || !fullData.cronograma) {
-    const legacyPayload = await fetchRegistroPublicData<PublicGlobalRegistroPayload>().catch(() => null);
-    fullData = mergeGlobalData(legacyPayload?.data || {}, fullData);
-  }
-
-  if (eapPayload?.data) {
-    fullData = applyUnifiedEapData(fullData, {
-      ...eapPayload.data,
-      publishedAt: eapPayload.data.publishedAt || eapPayload.publishedAt,
-      latestEapPublishedAt: eapPayload.data.latestEapPublishedAt || eapPayload.publishedAt,
-    });
-  }
-
-  if (!hasAnyGlobalData(fullData)) {
-    throw new Error('Nenhum JSON publico disponivel.');
-  }
-
-  return { fullData, eapPayload };
 }
 
 function applyUnifiedEapData(data: GlobalData, eapData: any): GlobalData {
@@ -927,26 +872,17 @@ export default function App() {
 
     try {
       let fullData: GlobalData = {};
-      let eapPayload: PublicEapPayload | null = null;
 
-      try {
-        const publicData = await fetchGlobalPublicDataFromJson();
-        fullData = publicData.fullData;
-        eapPayload = publicData.eapPayload;
-      } catch {
+      if (isFirebaseConfigured()) {
+        fullData = await fetchGlobalDataFromFirebase(user);
+      } else {
         fullData = await fetchInitialDataFromAppsScript(user);
-        eapPayload = await fetchEapPublicData<PublicEapPayload>()
-          .catch(async () => ({ data: await fetchEapAppsScriptData<any>() } as PublicEapPayload))
-          .catch(() => null);
       }
 
-      if (eapPayload?.data) {
-        fullData = applyUnifiedEapData(fullData, {
-          ...eapPayload.data,
-          publishedAt: eapPayload.data.publishedAt || eapPayload.publishedAt,
-          latestEapPublishedAt: eapPayload.data.latestEapPublishedAt || eapPayload.publishedAt,
-        });
+      if (!hasAnyGlobalData(fullData)) {
+        throw new Error('Nenhum dado disponivel no Firebase.');
       }
+
       fullData = filterGlobalDataByContract(fullData, shouldLockUserToContract(user) ? user.contrato || '' : '');
         
         // Converte o índice por e-mail do JSON público de volta para o array esperado pelo app

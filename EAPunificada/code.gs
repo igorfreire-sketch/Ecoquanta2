@@ -11,12 +11,18 @@ var PUBLIC_JSON_FOLDER = "Publica";
 var EAP_PUBLIC_JSON_FILE = "eap-unificada.json";
 var DEFAULT_REGISTRO_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec";
 var PUBLIC_JSON_FAST_DELAY_MS = 1000;
+var DEFAULT_FIREBASE_PROJECT_ID = "ecoquanta-c2720";
+var DEFAULT_FIREBASE_API_KEY = "AIzaSyCGJ4UHPGyaf1GqayvTXUhvn3eLdu9ZW9g";
+var FIREBASE_AUTH_CACHE_KEY = "firebase_anonymous_id_token";
+var FIREBASE_APPDATA_CHUNK_SIZE = 750000;
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
-    .addItem('Atualizar', 'syncAllPublicJsonNow')
+    .addItem('Publicar EAP no Firebase', 'publishCompressedDataToFirebaseNow')
+    .addSeparator()
+    .addItem('Atualizar JSON legado', 'syncAllPublicJsonNow')
     .addToUi();
 }
 
@@ -130,6 +136,16 @@ function publishCompressedDataToPublicJsonNow() {
   PropertiesService.getScriptProperties().deleteProperty('pending_eap_publish_at');
   var version = publishCompressedDataToPublicJson();
   return "EAP publicada agora. Versao: " + version;
+}
+
+function publishCompressedDataToFirebaseNow() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var data = getCompressedData_(ss);
+  var version = updateVersion_();
+  var publishedAt = new Date().toISOString();
+  data.latestEapPublishedAt = publishedAt;
+  firestoreSetAppData_("eap", data);
+  return "EAP publicada no Firebase. Versao: " + version;
 }
 
 function syncAllPublicJsonNow() {
@@ -287,6 +303,8 @@ function publishCompressedDataToPublicJson() {
     var version = updateVersion_();
     var publishedAt = new Date().toISOString();
     data.latestEapPublishedAt = publishedAt;
+
+    firestoreSetAppData_("eap", data);
 
     publishEncryptedJsonToGithub_(
       EAP_PUBLIC_JSON_FILE,
@@ -972,6 +990,135 @@ function parseSimpleDate_(name) {
 }
 
 // --- PUBLICACAO CRIPTOGRAFADA NO GITHUB ---
+
+function firestoreGetProjectId_() {
+  return String(PropertiesService.getScriptProperties().getProperty("firebase_project_id") || DEFAULT_FIREBASE_PROJECT_ID || "").trim();
+}
+
+function firestoreGetApiKey_() {
+  return String(PropertiesService.getScriptProperties().getProperty("firebase_api_key") || DEFAULT_FIREBASE_API_KEY || "").trim();
+}
+
+function firestoreGetBaseUrl_() {
+  var projectId = firestoreGetProjectId_();
+  if (!projectId) throw new Error("firebase_project_id nao configurado.");
+  return "https://firestore.googleapis.com/v1/projects/" + encodeURIComponent(projectId) + "/databases/(default)/documents";
+}
+
+function firestoreGetIdToken_() {
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get(FIREBASE_AUTH_CACHE_KEY);
+  if (cached) return cached;
+
+  var apiKey = firestoreGetApiKey_();
+  if (!apiKey) throw new Error("firebase_api_key nao configurada.");
+  var response = UrlFetchApp.fetch("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + encodeURIComponent(apiKey), {
+    method: "post",
+    contentType: "application/json",
+    muteHttpExceptions: true,
+    payload: JSON.stringify({ returnSecureToken: true })
+  });
+  var status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    throw new Error("Falha ao autenticar no Firebase (" + status + "): " + response.getContentText().slice(0, 300));
+  }
+
+  var body = JSON.parse(response.getContentText() || "{}");
+  if (!body.idToken) throw new Error("Firebase nao retornou idToken.");
+  cache.put(FIREBASE_AUTH_CACHE_KEY, body.idToken, 3300);
+  return body.idToken;
+}
+
+function firestoreSetAppData_(name, data) {
+  var jsonText = JSON.stringify(data || {});
+  var chunks = splitStringIntoChunks_(jsonText, FIREBASE_APPDATA_CHUNK_SIZE);
+  var url = firestoreGetBaseUrl_() + "/appData/" + encodeURIComponent(name);
+  var response = UrlFetchApp.fetch(url, {
+    method: "patch",
+    contentType: "application/json",
+    muteHttpExceptions: true,
+    headers: { Authorization: "Bearer " + firestoreGetIdToken_() },
+    payload: JSON.stringify({
+      fields: firestoreObjectToFields_({
+        chunked: true,
+        chunkCount: chunks.length,
+        byteLength: jsonText.length,
+        source: "EAPunificada",
+        updatedAt: new Date().toISOString()
+      })
+    })
+  });
+  var status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    throw new Error("Firestore appData/" + name + " falhou (" + status + "): " + response.getContentText().slice(0, 500));
+  }
+  firestoreSetAppDataChunks_(name, chunks);
+}
+
+function splitStringIntoChunks_(text, chunkSize) {
+  var chunks = [];
+  for (var i = 0; i < text.length; i += chunkSize) {
+    chunks.push(text.slice(i, i + chunkSize));
+  }
+  return chunks.length ? chunks : [""];
+}
+
+function firestoreSetAppDataChunks_(name, chunks) {
+  var projectId = firestoreGetProjectId_();
+  var baseName = "projects/" + projectId + "/databases/(default)/documents/appData/" + name + "/chunks/";
+  for (var i = 0; i < chunks.length; i++) {
+    var docId = ("00000" + i).slice(-5);
+    var url = "https://firestore.googleapis.com/v1/projects/" + encodeURIComponent(projectId) + "/databases/(default)/documents:commit";
+    var response = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      headers: { Authorization: "Bearer " + firestoreGetIdToken_() },
+      payload: JSON.stringify({
+        writes: [{
+          update: {
+            name: baseName + docId,
+            fields: firestoreObjectToFields_({
+              index: i,
+              value: chunks[i],
+              updatedAt: new Date().toISOString()
+            })
+          }
+        }]
+      })
+    });
+    var status = response.getResponseCode();
+    if (status < 200 || status >= 300) {
+      throw new Error("Firestore chunk appData/" + name + "/" + docId + " falhou (" + status + "): " + response.getContentText().slice(0, 500));
+    }
+  }
+}
+
+function firestoreObjectToFields_(obj) {
+  var fields = {};
+  obj = obj || {};
+  for (var key in obj) {
+    if (obj.hasOwnProperty(key) && obj[key] !== undefined) fields[key] = firestoreToValue_(obj[key]);
+  }
+  return fields;
+}
+
+function firestoreToValue_(value) {
+  if (value === null) return { nullValue: null };
+  if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (Array.isArray(value)) {
+    return { arrayValue: { values: value.map(function(item) { return firestoreToValue_(item); }) } };
+  }
+  if (typeof value === "object") {
+    return { mapValue: { fields: firestoreObjectToFields_(value) } };
+  }
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (typeof value === "number") {
+    if (Math.floor(value) === value) return { integerValue: String(value) };
+    return { doubleValue: value };
+  }
+  return { stringValue: String(value) };
+}
 
 function publishEncryptedJsonToGithub_(fileName, payloadObj) {
   var cfg = getGithubPublisherConfig_();

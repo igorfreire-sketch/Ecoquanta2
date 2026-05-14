@@ -17,12 +17,20 @@
 
 var DEFAULT_EAP_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec";
 var DEFAULT_EAP_PUBLIC_JSON_URL = "https://raw.githubusercontent.com/igorfreire-sketch/Ecoquanta2/main/Publica/eap-unificada.json";
+var DEFAULT_FIREBASE_PROJECT_ID = "ecoquanta-c2720";
+var DEFAULT_FIREBASE_API_KEY = "AIzaSyCGJ4UHPGyaf1GqayvTXUhvn3eLdu9ZW9g";
+var FIREBASE_AUTH_CACHE_KEY = "firebase_anonymous_id_token";
+var FIREBASE_COMMIT_BATCH_SIZE = 400;
+var FIREBASE_APPDATA_CHUNK_SIZE = 750000;
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
-    .addItem('Atualizar', 'syncAllPublicJsonNow')
+    .addItem('Sincronizar Registro com Firebase', 'syncRegistroAtividadesFirebaseNow')
+    .addItem('Publicar base completa no Firebase', 'publishFullDatabaseToFirebaseNow')
+    .addSeparator()
+    .addItem('Atualizar JSON legado', 'syncAllPublicJsonNow')
     .addToUi();
 }
 
@@ -45,6 +53,16 @@ function doPost(e) {
     if (action === 'syncAllPublicJsonNow') {
       var syncNowMessage = syncAllPublicJsonNow();
       return json_({ success: true, message: syncNowMessage });
+    }
+
+    if (action === 'syncRegistroAtividadesFirebaseNow') {
+      var firebaseSyncMessage = syncRegistroAtividadesFirebaseNow();
+      return json_({ success: true, message: firebaseSyncMessage });
+    }
+
+    if (action === 'publishFullDatabaseToFirebaseNow') {
+      var firebasePublishMessage = publishFullDatabaseToFirebaseNow();
+      return json_({ success: true, message: firebasePublishMessage });
     }
 
     if (action === 'scheduleFullPublicJsonRefresh') {
@@ -716,6 +734,15 @@ function registerActivitiesBatch_(ss, data) {
   }
 
   shAct.getRange(shAct.getLastRow() + 1, 1, rowsToAppend.length, 25).setValues(rowsToAppend);
+  try {
+    var firebaseDocsToCreate = rowsToAppend.map(function(row) {
+      var activity = activityRowToFirebaseObject_(row);
+      return { id: activity.activityId, data: activity };
+    });
+    firestoreCommitDocuments_("registroAtividades", firebaseDocsToCreate);
+  } catch (firebaseErr) {
+    Logger.log("Falha ao duplicar registro no Firebase: " + String(firebaseErr));
+  }
 
   var shHistory = getOrCreateActivitiesHistorySheet_(ss);
   shHistory.getRange(shHistory.getLastRow() + 1, 1, historyRows.length, 8).setValues(historyRows);
@@ -860,6 +887,12 @@ function updateActivitiesBatch_(ss, data) {
     if (rowChanged) {
       updatedRow[24] = new Date().toLocaleString('pt-BR');
       shUpd.getRange(rowFound, 1, 1, 25).setValues([updatedRow]);
+      try {
+        var activityForFirebase = activityRowToFirebaseObject_(updatedRow);
+        firestoreSetDocument_("registroAtividades", activityForFirebase.activityId, activityForFirebase);
+      } catch (firebaseErr) {
+        Logger.log("Falha ao atualizar atividade no Firebase: " + String(firebaseErr));
+      }
     }
   }
 
@@ -2205,8 +2238,15 @@ function requestEapImmediateSync_() {
 }
 
 function pushFullDatabaseToFirebase() {
-  schedulePublicJsonPublish_();
-  return "Publicacao JSON agendada. Funcao Firebase legada redirecionada para o publicador atual.";
+  return publishFullDatabaseToFirebaseNow();
+}
+
+function publishFullDatabaseToFirebaseNow() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  SpreadsheetApp.flush();
+  var payloadData = buildFullDatabasePayloadData_(ss);
+  publishPayloadDataToFirebase_(payloadData);
+  return "Base completa publicada no Firebase.";
 }
 
 function publishFullDatabaseToPublicJson() {
@@ -2219,49 +2259,10 @@ function publishFullDatabaseToPublicJson() {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     SpreadsheetApp.flush();
-    var loginSheet = getOrCreateLoginSheet_(ss);
-    var header = getHeaderMapSafe_(loginSheet);
-    var values = loginSheet.getDataRange().getValues();
-    var config = getConfigOptions_(ss);
-    var databaseLinks = getDatabaseLinks_(ss);
-    var terceirizadasPublic = getTerceirizadas_(ss);
-    var roleTabPermissions = getRoleTabPermissions_(ss);
+    var payloadData = buildFullDatabasePayloadData_(ss);
+    var activities = payloadData.registro.activitiesList || [];
 
-    var users = {};
-    for (var i = 1; i < values.length; i++) {
-        if (!normalizeEmail_(values[i][header.email])) continue;
-        var u = normalizeUserResponse_(values[i], header);
-        var safeEmail = String(u.email).replace(/[.#$\[\]]/g, '_');
-        users[safeEmail] = u;
-    }
-
-    var eapDataR = getEapStructuredData_(ss);
-    var cronograma = getRawCronogramaData_(ss).rawRows;
-    var activities = getAllActivitiesForPublicJson_(ss);
-
-    var payloadData = {
-        admin: {
-            usersByEmail: users,
-            cargos: config.cargos,
-            disciplinas: config.disciplinas,
-            alocacoes: config.alocacoes,
-            terceirizadas: terceirizadasPublic,
-            databaseLinks: databaseLinks,
-            roleTabPermissions: roleTabPermissions
-        },
-        registro: {
-            contracts: eapDataR.contracts,
-            osOptions: eapDataR.osOptions,
-            itemOptions: eapDataR.itemOptions,
-            hierarchyNodes: eapDataR.hierarchyNodes,
-            childrenByParent: eapDataR.childrenByParent,
-            rootCodes: eapDataR.rootCodes,
-            activitiesList: activities,
-            professionalsByDisciplina: getProfessionalsIndexForJson_(ss, values, header),
-            usersSummary: getUsersSummaryForJson_(values, header)
-        },
-        cronograma: cronograma
-    };
+    publishPayloadDataToFirebase_(payloadData);
     
     publishEncryptedJsonToGithub_(
       REGISTRO_PUBLIC_JSON_FILE,
@@ -2361,6 +2362,70 @@ function publishAppModuleJsons_(payloadData) {
       }
     }
   );
+}
+
+function buildFullDatabasePayloadData_(ss) {
+  var loginSheet = getOrCreateLoginSheet_(ss);
+  var header = getHeaderMapSafe_(loginSheet);
+  var values = loginSheet.getDataRange().getValues();
+  var config = getConfigOptions_(ss);
+  var databaseLinks = getDatabaseLinks_(ss);
+  var terceirizadasPublic = getTerceirizadas_(ss);
+  var roleTabPermissions = getRoleTabPermissions_(ss);
+
+  var users = {};
+  for (var i = 1; i < values.length; i++) {
+    if (!normalizeEmail_(values[i][header.email])) continue;
+    var u = normalizeUserResponse_(values[i], header);
+    var safeEmail = String(u.email).replace(/[.#$\[\]]/g, '_');
+    users[safeEmail] = u;
+  }
+
+  var eapDataR = getEapStructuredData_(ss);
+  var cronograma = getRawCronogramaData_(ss).rawRows;
+  var activities = getAllActivitiesForPublicJson_(ss);
+
+  return {
+    admin: {
+      usersByEmail: users,
+      cargos: config.cargos,
+      disciplinas: config.disciplinas,
+      alocacoes: config.alocacoes,
+      terceirizadas: terceirizadasPublic,
+      databaseLinks: databaseLinks,
+      roleTabPermissions: roleTabPermissions
+    },
+    registro: {
+      contracts: eapDataR.contracts,
+      osOptions: eapDataR.osOptions,
+      itemOptions: eapDataR.itemOptions,
+      hierarchyNodes: eapDataR.hierarchyNodes,
+      childrenByParent: eapDataR.childrenByParent,
+      rootCodes: eapDataR.rootCodes,
+      activitiesList: activities,
+      professionalsByDisciplina: getProfessionalsIndexForJson_(ss, values, header),
+      usersSummary: getUsersSummaryForJson_(values, header)
+    },
+    cronograma: cronograma
+  };
+}
+
+function publishPayloadDataToFirebase_(payloadData) {
+  payloadData = payloadData || {};
+  firestoreSetAppData_("admin", payloadData.admin || {});
+  firestoreSetAppData_("registro", payloadData.registro || {});
+  firestoreSetAppData_("cronograma", payloadData.cronograma || []);
+
+  var activities = payloadData.registro && Array.isArray(payloadData.registro.activitiesList)
+    ? payloadData.registro.activitiesList
+    : [];
+  var docs = activities.map(function(activity) {
+    var normalized = normalizeFirebaseActivity_(activity);
+    return { id: normalized.activityId, data: normalized };
+  }).filter(function(item) {
+    return Boolean(item.id);
+  });
+  if (docs.length) firestoreCommitDocuments_("registroAtividades", docs);
 }
 
 function publishRegistroAtividadesJson_(activities) {
@@ -2475,6 +2540,462 @@ function getAllActivitiesForPublicJson_(ss) {
     });
   }
   return acts;
+}
+
+function syncRegistroAtividadesFirebaseNow() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return "Sincronizacao ignorada: outra sincronizacao ja esta em andamento.";
+  }
+
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    SpreadsheetApp.flush();
+
+    var sh = getOrCreateActivitiesSheet_(ss);
+    var sheetActivities = getAllActivitiesForPublicJson_(ss);
+    var firebaseActivities = firestoreListCollection_("registroAtividades");
+    var firebaseById = {};
+    var sheetById = {};
+    var sheetRowById = {};
+
+    for (var f = 0; f < firebaseActivities.length; f++) {
+      var firebaseActivity = normalizeFirebaseActivity_(firebaseActivities[f]);
+      if (firebaseActivity.activityId) {
+        firebaseById[firebaseActivity.activityId] = firebaseActivity;
+      }
+    }
+
+    var values = sh.getDataRange().getValues();
+    for (var s = 0; s < sheetActivities.length; s++) {
+      var sheetActivity = normalizeFirebaseActivity_(sheetActivities[s]);
+      if (sheetActivity.activityId) {
+        sheetById[sheetActivity.activityId] = sheetActivity;
+      }
+    }
+    for (var r = 1; r < values.length; r++) {
+      var rowId = String(values[r][0] || '').trim();
+      if (rowId) sheetRowById[rowId] = r + 1;
+    }
+
+    var rowsToAppend = [];
+    var rowsToUpdate = [];
+    var docsToUpsert = [];
+    var importedFromFirebase = 0;
+    var updatedSheetFromFirebase = 0;
+    var exportedToFirebase = 0;
+    var updatedFirebaseFromSheet = 0;
+
+    for (var idF in firebaseById) {
+      if (!firebaseById.hasOwnProperty(idF)) continue;
+      var fromFirebase = firebaseById[idF];
+      var inSheet = sheetById[idF];
+
+      if (!inSheet) {
+        rowsToAppend.push(activityToSheetRow_(fromFirebase));
+        importedFromFirebase++;
+        continue;
+      }
+
+      if (getActivityUpdatedMs_(fromFirebase) > getActivityUpdatedMs_(inSheet)) {
+        rowsToUpdate.push({ row: sheetRowById[idF], values: activityToSheetRow_(fromFirebase) });
+        updatedSheetFromFirebase++;
+      }
+    }
+
+    for (var idS in sheetById) {
+      if (!sheetById.hasOwnProperty(idS)) continue;
+      var fromSheet = sheetById[idS];
+      var inFirebase = firebaseById[idS];
+
+      if (!inFirebase) {
+        docsToUpsert.push({ id: idS, data: fromSheet });
+        exportedToFirebase++;
+        continue;
+      }
+
+      if (getActivityUpdatedMs_(fromSheet) > getActivityUpdatedMs_(inFirebase)) {
+        docsToUpsert.push({ id: idS, data: fromSheet });
+        updatedFirebaseFromSheet++;
+      }
+    }
+
+    if (rowsToAppend.length) {
+      sh.getRange(sh.getLastRow() + 1, 1, rowsToAppend.length, 25).setValues(rowsToAppend);
+    }
+    for (var u = 0; u < rowsToUpdate.length; u++) {
+      if (rowsToUpdate[u].row) {
+        sh.getRange(rowsToUpdate[u].row, 1, 1, 25).setValues([rowsToUpdate[u].values]);
+      }
+    }
+    if (docsToUpsert.length) {
+      firestoreCommitDocuments_("registroAtividades", docsToUpsert);
+    }
+
+    logFirebaseSync_(ss, {
+      importedFromFirebase: importedFromFirebase,
+      updatedSheetFromFirebase: updatedSheetFromFirebase,
+      exportedToFirebase: exportedToFirebase,
+      updatedFirebaseFromSheet: updatedFirebaseFromSheet
+    });
+
+    SpreadsheetApp.flush();
+    return "Firebase sincronizado. Importadas: " + importedFromFirebase +
+      ", planilha atualizada: " + updatedSheetFromFirebase +
+      ", exportadas: " + exportedToFirebase +
+      ", Firebase atualizado: " + updatedFirebaseFromSheet + ".";
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function normalizeFirebaseActivity_(a) {
+  a = a || {};
+  var activityId = String(a.activityId || a.id || "").trim();
+  return {
+    activityId: activityId,
+    id: activityId,
+    dataRegistro: String(a.dataRegistro || ""),
+    criadoPorNome: String(a.criadoPorNome || a.criadoPor || ""),
+    criadoPorEmail: String(a.criadoPorEmail || ""),
+    criadoPorRole: String(a.criadoPorRole || ""),
+    criadoPorDisciplina: String(a.criadoPorDisciplina || a.disciplina || ""),
+    contratoCodigo: String(a.contratoCodigo || ""),
+    contratoNome: String(a.contratoNome || ""),
+    osCodigo: String(a.osCodigo || ""),
+    osNome: String(a.osNome || ""),
+    itemCodigo: String(a.itemCodigo || ""),
+    itemNome: String(a.itemNome || ""),
+    setor: String(a.setor || "Engenharia"),
+    profissionais: Array.isArray(a.profissionais) ? a.profissionais.join(" | ") : String(a.profissionais || ""),
+    profissionaisEmails: Array.isArray(a.profissionaisEmails) ? a.profissionaisEmails.join(" | ") : String(a.profissionaisEmails || ""),
+    dificuldade: String(a.dificuldade || ""),
+    descricao: String(a.descricao || ""),
+    avancoAtual: Number(a.avancoAtual || 0),
+    avaliacaoAtual: String(a.avaliacaoAtual || ""),
+    observacaoAtual: String(a.observacaoAtual || ""),
+    status: String(a.status || "em_andamento"),
+    data100: String(a.data100 || ""),
+    dataConclusaoEfetiva: String(a.dataConclusaoEfetiva || ""),
+    ativo: a.ativo === false ? false : String(a.status || "").toLowerCase() !== "concluida",
+    ultimaAtualizacao: String(a.ultimaAtualizacao || a.updatedAt || a.dataRegistro || "")
+  };
+}
+
+function activityToSheetRow_(a) {
+  a = normalizeFirebaseActivity_(a);
+  return [
+    a.activityId,
+    a.dataRegistro,
+    a.criadoPorNome,
+    a.criadoPorEmail,
+    a.criadoPorRole,
+    a.criadoPorDisciplina,
+    a.contratoCodigo,
+    a.contratoNome,
+    a.osCodigo,
+    a.osNome,
+    a.itemCodigo,
+    a.itemNome,
+    a.setor,
+    a.profissionais,
+    a.profissionaisEmails,
+    a.dificuldade,
+    a.descricao,
+    a.avancoAtual,
+    a.avaliacaoAtual,
+    a.observacaoAtual,
+    a.status,
+    a.data100,
+    a.dataConclusaoEfetiva,
+    a.ativo ? "true" : "false",
+    a.ultimaAtualizacao
+  ];
+}
+
+function activityRowToFirebaseObject_(row) {
+  row = row || [];
+  return normalizeFirebaseActivity_({
+    activityId: row[0],
+    dataRegistro: row[1],
+    criadoPorNome: row[2],
+    criadoPorEmail: row[3],
+    criadoPorRole: row[4],
+    criadoPorDisciplina: row[5],
+    contratoCodigo: row[6],
+    contratoNome: row[7],
+    osCodigo: row[8],
+    osNome: row[9],
+    itemCodigo: row[10],
+    itemNome: row[11],
+    setor: row[12],
+    profissionais: row[13],
+    profissionaisEmails: row[14],
+    dificuldade: row[15],
+    descricao: row[16],
+    avancoAtual: row[17],
+    avaliacaoAtual: row[18],
+    observacaoAtual: row[19],
+    status: row[20],
+    data100: row[21],
+    dataConclusaoEfetiva: row[22],
+    ativo: String(row[23]).toLowerCase() !== "false",
+    ultimaAtualizacao: row[24]
+  });
+}
+
+function getActivityUpdatedMs_(a) {
+  var candidates = [
+    a && a.ultimaAtualizacao,
+    a && a.updatedAt,
+    a && a.dataRegistro
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var raw = String(candidates[i] || "").trim();
+    if (!raw) continue;
+    var parsedPt = parsePtBrDateTime_(raw);
+    if (parsedPt) return parsedPt.getTime();
+    var parsedIso = new Date(raw);
+    if (!isNaN(parsedIso.getTime())) return parsedIso.getTime();
+  }
+  return 0;
+}
+
+function logFirebaseSync_(ss, summary) {
+  var sh = ss.getSheetByName("firebase_sync_log");
+  if (!sh) {
+    sh = ss.insertSheet("firebase_sync_log");
+    sh.getRange(1, 1, 1, 6).setValues([[
+      "DataHora", "ImportadasFirebase", "AtualizadasNaPlanilha", "ExportadasFirebase", "AtualizadasNoFirebase", "Resumo"
+    ]]);
+  }
+  sh.getRange(sh.getLastRow() + 1, 1, 1, 6).setValues([[
+    new Date().toLocaleString("pt-BR"),
+    summary.importedFromFirebase || 0,
+    summary.updatedSheetFromFirebase || 0,
+    summary.exportedToFirebase || 0,
+    summary.updatedFirebaseFromSheet || 0,
+    JSON.stringify(summary || {})
+  ]]);
+}
+
+function firestoreGetProjectId_() {
+  return String(PropertiesService.getScriptProperties().getProperty("firebase_project_id") || DEFAULT_FIREBASE_PROJECT_ID || "").trim();
+}
+
+function firestoreGetApiKey_() {
+  return String(PropertiesService.getScriptProperties().getProperty("firebase_api_key") || DEFAULT_FIREBASE_API_KEY || "").trim();
+}
+
+function firestoreGetBaseUrl_() {
+  var projectId = firestoreGetProjectId_();
+  if (!projectId) throw new Error("firebase_project_id nao configurado.");
+  return "https://firestore.googleapis.com/v1/projects/" + encodeURIComponent(projectId) + "/databases/(default)/documents";
+}
+
+function firestoreGetIdToken_() {
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get(FIREBASE_AUTH_CACHE_KEY);
+  if (cached) return cached;
+
+  var apiKey = firestoreGetApiKey_();
+  if (!apiKey) throw new Error("firebase_api_key nao configurada.");
+
+  var response = UrlFetchApp.fetch("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + encodeURIComponent(apiKey), {
+    method: "post",
+    contentType: "application/json",
+    muteHttpExceptions: true,
+    payload: JSON.stringify({ returnSecureToken: true })
+  });
+  var status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    throw new Error("Falha ao autenticar no Firebase (" + status + "): " + response.getContentText().slice(0, 300));
+  }
+
+  var body = JSON.parse(response.getContentText() || "{}");
+  if (!body.idToken) throw new Error("Firebase nao retornou idToken.");
+  cache.put(FIREBASE_AUTH_CACHE_KEY, body.idToken, 3300);
+  return body.idToken;
+}
+
+function firestoreRequest_(method, path, payload) {
+  var url = firestoreGetBaseUrl_() + "/" + path.replace(/^\/+/, "");
+  var options = {
+    method: method,
+    muteHttpExceptions: true,
+    headers: {
+      Authorization: "Bearer " + firestoreGetIdToken_()
+    }
+  };
+  if (payload !== undefined) {
+    options.contentType = "application/json";
+    options.payload = JSON.stringify(payload);
+  }
+
+  var response = UrlFetchApp.fetch(url, options);
+  var status = response.getResponseCode();
+  var text = response.getContentText();
+  if (status < 200 || status >= 300) {
+    throw new Error("Firestore " + method + " " + path + " falhou (" + status + "): " + text.slice(0, 500));
+  }
+  return text ? JSON.parse(text) : {};
+}
+
+function firestoreListCollection_(collectionName) {
+  var pageToken = "";
+  var out = [];
+  do {
+    var path = encodeURIComponent(collectionName) + "?pageSize=300" + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : "");
+    var payload = firestoreRequest_("get", path);
+    var docs = payload.documents || [];
+    for (var i = 0; i < docs.length; i++) {
+      var doc = firestoreDocumentToObject_(docs[i]);
+      var nameParts = String(docs[i].name || "").split("/");
+      doc.id = doc.id || nameParts[nameParts.length - 1] || "";
+      if (!doc.activityId && collectionName === "registroAtividades") doc.activityId = doc.id;
+      out.push(doc);
+    }
+    pageToken = payload.nextPageToken || "";
+  } while (pageToken);
+  return out;
+}
+
+function firestoreSetDocument_(collectionName, docId, data) {
+  firestoreCommitDocuments_(collectionName, [{ id: docId, data: data }]);
+}
+
+function firestoreCommitDocuments_(collectionName, docs) {
+  if (!docs || !docs.length) return;
+  var projectId = firestoreGetProjectId_();
+  var baseName = "projects/" + projectId + "/databases/(default)/documents/" + collectionName + "/";
+
+  for (var start = 0; start < docs.length; start += FIREBASE_COMMIT_BATCH_SIZE) {
+    var chunk = docs.slice(start, start + FIREBASE_COMMIT_BATCH_SIZE);
+    var writes = [];
+    for (var i = 0; i < chunk.length; i++) {
+      var docId = firestoreSafeDocId_(chunk[i].id);
+      var data = chunk[i].data || {};
+      writes.push({
+        update: {
+          name: baseName + docId,
+          fields: firestoreObjectToFields_(data)
+        }
+      });
+    }
+
+    var url = "https://firestore.googleapis.com/v1/projects/" + encodeURIComponent(projectId) + "/databases/(default)/documents:commit";
+    var response = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      headers: { Authorization: "Bearer " + firestoreGetIdToken_() },
+      payload: JSON.stringify({ writes: writes })
+    });
+    var status = response.getResponseCode();
+    if (status < 200 || status >= 300) {
+      throw new Error("Firestore commit falhou (" + status + "): " + response.getContentText().slice(0, 500));
+    }
+  }
+}
+
+function firestoreSetAppData_(name, data) {
+  var jsonText = JSON.stringify(data || {});
+  var chunks = splitStringIntoChunks_(jsonText, FIREBASE_APPDATA_CHUNK_SIZE);
+  firestoreSetDocument_("appData", name, {
+    chunked: true,
+    chunkCount: chunks.length,
+    byteLength: jsonText.length,
+    source: "AppsScript",
+    updatedAt: new Date().toISOString()
+  });
+  firestoreSetAppDataChunks_(name, chunks);
+}
+
+function splitStringIntoChunks_(text, chunkSize) {
+  var chunks = [];
+  for (var i = 0; i < text.length; i += chunkSize) {
+    chunks.push(text.slice(i, i + chunkSize));
+  }
+  return chunks.length ? chunks : [""];
+}
+
+function firestoreSetAppDataChunks_(name, chunks) {
+  var docs = [];
+  for (var i = 0; i < chunks.length; i++) {
+    docs.push({
+      id: ("00000" + i).slice(-5),
+      data: {
+        index: i,
+        value: chunks[i],
+        updatedAt: new Date().toISOString()
+      }
+    });
+  }
+  firestoreCommitDocuments_("appData/" + name + "/chunks", docs);
+}
+
+function firestoreSafeDocId_(value) {
+  var out = String(value || "").trim();
+  if (!out) out = Utilities.getUuid();
+  return out.replace(/\//g, "_");
+}
+
+function firestoreObjectToFields_(obj) {
+  var fields = {};
+  obj = obj || {};
+  for (var key in obj) {
+    if (obj.hasOwnProperty(key) && obj[key] !== undefined) {
+      fields[key] = firestoreToValue_(obj[key]);
+    }
+  }
+  return fields;
+}
+
+function firestoreToValue_(value) {
+  if (value === null) return { nullValue: null };
+  if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (Array.isArray(value)) {
+    return { arrayValue: { values: value.map(function(item) { return firestoreToValue_(item); }) } };
+  }
+  if (typeof value === "object") {
+    return { mapValue: { fields: firestoreObjectToFields_(value) } };
+  }
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (typeof value === "number") {
+    if (Math.floor(value) === value) return { integerValue: String(value) };
+    return { doubleValue: value };
+  }
+  return { stringValue: String(value) };
+}
+
+function firestoreDocumentToObject_(doc) {
+  return firestoreFieldsToObject_((doc && doc.fields) || {});
+}
+
+function firestoreFieldsToObject_(fields) {
+  var out = {};
+  for (var key in fields) {
+    if (fields.hasOwnProperty(key)) out[key] = firestoreFromValue_(fields[key]);
+  }
+  return out;
+}
+
+function firestoreFromValue_(field) {
+  if (!field || typeof field !== "object") return null;
+  if (field.stringValue !== undefined) return field.stringValue;
+  if (field.integerValue !== undefined) return Number(field.integerValue);
+  if (field.doubleValue !== undefined) return Number(field.doubleValue);
+  if (field.booleanValue !== undefined) return Boolean(field.booleanValue);
+  if (field.timestampValue !== undefined) return field.timestampValue;
+  if (field.nullValue !== undefined) return null;
+  if (field.arrayValue !== undefined) {
+    var values = (field.arrayValue && field.arrayValue.values) || [];
+    return values.map(function(item) { return firestoreFromValue_(item); });
+  }
+  if (field.mapValue !== undefined) {
+    return firestoreFieldsToObject_((field.mapValue && field.mapValue.fields) || {});
+  }
+  return null;
 }
 
 function getProfessionalsIndexForJson_(ss, values, header) {

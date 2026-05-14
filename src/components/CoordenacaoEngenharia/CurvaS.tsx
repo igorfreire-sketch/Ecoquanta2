@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 
-import { fetchEapPublicData } from '../../lib/publicJson';
+import { fetchGlobalDataFromFirebase, isFirebaseConfigured } from '../../lib/firebaseDb';
 
 // COLE AQUI A URL DO SEU GOOGLE APPS SCRIPT DA CURVA S
 const CURVAS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
@@ -30,13 +30,6 @@ interface CurvasProps {
   isSyncing?: boolean;
   lockedContractCode?: string;
   activeContractCode?: string;
-}
-
-interface PublicEapEnvelope {
-  source?: string;
-  version?: string;
-  publishedAt?: string;
-  data?: CompressedPayload;
 }
 
 async function fetchCurvaSDataFromAppsScript(): Promise<CompressedPayload> {
@@ -353,11 +346,11 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
     try {
       let nextData: CompressedPayload | null = null;
 
-      try {
-        const payload = await fetchEapPublicData<PublicEapEnvelope>();
-        if (!payload.data) throw new Error('Nenhum dado encontrado no JSON publico da Curva S.');
-        nextData = payload.data;
-      } catch {
+      if (isFirebaseConfigured()) {
+        const payload = await fetchGlobalDataFromFirebase();
+        if (!payload.eap) throw new Error('Nenhum dado encontrado no Firebase da Curva S.');
+        nextData = payload.eap as CompressedPayload;
+      } else {
         nextData = await fetchCurvaSDataFromAppsScript();
       }
 
@@ -369,9 +362,9 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
           setSelectedOsList([]);
         }
       } else {
-        throw new Error('Nenhum dado encontrado no JSON publico da Curva S.');
+        throw new Error('Nenhum dado encontrado no Firebase da Curva S.');
       }
-    } catch (err) { setError(err instanceof Error ? err.message : 'Falha ao carregar JSON publico da Curva S.'); } 
+    } catch (err) { setError(err instanceof Error ? err.message : 'Falha ao carregar dados da Curva S.'); } 
     finally { setLoading(false); setLocalIsSyncing(false); }
   };
 

@@ -12,7 +12,12 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { AuthUser } from './LoginScreen';
-import { fetchEapAppsScriptData, fetchEapPublicData, fetchRegistroModulePublicData, fetchRegistroPublicData } from '../lib/publicJson';
+import {
+  fetchRegistroDataFromFirebase,
+  isFirebaseConfigured,
+  registerActivitiesInFirebase,
+  updateActivitiesInFirebase,
+} from '../lib/firebaseDb';
 
 const APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
@@ -642,6 +647,14 @@ async function fetchRegistroDataFromAppsScript(currentUser: AuthUser): Promise<R
   return payload;
 }
 
+async function fetchRegistroData(currentUser: AuthUser): Promise<RegistroDataResponse> {
+  if (isFirebaseConfigured()) {
+    return fetchRegistroDataFromFirebase(currentUser);
+  }
+
+  return fetchRegistroDataFromAppsScript(currentUser);
+}
+
 function MultiProfessionalSelector({ value, options, onChange }: { value: string[]; options: ProfessionalOption[]; onChange: (next: string[]) => void; }) {
   const [open, setOpen] = useState(false);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
@@ -865,14 +878,9 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
     const cachedData = readRegistroCache(currentUser.email);
 
     try {
-      const [payload, eapPayload] = await Promise.all([
-        fetchRegistroModulePublicData<PublicRegistroEnvelope>().catch(() => fetchRegistroPublicData<PublicRegistroEnvelope>()),
-        fetchEapPublicData<PublicEapEnvelope>()
-          .catch(async () => ({ data: await fetchEapAppsScriptData<any>() } as PublicEapEnvelope))
-          .catch(() => null),
-      ]);
-      const registro = filterRegistroPayloadByContract(applyUnifiedEapToRegistro(payload.data?.registro, eapPayload) || {}, currentUser.contrato || '');
-      if (!registro) throw new Error('Dados de registro ausentes no JSON publico.');
+      const registroResponse = await fetchRegistroData(currentUser);
+      const registro = filterRegistroPayloadByContract<RegistroDataResponse>(registroResponse, currentUser.contrato || '');
+      if (!registro) throw new Error('Dados de registro ausentes no Firebase.');
 
       const nextContracts = Array.isArray(registro.contracts) && registro.contracts.length > 0
         ? registro.contracts
@@ -899,16 +907,18 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
           : buildChildrenMapFromNodes(nextHierarchyNodes));
 
       if (nextContracts.length === 0 || nextOsOptions.length === 0 || nextItemOptions.length === 0) {
-        throw new Error('EAP sem contratos, OS ou atividades no JSON publico.');
+        throw new Error('EAP sem contratos, OS ou atividades no Firebase.');
       }
 
-      const jsonProfessionals = getProfessionalsByDiscipline(registro.professionalsByDisciplina, currentUser.disciplina);
-      const nextProfessionals = jsonProfessionals.length > 0
-        ? jsonProfessionals
+      const responseProfessionals = Array.isArray(registro.professionals) ? registro.professionals : [];
+      const nextProfessionals = responseProfessionals.length > 0
+        ? responseProfessionals
         : (cachedData?.professionals && cachedData.professionals.length > 0
           ? cachedData.professionals
           : professionals);
-      const allActivities = Array.isArray(registro.activitiesList) ? registro.activitiesList : [];
+      const allActivities = Array.isArray((registro as any).activitiesList)
+        ? (registro as any).activitiesList
+        : [...(registro.activeActivities || []), ...(registro.completedActivities || [])];
       const visibleActivities = getVisibleRegistroActivities(allActivities, currentUser, viewMode);
       const osNameByCode = new Map<string, string>(nextOsOptions.map((item: EapOsOption) => [String(item.codigo || ''), String(item.nome || '')]));
       const itemNameByCode = new Map<string, string>(nextItemOptions.map((item: EapItemOption) => [String(item.codigo || ''), String(item.nome || '')]));
@@ -950,28 +960,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
         mergeActivitiesWithCache(mappedActivities.filter((item) => item.status !== 'concluida'), cachedData?.activeActivities || []),
         mergeActivitiesWithCache(mappedActivities.filter((item) => item.status === 'concluida'), cachedData?.completedActivities || []),
       );
-    } catch {
-      try {
-        const [fallbackResponse, fallbackEapPayload] = await Promise.all([
-          fetchRegistroDataFromAppsScript(currentUser),
-          fetchEapPublicData<PublicEapEnvelope>()
-            .catch(async () => ({ data: await fetchEapAppsScriptData<any>() } as PublicEapEnvelope))
-            .catch(() => null),
-        ]);
-        const fallback = filterRegistroPayloadByContract(applyUnifiedEapToRegistro(fallbackResponse, fallbackEapPayload), currentUser.contrato || '');
-        setContracts(fallback.contracts || []);
-        setOsOptions(fallback.osOptions || []);
-        setItemOptions(fallback.itemOptions || []);
-        setRootCodes(fallback.rootCodes || []);
-        const fallbackHierarchyNodes = normalizeHierarchyNodes(fallback.hierarchyNodes, fallback.contracts, fallback.osOptions, fallback.itemOptions);
-        setHierarchyNodes(fallbackHierarchyNodes);
-        setChildrenByParent(fallback.childrenByParent && Object.keys(fallback.childrenByParent).length > 0
-          ? fallback.childrenByParent
-          : buildChildrenMapFromNodes(fallbackHierarchyNodes));
-        setProfessionals(fallback.professionals || []);
-        applyActivitiesState(fallback.activeActivities || [], fallback.completedActivities || []);
-      } catch {}
-    }
+    } catch {}
   };
 
   useEffect(() => {
@@ -1090,13 +1079,18 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
     if (draftQueue.length === 0) return false;
     setSendingBatch(true);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'registerActivitiesBatch', userEmail: currentUser.email, userName: currentUser.nome, userRole: currentUser.role, userDisciplina: currentUser.disciplina, activities: draftQueue }) });
-      const data: BatchResponse = await response.json();
+      let data: BatchResponse;
+      if (isFirebaseConfigured()) {
+        data = await registerActivitiesInFirebase(currentUser, draftQueue);
+      } else {
+        const response = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'registerActivitiesBatch', userEmail: currentUser.email, userName: currentUser.nome, userRole: currentUser.role, userDisciplina: currentUser.disciplina, activities: draftQueue }) });
+        data = await response.json();
+      }
       if (!data.success) throw new Error(data.error || 'Erro ao enviar lote de atividades.');
       if (data.registroSnapshot) applyRegistroSnapshot(data.registroSnapshot);
       setDraftQueue([]);
       setBalloonMessage(data.publicJsonUpdated === false
-        ? `${data.message || 'Atividades enviadas com sucesso.'} O cache local foi atualizado e o JSON global segue sincronizando em segundo plano.`
+        ? `${data.message || 'Atividades enviadas com sucesso.'} O cache local foi atualizado e a sincronizacao segue em segundo plano.`
         : (data.message || 'Atividades enviadas com sucesso.'));
       return true;
     } catch (error) { setBalloonMessage(error instanceof Error ? error.message : 'Erro ao enviar atividades.'); return false; } finally { setSendingBatch(false); }
@@ -1113,8 +1107,13 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
     if (!updates.length) return false;
     setSavingChanges(true);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'updateActivitiesBatch', userEmail: currentUser.email, userName: currentUser.nome, userRole: currentUser.role, userDisciplina: currentUser.disciplina, updates }) });
-      const data: BatchResponse = await response.json();
+      let data: BatchResponse;
+      if (isFirebaseConfigured()) {
+        data = await updateActivitiesInFirebase(currentUser, updates);
+      } else {
+        const response = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'updateActivitiesBatch', userEmail: currentUser.email, userName: currentUser.nome, userRole: currentUser.role, userDisciplina: currentUser.disciplina, updates }) });
+        data = await response.json();
+      }
       if (!data.success) throw new Error(data.error || 'Erro ao salvar alterações.');
       if (data.registroSnapshot) {
         applyRegistroSnapshot(data.registroSnapshot);

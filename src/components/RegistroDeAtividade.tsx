@@ -96,7 +96,7 @@ interface PublicEapEnvelope {
 
 interface BatchResponse {
   success: boolean; error?: string; message?: string; duplicateItems?: Array<{ itemCodigo: string; itemNome: string }>;
-  publicJsonUpdated?: boolean; publicJsonError?: string; registroSnapshot?: Partial<RegistroDataResponse>;
+  syncUpdated?: boolean; syncError?: string; registroSnapshot?: Partial<RegistroDataResponse>;
 }
 
 interface RegistroDeAtividadeProps {
@@ -1089,7 +1089,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       if (!data.success) throw new Error(data.error || 'Erro ao enviar lote de atividades.');
       if (data.registroSnapshot) applyRegistroSnapshot(data.registroSnapshot);
       setDraftQueue([]);
-      setBalloonMessage(data.publicJsonUpdated === false
+      setBalloonMessage(data.syncUpdated === false
         ? `${data.message || 'Atividades enviadas com sucesso.'} O cache local foi atualizado e a sincronizacao segue em segundo plano.`
         : (data.message || 'Atividades enviadas com sucesso.'));
       return true;

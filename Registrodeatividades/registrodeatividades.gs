@@ -22,15 +22,13 @@ var DEFAULT_FIREBASE_API_KEY = "AIzaSyCGJ4UHPGyaf1GqayvTXUhvn3eLdu9ZW9g";
 var FIREBASE_AUTH_CACHE_KEY = "firebase_anonymous_id_token";
 var FIREBASE_COMMIT_BATCH_SIZE = 400;
 var FIREBASE_APPDATA_CHUNK_SIZE = 750000;
+var FIREBASE_SYNC_DELAY_MS = 5000;
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
-    .addItem('Sincronizar Registro com Firebase', 'syncRegistroAtividadesFirebaseNow')
-    .addItem('Publicar base completa no Firebase', 'publishFullDatabaseToFirebaseNow')
-    .addSeparator()
-    .addItem('Atualizar JSON legado', 'syncAllPublicJsonNow')
+    .addItem('Sincronizar Firebase', 'syncFirebaseNow')
     .addToUi();
 }
 
@@ -63,6 +61,16 @@ function doPost(e) {
     if (action === 'publishFullDatabaseToFirebaseNow') {
       var firebasePublishMessage = publishFullDatabaseToFirebaseNow();
       return json_({ success: true, message: firebasePublishMessage });
+    }
+
+    if (action === 'syncFirebaseNow') {
+      var unifiedFirebaseSyncMessage = syncFirebaseNow();
+      return json_({ success: true, message: unifiedFirebaseSyncMessage });
+    }
+
+    if (action === 'scheduleFirebaseSync') {
+      scheduleFirebaseSync_();
+      return json_({ success: true, message: 'Sincronizacao Firebase agendada.' });
     }
 
     if (action === 'scheduleFullPublicJsonRefresh') {
@@ -2088,7 +2096,61 @@ function scheduleEapPublicJsonPublish_() {
 }
 
 function handlePublicJsonSpreadsheetEdit(e) {
-  schedulePublicJsonPublish_();
+  scheduleFirebaseSync_(FIREBASE_SYNC_DELAY_MS);
+}
+
+function handlePublicJsonSpreadsheetChange(e) {
+  scheduleFirebaseSync_(FIREBASE_SYNC_DELAY_MS);
+}
+
+function syncFirebaseNow() {
+  ensurePublicJsonAutoPublishTriggers_();
+  cleanupFirebaseSyncTriggers_();
+  PropertiesService.getScriptProperties().deleteProperty('pending_firebase_sync_at');
+  var activitiesResult = syncRegistroAtividadesFirebaseNow();
+  var publishResult = publishFullDatabaseToFirebaseNow();
+  return activitiesResult + " " + publishResult;
+}
+
+function scheduleFirebaseSync_(delayMs, force) {
+  var waitMs = Math.max(1000, Number(delayMs || FIREBASE_SYNC_DELAY_MS));
+  var now = Date.now();
+  var targetAt = now + waitMs;
+  var props = PropertiesService.getScriptProperties();
+  var pendingAt = Number(props.getProperty('pending_firebase_sync_at') || 0);
+
+  if (!force && pendingAt && pendingAt > now && pendingAt <= targetAt) {
+    return;
+  }
+
+  props.setProperty('pending_firebase_sync_at', String(targetAt));
+  cleanupFirebaseSyncTriggers_();
+  ScriptApp.newTrigger("syncFirebaseByTrigger")
+    .timeBased()
+    .after(waitMs)
+    .create();
+}
+
+function syncFirebaseByTrigger() {
+  var props = PropertiesService.getScriptProperties();
+  var dueAt = Number(props.getProperty('pending_firebase_sync_at') || 0);
+  var remainingMs = dueAt - Date.now();
+
+  if (remainingMs > 5000) {
+    cleanupFirebaseSyncTriggers_();
+    ScriptApp.newTrigger("syncFirebaseByTrigger")
+      .timeBased()
+      .after(remainingMs)
+      .create();
+    return "Sincronizacao Firebase reagendada.";
+  }
+
+  props.deleteProperty('pending_firebase_sync_at');
+  try {
+    return syncFirebaseNow();
+  } finally {
+    cleanupFirebaseSyncTriggers_();
+  }
 }
 
 function publishFullDatabaseToPublicJsonNow() {
@@ -2126,7 +2188,8 @@ function ensurePublicJsonAutoPublishTriggers_() {
     var handler = trigger.getHandlerFunction();
     if (handler === "handlePublicJsonSpreadsheetEdit") hasEdit = true;
     if (handler === "handlePublicJsonSpreadsheetChange") hasChange = true;
-    if (handler === "publishFullDatabaseToPublicJson") hasPeriodic = true;
+    if (handler === "syncFirebaseNow") hasPeriodic = true;
+    if (handler === "publishFullDatabaseToPublicJson") ScriptApp.deleteTrigger(trigger);
   }
 
   if (!hasEdit) {
@@ -2144,15 +2207,11 @@ function ensurePublicJsonAutoPublishTriggers_() {
   }
 
   if (!hasPeriodic) {
-    ScriptApp.newTrigger("publishFullDatabaseToPublicJson")
+    ScriptApp.newTrigger("syncFirebaseNow")
       .timeBased()
       .everyMinutes(5)
       .create();
   }
-}
-
-function handlePublicJsonSpreadsheetChange(e) {
-  schedulePublicJsonPublish_();
 }
 
 function deleteAllProjectTriggers() {
@@ -2239,6 +2298,16 @@ function requestEapImmediateSync_() {
 
 function pushFullDatabaseToFirebase() {
   return publishFullDatabaseToFirebaseNow();
+}
+
+function cleanupFirebaseSyncTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "syncFirebaseByTrigger") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
 }
 
 function publishFullDatabaseToFirebaseNow() {

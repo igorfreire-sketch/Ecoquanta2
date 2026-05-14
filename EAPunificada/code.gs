@@ -15,14 +15,13 @@ var DEFAULT_FIREBASE_PROJECT_ID = "ecoquanta-c2720";
 var DEFAULT_FIREBASE_API_KEY = "AIzaSyCGJ4UHPGyaf1GqayvTXUhvn3eLdu9ZW9g";
 var FIREBASE_AUTH_CACHE_KEY = "firebase_anonymous_id_token";
 var FIREBASE_APPDATA_CHUNK_SIZE = 750000;
+var FIREBASE_SYNC_DELAY_MS = 5000;
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
-    .addItem('Publicar EAP no Firebase', 'publishCompressedDataToFirebaseNow')
-    .addSeparator()
-    .addItem('Atualizar JSON legado', 'syncAllPublicJsonNow')
+    .addItem('Sincronizar Firebase', 'syncFirebaseNow')
     .addToUi();
 }
 
@@ -51,12 +50,60 @@ function getAppVersion_() {
 
 function handleSpreadsheetEdit(e) {
   updateVersion_();
-  scheduleCompressedDataPublicJson_(PUBLIC_JSON_FAST_DELAY_MS);
+  scheduleFirebaseSync_(FIREBASE_SYNC_DELAY_MS);
 }
 
 function handleSpreadsheetChange(e) {
   updateVersion_();
-  scheduleCompressedDataPublicJson_(PUBLIC_JSON_FAST_DELAY_MS);
+  scheduleFirebaseSync_(FIREBASE_SYNC_DELAY_MS);
+}
+
+function syncFirebaseNow() {
+  ensureProjectTriggers_();
+  cleanupFirebaseSyncTriggers_();
+  PropertiesService.getScriptProperties().deleteProperty('pending_firebase_sync_at');
+  return publishCompressedDataToFirebaseNow();
+}
+
+function scheduleFirebaseSync_(delayMs, force) {
+  var waitMs = Math.max(1000, Number(delayMs || FIREBASE_SYNC_DELAY_MS));
+  var now = Date.now();
+  var targetAt = now + waitMs;
+  var props = PropertiesService.getScriptProperties();
+  var pendingAt = Number(props.getProperty('pending_firebase_sync_at') || 0);
+
+  if (!force && pendingAt && pendingAt > now && pendingAt <= targetAt) {
+    return;
+  }
+
+  props.setProperty('pending_firebase_sync_at', String(targetAt));
+  cleanupFirebaseSyncTriggers_();
+  ScriptApp.newTrigger("syncFirebaseByTrigger")
+    .timeBased()
+    .after(waitMs)
+    .create();
+}
+
+function syncFirebaseByTrigger() {
+  var props = PropertiesService.getScriptProperties();
+  var dueAt = Number(props.getProperty('pending_firebase_sync_at') || 0);
+  var remainingMs = dueAt - Date.now();
+
+  if (remainingMs > 5000) {
+    cleanupFirebaseSyncTriggers_();
+    ScriptApp.newTrigger("syncFirebaseByTrigger")
+      .timeBased()
+      .after(remainingMs)
+      .create();
+    return "Sincronizacao Firebase reagendada.";
+  }
+
+  props.deleteProperty('pending_firebase_sync_at');
+  try {
+    return publishCompressedDataToFirebaseNow();
+  } finally {
+    cleanupFirebaseSyncTriggers_();
+  }
 }
 
 function scheduleCompressedDataPublicJson() {
@@ -176,7 +223,8 @@ function ensureProjectTriggers_() {
     var handler = trigger.getHandlerFunction();
     if (handler === "handleSpreadsheetEdit") hasEdit = true;
     if (handler === "handleSpreadsheetChange") hasChange = true;
-    if (handler === "publishCompressedDataToPublicJson") hasPeriodic = true;
+    if (handler === "publishCompressedDataToFirebaseNow") hasPeriodic = true;
+    if (handler === "publishCompressedDataToPublicJson") ScriptApp.deleteTrigger(trigger);
   }
 
   if (!hasEdit) {
@@ -194,7 +242,7 @@ function ensureProjectTriggers_() {
   }
 
   if (!hasPeriodic) {
-    ScriptApp.newTrigger("publishCompressedDataToPublicJson")
+    ScriptApp.newTrigger("publishCompressedDataToFirebaseNow")
       .timeBased()
       .everyMinutes(5)
       .create();
@@ -993,6 +1041,16 @@ function parseSimpleDate_(name) {
 
 function firestoreGetProjectId_() {
   return String(PropertiesService.getScriptProperties().getProperty("firebase_project_id") || DEFAULT_FIREBASE_PROJECT_ID || "").trim();
+}
+
+function cleanupFirebaseSyncTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "syncFirebaseByTrigger") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
 }
 
 function firestoreGetApiKey_() {

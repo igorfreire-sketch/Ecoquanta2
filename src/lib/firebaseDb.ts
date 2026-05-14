@@ -82,8 +82,8 @@ interface BatchWriteResponse {
   error?: string;
   message?: string;
   duplicateItems?: Array<{ itemCodigo: string; itemNome: string }>;
-  publicJsonUpdated?: boolean;
-  publicJsonError?: string;
+  syncUpdated?: boolean;
+  syncError?: string;
   registroSnapshot?: Partial<RegistroDataResponse>;
 }
 
@@ -377,8 +377,8 @@ export async function registerActivitiesInFirebase(user: AuthUserLike, activitie
     success: true,
     message: `${rowsToSave.length} atividade(s) registrada(s) com sucesso.`,
     duplicateItems,
-    publicJsonUpdated: true,
-    publicJsonError: '',
+    syncUpdated: true,
+    syncError: '',
     registroSnapshot: await fetchRegistroDataFromFirebase(user),
   };
 }
@@ -451,8 +451,8 @@ export async function updateActivitiesInFirebase(user: AuthUserLike, updates: Ar
   return {
     success: true,
     message: 'Alteracoes salvas com sucesso.',
-    publicJsonUpdated: true,
-    publicJsonError: '',
+    syncUpdated: true,
+    syncError: '',
     registroSnapshot: await fetchRegistroDataFromFirebase(user),
   };
 }

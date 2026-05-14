@@ -331,6 +331,11 @@ function getGlobalDataCache(): GlobalData | null {
 }
 
 async function postToAppsScript<T>(payload: Record<string, unknown>): Promise<T> {
+  const allowedActions = new Set(['authUser', 'registerUser', 'forgotPassword', 'resetPassword', 'adminResetPassword']);
+  const action = String(payload.action || '').trim();
+  if (!allowedActions.has(action)) {
+    throw new Error('Esta acao nao usa mais a planilha pelo site. Atualize os dados diretamente no Firebase ou pela interface administrativa da planilha.');
+  }
   const response = await fetch(APPS_SCRIPT_URL, {
     method: 'POST', body: JSON.stringify(payload),
   });
@@ -347,48 +352,6 @@ function assertSuccess(response: GenericResponse, fallbackMessage = 'Falha ao sa
   if (!response?.success) {
     throw new Error(response?.error || response?.message || fallbackMessage);
   }
-}
-
-async function fetchInitialDataFromAppsScript(user: AuthUser): Promise<GlobalData> {
-  const userTabs = Array.isArray(user.abas)
-    ? user.abas.map((tab) => String(tab || '').trim()).filter(Boolean)
-    : [];
-  const requestedTabs = Boolean(user.isAdmin)
-    ? ADMIN_APP_TABS.map((tab) => tab.key)
-    : userTabs.filter((tab) => tab !== 'administracao');
-  if (!requestedTabs.includes('cronograma') && requestedTabs.some((tab) => ['registro', 'controle', 'planejamento', 'contrato', 'nc2', 'nc'].includes(tab))) {
-    requestedTabs.push('cronograma' as AppTabKey);
-  }
-  const tabs = Array.from(new Set(requestedTabs)).join(',');
-  const params = new URLSearchParams({
-    action: 'getInitialData',
-    email: user.email || '',
-    role: user.role || '',
-    disciplina: user.disciplina || '',
-    isAdmin: String(Boolean(user.isAdmin)),
-    tabs,
-  });
-
-  const response = await fetch(`${APPS_SCRIPT_URL}?${params.toString()}`, { cache: 'no-store' });
-  const payload = await response.json();
-
-  if (!payload?.success) {
-    throw new Error(payload?.error || 'Falha ao carregar dados do Apps Script.');
-  }
-
-  return payload.data || {};
-}
-
-async function fetchAdminDataFromAppsScript(): Promise<GlobalData['admin']> {
-  const params = new URLSearchParams({ action: 'getAdminData' });
-  const response = await fetch(`${APPS_SCRIPT_URL}?${params.toString()}`, { cache: 'no-store' });
-  const payload = await response.json();
-
-  if (payload?.success === false) {
-    throw new Error(payload?.error || 'Falha ao carregar dados administrativos.');
-  }
-
-  return payload || {};
 }
 
 function wait(ms: number) {
@@ -863,7 +826,7 @@ export default function App() {
         if (currentProgress > 90) currentProgress = 90;
         setLoadProgress(currentProgress);
         if (currentProgress > 20 && currentProgress <= 45) setLoadText('Baixando dados da EAP e Cronograma...');
-        else if (currentProgress > 45 && currentProgress <= 75) setLoadText('Sincronizando atividades e status...');
+        else if (currentProgress > 45 && currentProgress <= 75) setLoadText('Lendo atividades e status no Firebase...');
         else if (currentProgress > 75) setLoadText('Quase lá, estruturando as informações...');
       }, 600);
     } else {
@@ -873,11 +836,10 @@ export default function App() {
     try {
       let fullData: GlobalData = {};
 
-      if (isFirebaseConfigured()) {
-        fullData = await fetchGlobalDataFromFirebase(user);
-      } else {
-        fullData = await fetchInitialDataFromAppsScript(user);
+      if (!isFirebaseConfigured()) {
+        throw new Error('Firebase nao configurado no ambiente publicado.');
       }
+      fullData = await fetchGlobalDataFromFirebase(user);
 
       if (!hasAnyGlobalData(fullData)) {
         throw new Error('Nenhum dado disponivel no Firebase.');
@@ -932,37 +894,12 @@ export default function App() {
     }
   }, [currentUser, activeTab, roleTabPermissions]);
 
-  useEffect(() => {
-    if (!currentUser) return;
-    const sendHeartbeat = async () => {
-      try {
-        const response = await postToAppsScript<GenericResponse & { forceLogout?: boolean }>({
-          action: 'heartbeat',
-          email: currentUser.email,
-          sessionVersion: currentUser.sessionVersion || '',
-        });
-        if (response?.forceLogout) {
-          clearSession();
-          setCurrentUser(null);
-          setGlobalData({});
-          setRoleTabPermissions({});
-          setDirtyUserIds([]);
-          setPendingTerceirizadas([]);
-          window.alert('Suas permissoes foram alteradas. Entre novamente para continuar.');
-        }
-      } catch (e) { }
-    };
-    void sendHeartbeat();
-    const interval = window.setInterval(sendHeartbeat, 15000);
-    return () => window.clearInterval(interval);
-  }, [currentUser]);
-
   const loadAdminData = useCallback(async () => {
     if (!currentUser) return;
     setIsBackgroundSyncing(true);
     try {
-      const adminData = await fetchAdminDataFromAppsScript();
-      const fullData: GlobalData = { admin: adminData };
+      if (!isFirebaseConfigured()) throw new Error('Firebase nao configurado no ambiente publicado.');
+      const fullData = await fetchGlobalDataFromFirebase(currentUser);
       if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
 
       setGlobalData((prev) => {
@@ -1394,7 +1331,7 @@ export default function App() {
                 {isBackgroundSyncing && (
                   <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#EFF6FF] text-[#1D4ED8] text-[10px] font-bold">
                     <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                    Sincronizando...
+                    Atualizando Firebase...
                   </span>
                 )}
               </div>

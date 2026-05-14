@@ -25,5 +25,25 @@ service cloud.firestore {
       allow read, create: if isSignedIn();
       allow update, delete: if false;
     }
+
+    match /nc2Records/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if false;
+    }
+
+    match /emergencies/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if false;
+    }
+
+    match /emergencyMessages/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if false;
+    }
+
+    match /emergencyReadMarkers/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if false;
+    }
   }
 }

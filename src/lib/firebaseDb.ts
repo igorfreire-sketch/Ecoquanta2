@@ -474,3 +474,35 @@ export async function updateFirebaseRegistroActivity(activityId: string, patch: 
     updatedAt: serverTimestamp(),
   });
 }
+
+export async function fetchFirebaseCollection<T = Record<string, unknown>>(collectionName: string): Promise<T[]> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const snapshot = await getDocs(collection(dbRef, collectionName));
+  return snapshot.docs.map((entry) => normalizeFirestoreRecord(entry) as T);
+}
+
+export async function setFirebaseDocument(collectionName: string, id: string, data: object) {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const payload = data as Record<string, unknown>;
+  await setDoc(doc(dbRef, collectionName, id), {
+    ...payload,
+    updatedAt: payload.updatedAt || serverTimestamp(),
+  }, { merge: true });
+}
+
+export async function setFirebaseDocuments(collectionName: string, rows: Array<object & { id: string }>) {
+  await ensureFirebaseAuth();
+  if (!rows.length) return;
+  const dbRef = getDb();
+  const batch = writeBatch(dbRef);
+  rows.forEach((row) => {
+    const payload = row as Record<string, unknown> & { id: string };
+    batch.set(doc(dbRef, collectionName, row.id), {
+      ...payload,
+      updatedAt: payload.updatedAt || serverTimestamp(),
+    }, { merge: true });
+  });
+  await batch.commit();
+}

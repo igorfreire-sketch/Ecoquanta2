@@ -18,9 +18,6 @@ import {
   registerActivitiesInFirebase,
   updateActivitiesInFirebase,
 } from '../lib/firebaseDb';
-
-const APPS_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
 const PUBLIC_JSON_SYNC_DELAY_MS = 15000;
 const PLANNING_TODOS_STORAGE_KEY = 'quanta_planejamento_tecnico_itens';
 
@@ -629,30 +626,9 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function fetchRegistroDataFromAppsScript(currentUser: AuthUser): Promise<RegistroDataResponse> {
-  const params = new URLSearchParams({
-    action: 'getRegistroAtividadesData',
-    userEmail: currentUser.email || '',
-    userRole: currentUser.role || '',
-    userDisciplina: currentUser.disciplina || '',
-  });
-
-  const response = await fetch(`${APPS_SCRIPT_URL}?${params.toString()}`, { cache: 'no-store' });
-  const payload = await response.json() as RegistroDataResponse;
-
-  if (!payload?.success) {
-    throw new Error(payload?.error || 'Falha ao carregar Registro de Atividades pelo Apps Script.');
-  }
-
-  return payload;
-}
-
 async function fetchRegistroData(currentUser: AuthUser): Promise<RegistroDataResponse> {
-  if (isFirebaseConfigured()) {
-    return fetchRegistroDataFromFirebase(currentUser);
-  }
-
-  return fetchRegistroDataFromAppsScript(currentUser);
+  if (!isFirebaseConfigured()) throw new Error('Firebase nao configurado para Registro de Atividades.');
+  return fetchRegistroDataFromFirebase(currentUser);
 }
 
 function MultiProfessionalSelector({ value, options, onChange }: { value: string[]; options: ProfessionalOption[]; onChange: (next: string[]) => void; }) {
@@ -1079,13 +1055,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
     if (draftQueue.length === 0) return false;
     setSendingBatch(true);
     try {
-      let data: BatchResponse;
-      if (isFirebaseConfigured()) {
-        data = await registerActivitiesInFirebase(currentUser, draftQueue);
-      } else {
-        const response = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'registerActivitiesBatch', userEmail: currentUser.email, userName: currentUser.nome, userRole: currentUser.role, userDisciplina: currentUser.disciplina, activities: draftQueue }) });
-        data = await response.json();
-      }
+      if (!isFirebaseConfigured()) throw new Error('Firebase nao configurado para Registro de Atividades.');
+      const data = await registerActivitiesInFirebase(currentUser, draftQueue);
       if (!data.success) throw new Error(data.error || 'Erro ao enviar lote de atividades.');
       if (data.registroSnapshot) applyRegistroSnapshot(data.registroSnapshot);
       setDraftQueue([]);
@@ -1107,13 +1078,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
     if (!updates.length) return false;
     setSavingChanges(true);
     try {
-      let data: BatchResponse;
-      if (isFirebaseConfigured()) {
-        data = await updateActivitiesInFirebase(currentUser, updates);
-      } else {
-        const response = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'updateActivitiesBatch', userEmail: currentUser.email, userName: currentUser.nome, userRole: currentUser.role, userDisciplina: currentUser.disciplina, updates }) });
-        data = await response.json();
-      }
+      if (!isFirebaseConfigured()) throw new Error('Firebase nao configurado para Registro de Atividades.');
+      const data = await updateActivitiesInFirebase(currentUser, updates);
       if (!data.success) throw new Error(data.error || 'Erro ao salvar alterações.');
       if (data.registroSnapshot) {
         applyRegistroSnapshot(data.registroSnapshot);

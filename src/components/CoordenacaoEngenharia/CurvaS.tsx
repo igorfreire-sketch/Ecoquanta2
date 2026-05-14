@@ -7,10 +7,7 @@ import {
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 
-import { fetchGlobalDataFromFirebase, isFirebaseConfigured } from '../../lib/firebaseDb';
-
-// COLE AQUI A URL DO SEU GOOGLE APPS SCRIPT DA CURVA S
-const CURVAS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
+import { fetchGlobalDataFromFirebase, isFirebaseConfigured, upsertFirebaseAppData } from '../../lib/firebaseDb';
 
 // NOVOS TIPOS COMPRIMIDOS
 interface CompressedPayload {
@@ -30,17 +27,6 @@ interface CurvasProps {
   isSyncing?: boolean;
   lockedContractCode?: string;
   activeContractCode?: string;
-}
-
-async function fetchCurvaSDataFromAppsScript(): Promise<CompressedPayload> {
-  const response = await fetch(CURVAS_SCRIPT_URL, { cache: 'no-store' });
-  const payload = await response.json();
-
-  if (!payload?.success || !payload?.data) {
-    throw new Error(payload?.error || 'Falha ao carregar Curva S pelo Apps Script.');
-  }
-
-  return payload.data as CompressedPayload;
 }
 
 function round2(value: number) { return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100; }
@@ -177,7 +163,7 @@ function InfoCard({ label, value, highlight, extraClass = "", textColorClass = "
   );
 }
 
-function OsPanel({ data, globalConfig }: { data: any, globalConfig: any, key?: any }) {
+function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConfig: any, onSaveReajuste: (osCode: string, rows: any[][]) => Promise<void>, key?: any }) {
   const chartOnlyRef = useRef<HTMLDivElement>(null);
   const fullPanelRef = useRef<HTMLDivElement>(null);
   const [editMode, setEditMode] = useState(false);
@@ -225,12 +211,9 @@ function OsPanel({ data, globalConfig }: { data: any, globalConfig: any, key?: a
     try {
       const header = ["OS", "Data Base", "Ideal Acumulado (%)", "Real Acumulado (%)"];
       const rows = liveSeries.map((s: any) => [data.osCode, s.dataBase, s.idealAcumulado, s.realAcumulado]);
-      const res = await fetch(CURVAS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'salvarReajuste', dados: [header, ...rows] }) });
-      const result = await res.json();
-      if (result.success) { 
-        alert("Salvo na aba 'Reajustado'!"); setEditMode(false);
-        if (result.newVersion) localStorage.setItem('curvasAppVersion', result.newVersion);
-      } else throw new Error(result.error);
+      await onSaveReajuste(data.osCode, [header, ...rows]);
+      alert("Reajuste salvo no Firebase.");
+      setEditMode(false);
     } catch (err) { alert("Erro ao salvar: " + String(err)); } finally { setIsSaving(false); }
   };
 
@@ -346,13 +329,12 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
     try {
       let nextData: CompressedPayload | null = null;
 
-      if (isFirebaseConfigured()) {
-        const payload = await fetchGlobalDataFromFirebase();
-        if (!payload.eap) throw new Error('Nenhum dado encontrado no Firebase da Curva S.');
-        nextData = payload.eap as CompressedPayload;
-      } else {
-        nextData = await fetchCurvaSDataFromAppsScript();
+      if (!isFirebaseConfigured()) {
+        throw new Error('Firebase nao configurado no ambiente publicado.');
       }
+      const payload = await fetchGlobalDataFromFirebase();
+      if (!payload.eap) throw new Error('Nenhum dado encontrado no Firebase da Curva S.');
+      nextData = payload.eap as CompressedPayload;
 
       if (nextData) {
         localStorage.setItem('curvasAppData', JSON.stringify(nextData));
@@ -379,6 +361,26 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
   }, [preloadedData]);
 
   const activeSyncState = isSyncing || localIsSyncing;
+
+  const saveReajusteToFirebase = async (osCode: string, rows: any[][]) => {
+    if (!rawData) throw new Error('Dados da Curva S nao carregados.');
+    if (!isFirebaseConfigured()) throw new Error('Firebase nao configurado no ambiente publicado.');
+    const header = rows[0] || ["OS", "Data Base", "Ideal Acumulado (%)", "Real Acumulado (%)"];
+    const body = rows.slice(1);
+    const previousRows = Array.isArray(rawData.reajustado) ? rawData.reajustado : [];
+    const preservedRows = previousRows.filter((row) => {
+      const code = normalizeKey(row?.[0]);
+      return code && code !== 'OS' && code !== normalizeKey(osCode);
+    });
+    const nextData = {
+      ...rawData,
+      reajustado: [header, ...preservedRows, ...body],
+      latestEapPublishedAt: new Date().toISOString(),
+    };
+    await upsertFirebaseAppData('eap', nextData);
+    setRawData(nextData);
+    localStorage.setItem('curvasAppData', JSON.stringify(nextData));
+  };
 
   // 2. DESCOMPACTAÇÃO RÁPIDA DA MATRIZ (Lógica do React RLE)
   const hierarchy = useMemo(() => {
@@ -582,7 +584,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
       ) : (
         <div className="space-y-4">
           {chartsData.map((data: any) => (
-            <OsPanel key={data.osCode} data={data} globalConfig={{ viewMode, startDate, endDate }} />
+            <OsPanel key={data.osCode} data={data} globalConfig={{ viewMode, startDate, endDate }} onSaveReajuste={saveReajusteToFirebase} />
           ))}
         </div>
       )}

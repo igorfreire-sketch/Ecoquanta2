@@ -57,6 +57,7 @@ interface RegistroDataResponse {
   childrenByParent?: Record<string, any[]>;
   rootCodes?: string[];
   professionals: any[];
+  activitiesList?: any[];
   activeActivities: any[];
   completedActivities: any[];
 }
@@ -205,7 +206,7 @@ function activityMatchesUser(activity: any, user: AuthUserLike, professionals: a
 }
 
 function normalizeFirestoreRecord(snapshot: any) {
-  const data = snapshot.data ? snapshot.data() : snapshot;
+  const data = typeof snapshot?.data === 'function' ? snapshot.data() : snapshot;
   return {
     ...data,
     activityId: String(data?.activityId || snapshot.id || ''),
@@ -226,12 +227,7 @@ async function getAppDataDoc<T>(dbRef: Firestore, name: string): Promise<T | nul
   if (!snapshot.exists()) return null;
   const payload = snapshot.data();
   if (payload.chunked && Number(payload.chunkCount || 0) > 0) {
-    const chunkSnapshot = await getDocs(collection(dbRef, 'appData', name, 'chunks'));
-    const jsonText = chunkSnapshot.docs
-      .map((entry) => ({ id: entry.id, value: String(entry.data()?.value || '') }))
-      .sort((a, b) => a.id.localeCompare(b.id))
-      .map((entry) => entry.value)
-      .join('');
+    const jsonText = (await readChunkedAppData(dbRef, name, Number(payload.chunkCount || 0))).join('');
     return JSON.parse(jsonText) as T;
   }
   if (typeof payload.dataJson === 'string') {
@@ -240,10 +236,71 @@ async function getAppDataDoc<T>(dbRef: Firestore, name: string): Promise<T | nul
   return ((payload.data && typeof payload.data === 'object') ? payload.data : payload) as T;
 }
 
+async function readChunkedAppData(dbRef: Firestore, name: string, chunkCount: number) {
+  const expectedIds = Array.from({ length: chunkCount }, (_, index) => String(index).padStart(5, '0'));
+  const expectedSnapshots = await Promise.all(
+    expectedIds.map((id) => getDoc(doc(dbRef, 'appData', name, 'chunks', id))),
+  );
+  const expectedValues = expectedSnapshots.map((entry) => String(entry.exists() ? entry.data()?.value || '' : ''));
+
+  if (expectedValues.every((value) => value.length > 0)) return expectedValues;
+
+  const chunkSnapshot = await getDocs(collection(dbRef, 'appData', name, 'chunks'));
+  const valuesById = new Map(
+    chunkSnapshot.docs.map((entry) => [entry.id, String(entry.data()?.value || '')]),
+  );
+  const mergedValues = expectedIds.map((id, index) => expectedValues[index] || valuesById.get(id) || '');
+
+  if (mergedValues.every((value) => value.length > 0)) return mergedValues;
+
+  return chunkSnapshot.docs
+    .map((entry) => ({ id: entry.id, value: String(entry.data()?.value || '') }))
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((entry) => entry.value);
+}
+
 function unwrapPublicData(payload: any, key?: string) {
   const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
   if (key && data?.[key] !== undefined) return data[key];
   return data;
+}
+
+function isNonEmptyObject(value: any) {
+  return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
+}
+
+function mergePublishedRegistro(...sources: any[]) {
+  const out: any = {};
+
+  sources.forEach((source) => {
+    if (!source || typeof source !== 'object') return;
+
+    Object.entries(source).forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        if (value.length > 0 || !Array.isArray(out[key])) out[key] = value;
+        return;
+      }
+
+      if (value && typeof value === 'object') {
+        if (isNonEmptyObject(value) || !isNonEmptyObject(out[key])) out[key] = value;
+        return;
+      }
+
+      if (value !== undefined && value !== null && value !== '') out[key] = value;
+    });
+  });
+
+  return out;
+}
+
+function hasFullEapData(value: any) {
+  const data = value?.data && typeof value.data === 'object' ? value.data : value;
+  return Boolean(
+    data
+    && typeof data === 'object'
+    && Array.isArray(data.atual)
+    && data.atual.length > 0,
+  );
 }
 
 async function tryPublic<T>(label: string, loader: () => Promise<T>): Promise<T | null> {
@@ -261,20 +318,23 @@ async function fetchBootstrapDataFromPublicJson(): Promise<GlobalData> {
     tryPublic('app-administracao.json', () => fetchAdminModulePublicData<any>()),
     tryPublic('eap-unificada.json', () => fetchEapPublicData<any>()),
   ]);
+  const eapData = unwrapPublicData(eapPayload);
+  const registro = mergePublishedRegistro(unwrapPublicData(registroPayload, 'registro'), eapData?.registro);
 
   return {
-    registro: unwrapPublicData(registroPayload, 'registro') || undefined,
+    registro: isNonEmptyObject(registro) ? registro : undefined,
     admin: unwrapPublicData(adminPayload, 'admin') || undefined,
-    eap: unwrapPublicData(eapPayload) || undefined,
+    eap: eapData || undefined,
   };
 }
 
 async function fetchEapDataFromPublicSources(): Promise<any | null> {
   const publicPayload = await tryPublic('eap-unificada.json', () => fetchEapPublicData<any>());
   const publicData = unwrapPublicData(publicPayload);
-  if (publicData) return publicData;
+  if (hasFullEapData(publicData)) return publicData;
 
-  return tryPublic('EAP Apps Script', () => fetchEapAppsScriptData<any>());
+  const appsScriptData = await tryPublic('EAP Apps Script', () => fetchEapAppsScriptData<any>());
+  return hasFullEapData(appsScriptData) ? appsScriptData : null;
 }
 
 async function fetchCronogramaDataFromPublicJson(): Promise<any[]> {
@@ -286,8 +346,11 @@ async function fetchCronogramaDataFromPublicJson(): Promise<any[]> {
 }
 
 async function fetchRegistroDataFromPublicJson(user: AuthUserLike): Promise<RegistroDataResponse> {
-  const payload = await tryPublic('app-registro.json', () => fetchRegistroModulePublicData<any>());
-  const registro = unwrapPublicData(payload, 'registro') || {};
+  const [payload, eapPayload] = await Promise.all([
+    tryPublic('app-registro.json', () => fetchRegistroModulePublicData<any>()),
+    tryPublic('eap-unificada.json', () => fetchEapPublicData<any>()),
+  ]);
+  const registro = mergePublishedRegistro(unwrapPublicData(payload, 'registro'), unwrapPublicData(eapPayload)?.registro);
   const activitiesList = Array.isArray(registro.activitiesList) ? registro.activitiesList.map(normalizeFirestoreRecord) : [];
   const professionals = getProfessionalsForUser(registro, user);
   const split = splitActivitiesForUser(activitiesList, user, professionals);
@@ -301,6 +364,7 @@ async function fetchRegistroDataFromPublicJson(user: AuthUserLike): Promise<Regi
     childrenByParent: registro.childrenByParent || {},
     rootCodes: registro.rootCodes || [],
     professionals,
+    activitiesList,
     activeActivities: split.activeActivities,
     completedActivities: split.completedActivities,
   };
@@ -318,14 +382,20 @@ export async function fetchGlobalDataFromFirebase(user?: AuthUserLike): Promise<
     getAppDataDoc<any>(dbRef, 'eap'),
   ]);
 
+  const registroData = mergePublishedRegistro(registro, eap?.registro);
   const activitiesSnapshot = await getDocs(collection(dbRef, 'registroAtividades'));
-  const activitiesList = activitiesSnapshot.docs.map(normalizeFirestoreRecord);
-  const professionals = getProfessionalsForUser(registro, user || {});
+  const liveActivitiesList = activitiesSnapshot.docs.map(normalizeFirestoreRecord);
+  const activitiesList = liveActivitiesList.length > 0
+    ? liveActivitiesList
+    : Array.isArray(registroData.activitiesList)
+      ? registroData.activitiesList.map(normalizeFirestoreRecord)
+      : [];
+  const professionals = getProfessionalsForUser(registroData, user || {});
   const split = splitActivitiesForUser(activitiesList, user || {}, professionals);
 
   const fullData: GlobalData = {
     registro: {
-      ...(registro || {}),
+      ...registroData,
       activitiesList,
       activeActivities: split.activeActivities,
       completedActivities: split.completedActivities,
@@ -335,18 +405,6 @@ export async function fetchGlobalDataFromFirebase(user?: AuthUserLike): Promise<
     cronograma: cronograma || undefined,
     eap: eap || undefined,
   };
-
-  if (eap?.registro) {
-    fullData.registro = {
-      ...fullData.registro,
-      contracts: Array.isArray(eap.registro.contracts) ? eap.registro.contracts : fullData.registro.contracts,
-      osOptions: Array.isArray(eap.registro.osOptions) ? eap.registro.osOptions : fullData.registro.osOptions,
-      itemOptions: Array.isArray(eap.registro.itemOptions) ? eap.registro.itemOptions : fullData.registro.itemOptions,
-      hierarchyNodes: Array.isArray(eap.registro.hierarchyNodes) ? eap.registro.hierarchyNodes : fullData.registro.hierarchyNodes,
-      childrenByParent: eap.registro.childrenByParent || fullData.registro.childrenByParent,
-      rootCodes: Array.isArray(eap.registro.rootCodes) ? eap.registro.rootCodes : fullData.registro.rootCodes,
-    };
-  }
 
   return fullData;
 }
@@ -359,14 +417,16 @@ export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
     }
     await ensureFirebaseAuth();
     const dbRef = getDb();
-    const [menu, admin] = await Promise.all([
+    const [menu, registroBase, admin] = await Promise.all([
       getAppDataDoc<any>(dbRef, 'menu'),
+      getAppDataDoc<any>(dbRef, 'registro'),
       getAppDataDoc<any>(dbRef, 'admin'),
     ]);
+    const registro = mergePublishedRegistro(registroBase, menu?.registro || menu);
 
     return {
       admin: admin || undefined,
-      registro: menu?.registro || menu || undefined,
+      registro: isNonEmptyObject(registro) ? registro : undefined,
       eap: menu?.eapResumo ? {
         latestEapSheet: menu.eapResumo.latestEapSheet || '',
         latestEapDate: menu.eapResumo.latestEapDate || '',
@@ -385,7 +445,8 @@ export async function fetchEapDataFromFirebase(): Promise<any> {
     if (!isFirebaseConfigured()) return fetchEapDataFromPublicSources();
     await ensureFirebaseAuth();
     const dbRef = getDb();
-    return await getAppDataDoc<any>(dbRef, 'eap') || await fetchEapDataFromPublicSources();
+    const eapData = await getAppDataDoc<any>(dbRef, 'eap');
+    return hasFullEapData(eapData) ? eapData : await fetchEapDataFromPublicSources();
   } catch (error) {
     console.error('❌ Erro ao fetch EAP data:', error);
     return fetchEapDataFromPublicSources();
@@ -433,12 +494,13 @@ export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise
       getAppDataDoc<any>(dbRef, 'menu'),
     ]);
     const activitiesSnapshot = await getDocs(collection(dbRef, 'registroAtividades'));
-    const activitiesList = activitiesSnapshot.docs.map(normalizeFirestoreRecord);
-    const registro = {
-      ...(registroBase || {}),
-      ...(menu?.registro || {}),
-      activitiesList,
-    };
+    const liveActivitiesList = activitiesSnapshot.docs.map(normalizeFirestoreRecord);
+    const registro = mergePublishedRegistro(registroBase, menu?.registro || menu, { activitiesList: liveActivitiesList });
+    const activitiesList = liveActivitiesList.length > 0
+      ? liveActivitiesList
+      : Array.isArray(registro.activitiesList)
+        ? registro.activitiesList.map(normalizeFirestoreRecord)
+        : [];
     const professionals = getProfessionalsForUser(registro, user);
     const split = splitActivitiesForUser(activitiesList, user, professionals);
 
@@ -451,6 +513,7 @@ export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise
       childrenByParent: registro.childrenByParent || {},
       rootCodes: registro.rootCodes || [],
       professionals,
+      activitiesList,
       activeActivities: split.activeActivities,
       completedActivities: split.completedActivities,
     };

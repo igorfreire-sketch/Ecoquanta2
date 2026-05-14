@@ -227,6 +227,10 @@ function hasRegistroHierarchy(registro: any) {
     && Array.isArray(registro?.itemOptions) && registro.itemOptions.length > 0;
 }
 
+function hasNonEmptyArray(value: any) {
+  return Array.isArray(value) && value.length > 0;
+}
+
 function mergeGlobalData(base: GlobalData, incoming?: Partial<GlobalData> | null): GlobalData {
   if (!incoming || typeof incoming !== 'object') return base;
   const baseActivities = Array.isArray(base.registro?.activitiesList) ? base.registro.activitiesList : [];
@@ -261,12 +265,12 @@ function applyUnifiedEapData(data: GlobalData, eapData: any): GlobalData {
   if (eapData.registro && typeof eapData.registro === 'object') {
     next.registro = {
       ...(next.registro || {}),
-      contracts: Array.isArray(eapData.registro.contracts) ? eapData.registro.contracts : next.registro?.contracts,
-      osOptions: Array.isArray(eapData.registro.osOptions) ? eapData.registro.osOptions : next.registro?.osOptions,
-      itemOptions: Array.isArray(eapData.registro.itemOptions) ? eapData.registro.itemOptions : next.registro?.itemOptions,
-      hierarchyNodes: Array.isArray(eapData.registro.hierarchyNodes) ? eapData.registro.hierarchyNodes : next.registro?.hierarchyNodes,
-      childrenByParent: eapData.registro.childrenByParent && typeof eapData.registro.childrenByParent === 'object' ? eapData.registro.childrenByParent : next.registro?.childrenByParent,
-      rootCodes: Array.isArray(eapData.registro.rootCodes) ? eapData.registro.rootCodes : next.registro?.rootCodes,
+      contracts: hasNonEmptyArray(eapData.registro.contracts) ? eapData.registro.contracts : next.registro?.contracts,
+      osOptions: hasNonEmptyArray(eapData.registro.osOptions) ? eapData.registro.osOptions : next.registro?.osOptions,
+      itemOptions: hasNonEmptyArray(eapData.registro.itemOptions) ? eapData.registro.itemOptions : next.registro?.itemOptions,
+      hierarchyNodes: hasNonEmptyArray(eapData.registro.hierarchyNodes) ? eapData.registro.hierarchyNodes : next.registro?.hierarchyNodes,
+      childrenByParent: eapData.registro.childrenByParent && typeof eapData.registro.childrenByParent === 'object' && Object.keys(eapData.registro.childrenByParent).length > 0 ? eapData.registro.childrenByParent : next.registro?.childrenByParent,
+      rootCodes: hasNonEmptyArray(eapData.registro.rootCodes) ? eapData.registro.rootCodes : next.registro?.rootCodes,
     };
   }
 
@@ -500,8 +504,9 @@ function filterRowsByContract(rows: any[], contractCode: string) {
   const target = String(contractCode || '').trim();
   if (!target) return Array.isArray(rows) ? rows : [];
   return (Array.isArray(rows) ? rows : []).filter((row: any) => {
-    const code = String(row?.code || row?.codigo || '').trim();
-    const rowContract = String(row?.contractCode || row?.contratoCodigo || '').trim();
+    const arrayCode = Array.isArray(row) ? String(row[0] || '').trim() : '';
+    const code = String(row?.code || row?.codigo || arrayCode).trim();
+    const rowContract = String(row?.contractCode || row?.contratoCodigo || (arrayCode ? arrayCode.split('.')[0] : '')).trim();
     return code === target || code.startsWith(`${target}.`) || rowContract === target;
   });
 }
@@ -938,11 +943,7 @@ export default function App() {
       } else if (moduleName === 'eap') {
         const eap = await fetchEapDataFromFirebase();
         setGlobalData((prev) => {
-          const next = {
-            ...prev,
-            eap,
-            registro: eap?.registro ? { ...(prev.registro || {}), ...eap.registro } : prev.registro,
-          };
+          const next = applyUnifiedEapData(prev, eap);
           saveGlobalDataCache(next);
           return next;
         });

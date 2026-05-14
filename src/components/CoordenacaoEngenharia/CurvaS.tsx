@@ -29,6 +29,18 @@ interface CurvasProps {
   activeContractCode?: string;
 }
 
+function resolveCurvaPayload(payload: any): CompressedPayload | null {
+  const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
+  if (!data || typeof data !== 'object') return null;
+  if (!Array.isArray(data.atual) || data.atual.length === 0) return null;
+
+  return {
+    ...data,
+    dates: Array.isArray(data.dates) ? data.dates : [],
+    timeline: data.timeline && typeof data.timeline === 'object' ? data.timeline : {},
+  } as CompressedPayload;
+}
+
 function round2(value: number) { return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100; }
 function toNumberSafe(val: any): number {
   if (val === null || val === undefined || val === '') return 0;
@@ -314,14 +326,21 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
   const fetchCurvasData = async (forceRefresh = false) => {
     setError('');
     const localDataStr = localStorage.getItem('curvasAppData');
+    let cachedData: CompressedPayload | null = null;
+    if (localDataStr) {
+      try {
+        cachedData = resolveCurvaPayload(JSON.parse(localDataStr));
+      } catch (error) {}
+    }
+    const hasValidPreloadedData = Boolean(resolveCurvaPayload(preloadedData));
 
     if (forceRefresh) {
       setLoading(true);
     } else {
-      if (localDataStr && !preloadedData) {
-        setRawData(JSON.parse(localDataStr));
+      if (cachedData && !hasValidPreloadedData) {
+        setRawData(cachedData);
         setLocalIsSyncing(true);
-      } else if (!preloadedData) {
+      } else if (!hasValidPreloadedData) {
         setLoading(true);
       }
     }
@@ -329,7 +348,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
     try {
       let nextData: CompressedPayload | null = null;
 
-      nextData = await fetchEapDataFromFirebase() as CompressedPayload;
+      nextData = resolveCurvaPayload(await fetchEapDataFromFirebase());
       if (!nextData) throw new Error('Nenhum dado publicado encontrado para a Curva S.');
 
       if (nextData) {
@@ -348,8 +367,10 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
 
   useEffect(() => {
     // Se o App principal passou a prop preloadedData, usamos ela! 
-    if (preloadedData && Object.keys(preloadedData).length > 0) {
-      setRawData(preloadedData);
+    const resolvedPreloadedData = resolveCurvaPayload(preloadedData);
+    if (resolvedPreloadedData) {
+      setError('');
+      setRawData(resolvedPreloadedData);
     } else {
       // Caso contrário (rodando sozinho), faz o fetch local
       void fetchCurvasData();

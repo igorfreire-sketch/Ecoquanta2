@@ -34,6 +34,11 @@ export type DisciplinaOption = string;
 export type CargoOption = string;
 export type RoleTabPermissions = Record<string, AppTabKey[]>;
 
+export interface DisciplineSettingRecord {
+  nome: string;
+  showInCharts: boolean;
+}
+
 export interface UserAccessRecord {
   id: string;
   nome: string;
@@ -44,6 +49,7 @@ export interface UserAccessRecord {
   alocacao: string;
   contrato: string;
   isAdmin: boolean;
+  onlyThirdParty: boolean;
   status: UserStatus;
   allowedTabs: AppTabKey[];
 }
@@ -65,6 +71,7 @@ export interface TerceirizadaRecord {
 interface AdministracaoProps {
   usuarios: UserAccessRecord[];
   disciplinas: DisciplinaOption[];
+  disciplineSettings: DisciplineSettingRecord[];
   cargos: CargoOption[];
   alocacoes: string[];
   terceirizadas: TerceirizadaRecord[];
@@ -85,6 +92,7 @@ interface AdministracaoProps {
   onPasswordReset: (user: UserAccessRecord) => Promise<void>;
   onAddDisciplina: (value: string) => Promise<void>;
   onRemoveDisciplina: (value: string) => Promise<void>;
+  onToggleDisciplineCharts: (value: string, checked: boolean) => Promise<void>;
   onAddCargo: (value: string) => Promise<void>;
   onRemoveCargo: (value: string) => Promise<void>;
   onAddAlocacao: (value: string) => Promise<void>;
@@ -263,6 +271,126 @@ function InlineListManager({
             >
               <Trash2 size={15} />
             </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DisciplineSettingsManager({
+  items,
+  settings,
+  onAdd,
+  onRemove,
+  onToggleCharts,
+}: {
+  items: string[];
+  settings: DisciplineSettingRecord[];
+  onAdd: (value: string) => Promise<void>;
+  onRemove: (value: string) => Promise<void>;
+  onToggleCharts: (value: string, checked: boolean) => Promise<void>;
+}) {
+  const [novoValor, setNovoValor] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const [savingByName, setSavingByName] = React.useState<Record<string, boolean>>({});
+
+  const itemsWithSettings = React.useMemo(() => items.map((item) => {
+    const setting = settings.find((entry) => entry.nome === item);
+    return {
+      nome: item,
+      showInCharts: setting?.showInCharts !== false,
+    };
+  }), [items, settings]);
+
+  const handleAdd = async () => {
+    const limpo = novoValor.trim();
+    if (!limpo) return;
+    setLoading(true);
+    try {
+      await onAdd(limpo);
+      setNovoValor('');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggle = async (nome: string, checked: boolean) => {
+    setSavingByName((prev) => ({ ...prev, [nome]: true }));
+    try {
+      await onToggleCharts(nome, checked);
+    } finally {
+      setSavingByName((prev) => ({ ...prev, [nome]: false }));
+    }
+  };
+
+  return (
+    <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
+      <div>
+        <h3 className="text-[16px] font-bold text-[#2D2D2D]">Graficos por Disciplina</h3>
+        <p className="text-[13px] text-[#757575] mt-1">
+          Adicione ou remova disciplinas e defina quais delas aparecem nos graficos.
+        </p>
+      </div>
+
+      <div className="flex gap-3">
+        <input
+          value={novoValor}
+          onChange={(e) => setNovoValor(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void handleAdd();
+            }
+          }}
+          className="bentham-input"
+          placeholder="Nova disciplina"
+        />
+
+        <button
+          type="button"
+          onClick={() => void handleAdd()}
+          disabled={loading}
+          className="h-11 px-5 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center gap-2 shrink-0 disabled:opacity-70"
+        >
+          <Plus size={16} />
+          Adicionar
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {itemsWithSettings.length === 0 && (
+          <span className="text-[13px] text-[#757575]">Nenhuma disciplina cadastrada.</span>
+        )}
+
+        {itemsWithSettings.map((item) => (
+          <div
+            key={item.nome}
+            className="flex flex-col gap-3 rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] p-4"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[14px] font-bold text-[#2D2D2D]">{item.nome}</span>
+
+              <button
+                type="button"
+                onClick={() => void onRemove(item.nome)}
+                className="text-[#757575] hover:text-[#EF4444] transition-colors"
+                title={`Remover ${item.nome}`}
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+
+            <label className="min-h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center justify-between gap-3 cursor-pointer">
+              <span className="text-[13px] font-medium text-[#2D2D2D]">Aparecer em graficos</span>
+              <input
+                type="checkbox"
+                checked={item.showInCharts}
+                disabled={Boolean(savingByName[item.nome])}
+                onChange={(e) => void handleToggle(item.nome, e.target.checked)}
+                className="w-4 h-4 accent-[#F05D28] cursor-pointer"
+              />
+            </label>
           </div>
         ))}
       </div>
@@ -574,6 +702,7 @@ function TerceirizadasManager({
 export default function Administracao({
   usuarios,
   disciplinas,
+  disciplineSettings,
   cargos,
   alocacoes,
   terceirizadas,
@@ -594,6 +723,7 @@ export default function Administracao({
   onPasswordReset,
   onAddDisciplina,
   onRemoveDisciplina,
+  onToggleDisciplineCharts,
   onAddCargo,
   onRemoveCargo,
   onAddAlocacao,
@@ -877,6 +1007,21 @@ export default function Administracao({
                   </label>
                 </div>
 
+                <div className="flex flex-col gap-1.5">
+                  <label className="bentham-label">Somente terceirizados</label>
+                  <label className="h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center justify-between cursor-pointer">
+                    <span className="text-[13px] font-medium text-[#2D2D2D]">
+                      {user.onlyThirdParty ? 'Sim' : 'Nao'}
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={user.onlyThirdParty}
+                      onChange={(e) => onUpdateUsuario(user.id, { onlyThirdParty: e.target.checked })}
+                      className="w-4 h-4 accent-[#F05D28] cursor-pointer"
+                    />
+                  </label>
+                </div>
+
                 </div>
 
                 <div className="flex flex-col gap-1.5 min-w-0">
@@ -963,6 +1108,16 @@ export default function Administracao({
           placeholder="Nova alocação"
           onAdd={onAddAlocacao}
           onRemove={onRemoveAlocacao}
+        />
+      </section>
+
+      <section className="grid grid-cols-1 gap-6">
+        <DisciplineSettingsManager
+          items={disciplinas}
+          settings={disciplineSettings}
+          onAdd={onAddDisciplina}
+          onRemove={onRemoveDisciplina}
+          onToggleCharts={onToggleDisciplineCharts}
         />
       </section>
 

@@ -815,9 +815,13 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
 
   const filteredProfessionals = useMemo(() => {
     const myDiscipline = String(currentUser.disciplina || '').trim().toLowerCase();
-    if (!myDiscipline) return professionals;
-    return professionals.filter(p => String(p.disciplina || '').trim().toLowerCase() === myDiscipline);
-  }, [professionals, currentUser.disciplina]);
+    const disciplineFiltered = !myDiscipline
+      ? professionals
+      : professionals.filter((p) => String(p.disciplina || '').trim().toLowerCase() === myDiscipline);
+
+    if (!currentUser.onlyThirdParty) return disciplineFiltered;
+    return disciplineFiltered.filter((p) => String(p.email || '').startsWith('terceirizada:'));
+  }, [professionals, currentUser.disciplina, currentUser.onlyThirdParty]);
 
   const selectedContract = useMemo(() => contracts.find((c) => c.codigo === formData.contratoCodigo), [contracts, formData.contratoCodigo]);
   const filteredOs = useMemo(() => {

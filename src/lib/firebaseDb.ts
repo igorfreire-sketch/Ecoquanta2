@@ -38,6 +38,7 @@ interface AuthUserLike {
   disciplina?: string;
   contrato?: string;
   isAdmin?: boolean;
+  onlyThirdParty?: boolean;
 }
 
 interface GlobalData {
@@ -57,6 +58,7 @@ interface RegistroDataResponse {
   childrenByParent?: Record<string, any[]>;
   rootCodes?: string[];
   professionals: any[];
+  professionalsByDisciplina?: Record<string, any[]>;
   activitiesList?: any[];
   activeActivities: any[];
   completedActivities: any[];
@@ -172,6 +174,58 @@ function normalizeEmail(value?: string) {
 
 function normalizeDiscipline(value?: string) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+function buildThirdPartyEmail(id?: string, nome?: string) {
+  const safeId = String(id || '').trim();
+  if (safeId) return `terceirizada:${safeId}`;
+  return `terceirizada:${normalizeDiscipline(nome) || 'sem-id'}`;
+}
+
+function mergeRegistroProfessionalsByDiscipline(registro: any, admin?: any) {
+  const base = registro?.professionalsByDisciplina && typeof registro.professionalsByDisciplina === 'object'
+    ? registro.professionalsByDisciplina
+    : {};
+  const merged = Object.fromEntries(
+    Object.entries(base).map(([key, value]) => [key, Array.isArray(value) ? [...value] : []]),
+  ) as Record<string, any[]>;
+  const terceirizadas = Array.isArray(admin?.terceirizadas) ? admin.terceirizadas : [];
+
+  terceirizadas.forEach((item: any) => {
+    const nome = String(item?.nome || '').trim();
+    const disciplina = String(item?.disciplina || '').trim() || 'Sem disciplina';
+    if (!nome) return;
+
+    const bucketKey = Object.keys(merged).find((key) => normalizeDiscipline(key) === normalizeDiscipline(disciplina)) || disciplina;
+    const bucket = Array.isArray(merged[bucketKey]) ? [...merged[bucketKey]] : [];
+    const email = buildThirdPartyEmail(item?.id, nome);
+    const exists = bucket.some((entry: any) => normalizeEmail(entry?.email) === normalizeEmail(email));
+
+    if (!exists) {
+      bucket.push({
+        nome,
+        email,
+        cargo: 'Terceirizada',
+        disciplina,
+        isThirdParty: true,
+      });
+    }
+
+    merged[bucketKey] = bucket;
+  });
+
+  return merged;
+}
+
+function userOnlySeesThirdParties(user: AuthUserLike, admin?: any) {
+  if (user.onlyThirdParty) return true;
+  const users = Array.isArray(admin?.users)
+    ? admin.users
+    : admin?.usersByEmail && typeof admin.usersByEmail === 'object'
+      ? Object.values(admin.usersByEmail)
+      : [];
+  const match = users.find((item: any) => normalizeEmail(item?.email) === normalizeEmail(user.email));
+  return Boolean(match?.onlyThirdParty || match?.onlyThirdPartyUsers || match?.somenteTerceirizados);
 }
 
 function isLeadershipOrAdmin(user: AuthUserLike) {
@@ -346,13 +400,16 @@ async function fetchCronogramaDataFromPublicJson(): Promise<any[]> {
 }
 
 async function fetchRegistroDataFromPublicJson(user: AuthUserLike): Promise<RegistroDataResponse> {
-  const [payload, eapPayload] = await Promise.all([
+  const [payload, adminPayload, eapPayload] = await Promise.all([
     tryPublic('app-registro.json', () => fetchRegistroModulePublicData<any>()),
+    tryPublic('app-administracao.json', () => fetchAdminModulePublicData<any>()),
     tryPublic('eap-unificada.json', () => fetchEapPublicData<any>()),
   ]);
   const registro = mergePublishedRegistro(unwrapPublicData(payload, 'registro'), unwrapPublicData(eapPayload)?.registro);
+  const admin = unwrapPublicData(adminPayload, 'admin') || undefined;
   const activitiesList = Array.isArray(registro.activitiesList) ? registro.activitiesList.map(normalizeFirestoreRecord) : [];
-  const professionals = getProfessionalsForUser(registro, user);
+  const professionalsByDisciplina = mergeRegistroProfessionalsByDiscipline(registro, admin);
+  const professionals = getProfessionalsForUser({ ...registro, professionalsByDisciplina }, user, admin);
   const split = splitActivitiesForUser(activitiesList, user, professionals);
 
   return {
@@ -363,6 +420,7 @@ async function fetchRegistroDataFromPublicJson(user: AuthUserLike): Promise<Regi
     hierarchyNodes: registro.hierarchyNodes || [],
     childrenByParent: registro.childrenByParent || {},
     rootCodes: registro.rootCodes || [],
+    professionalsByDisciplina,
     professionals,
     activitiesList,
     activeActivities: split.activeActivities,
@@ -390,12 +448,14 @@ export async function fetchGlobalDataFromFirebase(user?: AuthUserLike): Promise<
     : Array.isArray(registroData.activitiesList)
       ? registroData.activitiesList.map(normalizeFirestoreRecord)
       : [];
-  const professionals = getProfessionalsForUser(registroData, user || {});
+  const professionalsByDisciplina = mergeRegistroProfessionalsByDiscipline(registroData, admin);
+  const professionals = getProfessionalsForUser({ ...registroData, professionalsByDisciplina }, user || {}, admin);
   const split = splitActivitiesForUser(activitiesList, user || {}, professionals);
 
   const fullData: GlobalData = {
     registro: {
       ...registroData,
+      professionalsByDisciplina,
       activitiesList,
       activeActivities: split.activeActivities,
       completedActivities: split.completedActivities,
@@ -468,17 +528,23 @@ export async function fetchCronogramaDataFromFirebase(): Promise<any[]> {
   }
 }
 
-function getProfessionalsForUser(registro: any, user: AuthUserLike) {
-  const byDiscipline = registro?.professionalsByDisciplina;
+function getProfessionalsForUser(registro: any, user: AuthUserLike, admin?: any) {
+  const byDiscipline = mergeRegistroProfessionalsByDiscipline(registro, admin);
   if (!byDiscipline || typeof byDiscipline !== 'object') return Array.isArray(registro?.professionals) ? registro.professionals : [];
 
+  const onlyThirdParty = userOnlySeesThirdParties(user, admin);
+  const filterVisibleProfessionals = (items: any[]) => {
+    if (!onlyThirdParty) return items;
+    return items.filter((item) => String(item?.email || '').startsWith('terceirizada:'));
+  };
+
   if (isLeadershipOrAdmin(user)) {
-    return Object.values(byDiscipline).flat().filter(Boolean);
+    return filterVisibleProfessionals(Object.values(byDiscipline).flat().filter(Boolean));
   }
 
   const target = normalizeDiscipline(user.disciplina) || normalizeDiscipline('Sem disciplina');
   const entry = Object.entries(byDiscipline).find(([key, value]) => normalizeDiscipline(key) === target && Array.isArray(value));
-  return (entry?.[1] as any[]) || [];
+  return filterVisibleProfessionals((entry?.[1] as any[]) || []);
 }
 
 export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise<RegistroDataResponse> {
@@ -489,19 +555,21 @@ export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise
     
     await ensureFirebaseAuth();
     const dbRef = getDb();
-    const [registroBase, menu] = await Promise.all([
+    const [registroBase, menu, admin] = await Promise.all([
       getAppDataDoc<any>(dbRef, 'registro'),
       getAppDataDoc<any>(dbRef, 'menu'),
+      getAppDataDoc<any>(dbRef, 'admin'),
     ]);
     const activitiesSnapshot = await getDocs(collection(dbRef, 'registroAtividades'));
     const liveActivitiesList = activitiesSnapshot.docs.map(normalizeFirestoreRecord);
     const registro = mergePublishedRegistro(registroBase, menu?.registro || menu, { activitiesList: liveActivitiesList });
+    const professionalsByDisciplina = mergeRegistroProfessionalsByDiscipline(registro, admin);
     const activitiesList = liveActivitiesList.length > 0
       ? liveActivitiesList
       : Array.isArray(registro.activitiesList)
         ? registro.activitiesList.map(normalizeFirestoreRecord)
         : [];
-    const professionals = getProfessionalsForUser(registro, user);
+    const professionals = getProfessionalsForUser({ ...registro, professionalsByDisciplina }, user, admin);
     const split = splitActivitiesForUser(activitiesList, user, professionals);
 
     return {
@@ -512,6 +580,7 @@ export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise
       hierarchyNodes: registro.hierarchyNodes || [],
       childrenByParent: registro.childrenByParent || {},
       rootCodes: registro.rootCodes || [],
+      professionalsByDisciplina,
       professionals,
       activitiesList,
       activeActivities: split.activeActivities,

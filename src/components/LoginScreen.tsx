@@ -10,6 +10,7 @@ export interface AuthUser {
   status: string;
   abas: string[];
   isAdmin: boolean;
+  onlyThirdParty?: boolean;
   online?: boolean;
   sessionVersion?: string;
 }

@@ -116,6 +116,22 @@ function normalizeText(value?: string) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 }
 
+function normalizeDisciplineSetting(value: any) {
+  if (typeof value === 'string') {
+    const nome = value.trim();
+    return nome ? { nome, showInCharts: true } : null;
+  }
+
+  if (!value || typeof value !== 'object') return null;
+  const nome = String(value?.nome || value?.name || '').trim();
+  if (!nome) return null;
+
+  return {
+    nome,
+    showInCharts: value?.showInCharts !== false,
+  };
+}
+
 function disciplinaKey(value?: string) {
   return `disc_${normalizeText(value).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'sem_disciplina'}`;
 }
@@ -610,13 +626,37 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   );
 
   const disciplinasCadastradas = React.useMemo(() => {
-    const fromAdmin = Array.isArray(preloadedData?.admin?.disciplinas) ? preloadedData.admin.disciplinas : [];
+    const adminDisciplinasBrutas = Array.isArray(preloadedData?.admin?.disciplinas) ? preloadedData.admin.disciplinas : [];
+    const adminDisciplineSettings = adminDisciplinasBrutas
+      .map((item: any) => normalizeDisciplineSetting(item))
+      .filter(Boolean) as Array<{ nome: string; showInCharts: boolean }>;
+    const fromAdmin = adminDisciplineSettings.map((item) => item.nome);
     const fromRegistro = Array.isArray(preloadedData?.registro?.usersSummary)
       ? preloadedData.registro.usersSummary.map((user: any) => String(user?.disciplina || '').trim()).filter(Boolean)
       : [];
     const fromActivities = tableData.map((item) => String(item.disciplina || '').trim()).filter(Boolean);
     return Array.from(new Set([...fromAdmin, ...fromRegistro, ...fromActivities]));
   }, [preloadedData?.admin?.disciplinas, preloadedData?.registro?.usersSummary, tableData]);
+
+  const disciplinasGraficos = React.useMemo(() => {
+    const adminDisciplinasBrutas = Array.isArray(preloadedData?.admin?.disciplinas) ? preloadedData.admin.disciplinas : [];
+    const adminDisciplineSettings = adminDisciplinasBrutas
+      .map((item: any) => normalizeDisciplineSetting(item))
+      .filter(Boolean) as Array<{ nome: string; showInCharts: boolean }>;
+
+    if (adminDisciplineSettings.length === 0) return disciplinasCadastradas;
+
+    const visibles = adminDisciplineSettings
+      .filter((item) => item.showInCharts !== false)
+      .map((item) => item.nome)
+      .filter(Boolean);
+
+    return visibles.length > 0 ? visibles : disciplinasCadastradas;
+  }, [disciplinasCadastradas, preloadedData?.admin?.disciplinas]);
+
+  const disciplinasGraficosSet = React.useMemo(() => {
+    return new Set(disciplinasGraficos.map((item) => normalizeText(item)).filter(Boolean));
+  }, [disciplinasGraficos]);
 
   const [filtrosComposicao, setFiltrosComposicao] = React.useState<FiltrosLocais>({
     contrato: filtroContratoGlobal,
@@ -752,6 +792,10 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
     return filterByContractOsAndDiscipline(tableData, filtrosComposicao, filtroDisciplina);
   }, [tableData, filtrosComposicao, filtroDisciplina]);
 
+  const tableComposicaoGraficos = React.useMemo(() => {
+    return tableComposicaoFiltrada.filter((item) => disciplinasGraficosSet.has(normalizeText(item.disciplina)));
+  }, [disciplinasGraficosSet, tableComposicaoFiltrada]);
+
   const tableMatrizBase = React.useMemo(() => {
     return filterByContractOsAndDiscipline(tableData, filtrosMatriz, filtroDisciplina);
   }, [tableData, filtrosMatriz, filtroDisciplina]);
@@ -775,6 +819,10 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
       return matchImportancia && matchDificuldade;
     });
   }, [tableAnaliseBase, filtrosAnalise.importancia, filtrosAnalise.dificuldade]);
+
+  const tableAnaliseGraficos = React.useMemo(() => {
+    return tableAnaliseFiltrada.filter((item) => disciplinasGraficosSet.has(normalizeText(item.disciplina)));
+  }, [disciplinasGraficosSet, tableAnaliseFiltrada]);
 
   const tableConsultaFiltrada = React.useMemo(() => {
     const base = filterByContractOsAndDiscipline(
@@ -802,15 +850,19 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
     });
   }, [tableData, filtrosConsulta, consultaSearch]);
 
+  const tableConsultaGraficos = React.useMemo(() => {
+    return tableConsultaFiltrada.filter((item) => disciplinasGraficosSet.has(normalizeText(item.disciplina)));
+  }, [disciplinasGraficosSet, tableConsultaFiltrada]);
+
   const dadosComposicaoFiltrados = React.useMemo(() => {
-    return buildComposicaoData(tableComposicaoFiltrada, disciplinasCadastradas).map((item) => {
-      const total = disciplinasCadastradas.reduce((acc, disciplina) => acc + Number(item[disciplinaKey(disciplina)] || 0), 0);
+    return buildComposicaoData(tableComposicaoGraficos, disciplinasGraficos).map((item) => {
+      const total = disciplinasGraficos.reduce((acc, disciplina) => acc + Number(item[disciplinaKey(disciplina)] || 0), 0);
       return { ...item, total };
     });
-  }, [tableComposicaoFiltrada, disciplinasCadastradas]);
+  }, [disciplinasGraficos, tableComposicaoGraficos]);
 
   const dadosImpactoEsforco = React.useMemo(() => {
-    return tableAnaliseFiltrada.map(item => ({
+    return tableAnaliseGraficos.map(item => ({
       id: item.id,
       os: item.os,
       osCodigo: item.osCodigo,
@@ -826,7 +878,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
       avaliacao: item.avaliacao as any,
       alocacao: 100
     }));
-  }, [tableAnaliseFiltrada]);
+  }, [tableAnaliseGraficos]);
 
   const maxPrazo = React.useMemo(() => Math.max(...tableData.map(t => Math.abs(t.prazoAtual)), 1), [tableData]);
 
@@ -874,7 +926,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
               <ExpandableSection title="Composicao de Profissionais por OS">
                 <ComposicaoDeProfissionaisPorOS
                   dados={dadosComposicaoFiltrados}
-                  disciplinas={disciplinasCadastradas}
+                  disciplinas={disciplinasGraficos}
                   filtros={{ contrato: filtrosComposicao.contrato, os: filtrosComposicao.os }}
                   contractOptions={contractOptionsComposicao}
                   osOptions={osOptionsComposicao}
@@ -885,7 +937,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
 
             <div className="lg:col-span-12">
               <ExpandableSection title="Alocacao de Disciplina por OS">
-                <NovoGrafico dados={tableConsultaFiltrada} />
+                <NovoGrafico dados={tableConsultaGraficos} />
               </ExpandableSection>
             </div>
 

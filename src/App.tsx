@@ -19,6 +19,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import type {
   AppTabKey,
+  DisciplineSettingRecord,
   UserAccessRecord,
   DatabaseLinkRecord,
   TerceirizadaRecord,
@@ -31,6 +32,8 @@ import {
   fetchCronogramaDataFromFirebase,
   fetchEapDataFromFirebase,
   fetchRegistroDataFromFirebase,
+  isFirebaseConfigured,
+  upsertFirebaseAppData,
 } from './lib/firebaseDb';
 
 const RegistroDeAtividade = React.lazy(() => import('./components/RegistroDeAtividade'));
@@ -229,6 +232,39 @@ function hasRegistroHierarchy(registro: any) {
 
 function hasNonEmptyArray(value: any) {
   return Array.isArray(value) && value.length > 0;
+}
+
+function normalizeDisciplineSetting(value: any): DisciplineSettingRecord | null {
+  if (typeof value === 'string') {
+    const nome = value.trim();
+    return nome ? { nome, showInCharts: true } : null;
+  }
+
+  if (!value || typeof value !== 'object') return null;
+  const nome = String((value as any).nome || (value as any).name || '').trim();
+  if (!nome) return null;
+
+  return {
+    nome,
+    showInCharts: (value as any).showInCharts !== false,
+  };
+}
+
+function normalizeDisciplineSettings(value: any): DisciplineSettingRecord[] {
+  const source = Array.isArray(value) ? value : [];
+  const byName = new Map<string, DisciplineSettingRecord>();
+
+  source.forEach((entry) => {
+    const normalized = normalizeDisciplineSetting(entry);
+    if (!normalized) return;
+    byName.set(normalized.nome, normalized);
+  });
+
+  return Array.from(byName.values());
+}
+
+function getDisciplineNamesFromSettings(settings: DisciplineSettingRecord[]) {
+  return settings.map((item) => item.nome).filter(Boolean);
 }
 
 function isNonEmptyObject(value: any) {
@@ -493,6 +529,7 @@ function normalizeUser(raw: any): AuthUser {
     status: raw.status || '',
     abas,
     isAdmin: Boolean(raw.isAdmin),
+    onlyThirdParty: Boolean(raw.onlyThirdParty || raw.onlyThirdPartyUsers || raw.somenteTerceirizados),
     online: Boolean(raw.online),
     sessionVersion: String(raw.sessionVersion || ''),
   };
@@ -555,6 +592,7 @@ function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
       alocacao: String(u.alocacao || u.allocation || ''),
       contrato: String(u.contrato || u.contract || ''),
       isAdmin: Boolean(u.isAdmin),
+      onlyThirdParty: Boolean(u.onlyThirdParty || u.onlyThirdPartyUsers || u.somenteTerceirizados),
       status: String(u.status || 'pending') as UserAccessRecord['status'],
       allowedTabs: (Array.isArray(u.allowedTabs) ? u.allowedTabs : Array.isArray(u.abas) ? u.abas : [])
         .map((tab: any) => String(tab).trim())
@@ -564,9 +602,11 @@ function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
 
 function getAdminState(data: GlobalData) {
   const admin = data.admin || {};
+  const disciplineSettings = normalizeDisciplineSettings(admin.disciplinas);
   return {
     usuarios: normalizeAdminUsers(data),
-    disciplinas: Array.isArray(admin.disciplinas) ? admin.disciplinas : [],
+    disciplinas: getDisciplineNamesFromSettings(disciplineSettings),
+    disciplineSettings,
     cargos: Array.isArray(admin.cargos) ? admin.cargos : [],
     alocacoes: Array.isArray(admin.alocacoes) ? admin.alocacoes : [],
     terceirizadas: Array.isArray(admin.terceirizadas) ? admin.terceirizadas.map((item: any) => ({
@@ -718,6 +758,85 @@ function buildProfessionalsForSeed(registro: any, admin: any) {
   })).filter((item) => item.profissionais.length > 0);
 }
 
+function buildThirdPartyEmail(id: string, nome: string) {
+  const cleanId = String(id || '').trim();
+  if (cleanId) return `terceirizada:${cleanId}`;
+  return `terceirizada:${String(nome || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+}
+
+function buildRegistroProfessionalsByDiscipline(registro: any, admin: any) {
+  const base = registro?.professionalsByDisciplina && typeof registro.professionalsByDisciplina === 'object'
+    ? registro.professionalsByDisciplina
+    : {};
+
+  const merged: Record<string, any[]> = {};
+  Object.entries(base).forEach(([disciplina, profissionais]) => {
+    merged[disciplina] = Array.isArray(profissionais) ? [...profissionais] : [];
+  });
+
+  const terceirizadas = Array.isArray(admin?.terceirizadas) ? admin.terceirizadas : [];
+  terceirizadas.forEach((item: any) => {
+    const disciplina = String(item?.disciplina || item?.discipline || '').trim() || 'Sem disciplina';
+    const nome = String(item?.nome || item?.name || '').trim();
+    if (!nome) return;
+
+    const bucketKey = Object.keys(merged).find((key) => normalizeUserText(key) === normalizeUserText(disciplina)) || disciplina;
+    const bucket = Array.isArray(merged[bucketKey]) ? [...merged[bucketKey]] : [];
+    const email = buildThirdPartyEmail(String(item?.id || ''), nome);
+    const exists = bucket.some((entry: any) => String(entry?.email || '').trim().toLowerCase() === email.toLowerCase());
+    if (!exists) {
+      bucket.push({
+        nome,
+        email,
+        cargo: 'Terceirizada',
+        disciplina,
+        isThirdParty: true,
+      });
+    }
+    merged[bucketKey] = bucket;
+  });
+
+  return merged;
+}
+
+function applyAdminUserContext(user: AuthUser, admin: any): AuthUser {
+  const users = Array.isArray(admin?.users)
+    ? admin.users
+    : admin?.usersByEmail && typeof admin.usersByEmail === 'object'
+      ? Object.values(admin.usersByEmail)
+      : [];
+  const match = users.find((item: any) => normalizeUserText(item?.email) === normalizeUserText(user.email));
+  if (!match) return user;
+
+  return {
+    ...user,
+    onlyThirdParty: Boolean(match?.onlyThirdParty || match?.onlyThirdPartyUsers || match?.somenteTerceirizados),
+  };
+}
+
+function applyAdminDataToRegistro(data: GlobalData, currentUser?: AuthUser | null): GlobalData {
+  if (!data.registro || typeof data.registro !== 'object') return data;
+
+  const professionalsByDisciplina = buildRegistroProfessionalsByDiscipline(data.registro, data.admin);
+  const effectiveUser = currentUser && data.admin ? applyAdminUserContext(currentUser, data.admin) : currentUser;
+  const targetDisciplina = String(effectiveUser?.disciplina || '').trim();
+  const matchingKey = Object.keys(professionalsByDisciplina).find((key) => normalizeUserText(key) === normalizeUserText(targetDisciplina));
+  let professionals = matchingKey ? professionalsByDisciplina[matchingKey] || [] : [];
+
+  if (effectiveUser?.onlyThirdParty) {
+    professionals = professionals.filter((item: any) => String(item?.email || '').startsWith('terceirizada:'));
+  }
+
+  return {
+    ...data,
+    registro: {
+      ...data.registro,
+      professionalsByDisciplina,
+      professionals,
+    },
+  };
+}
+
 function buildLocalTestActivities(registro: any, admin: any, currentUser?: AuthUser | null) {
   const contracts = Array.isArray(registro?.contracts) ? registro.contracts : [];
   const osOptions = Array.isArray(registro?.osOptions) ? registro.osOptions : [];
@@ -862,6 +981,7 @@ export default function App() {
   // ADMIN
   const [usuarios, setUsuarios] = useState<UserAccessRecord[]>([]);
   const [disciplinas, setDisciplinas] = useState<string[]>([]);
+  const [disciplineSettings, setDisciplineSettings] = useState<DisciplineSettingRecord[]>([]);
   const [cargos, setCargos] = useState<string[]>([]);
   const [alocacoes, setAlocacoes] = useState<string[]>([]);
   const [terceirizadas, setTerceirizadas] = useState<TerceirizadaRecord[]>([]);
@@ -873,7 +993,10 @@ export default function App() {
 
   // Filter States (Dashboard/Tech Mock)
   const [filtrosAtivos, setFiltrosAtivos] = React.useState({ contrato: 'Todos', os: 'Todos', disciplina: 'Todos' });
-  const effectiveGlobalData = React.useMemo(() => augmentGlobalDataWithLocalTestActivities(globalData, currentUser), [globalData, currentUser]);
+  const effectiveGlobalData = React.useMemo(() => {
+    const withAdminRegistro = applyAdminDataToRegistro(globalData, currentUser);
+    return augmentGlobalDataWithLocalTestActivities(withAdminRegistro, currentUser);
+  }, [globalData, currentUser]);
   const lockedContractCode = React.useMemo(
     () => (shouldLockUserToContract(currentUser) ? String(currentUser?.contrato || '').trim() : ''),
     [currentUser]
@@ -890,6 +1013,53 @@ export default function App() {
   const adminTerceirizadas = React.useMemo(() => {
     return [...terceirizadas, ...pendingTerceirizadas];
   }, [pendingTerceirizadas, terceirizadas]);
+
+  const buildAdminFirebaseSnapshot = useCallback((overrides?: {
+    usuarios?: UserAccessRecord[];
+    disciplineSettings?: DisciplineSettingRecord[];
+    cargos?: string[];
+    alocacoes?: string[];
+    terceirizadas?: TerceirizadaRecord[];
+    roleTabPermissions?: RoleTabPermissions;
+    databaseLinks?: DatabaseLinkRecord[];
+  }) => {
+    const snapshotUsers = overrides?.usuarios || usuarios;
+    const snapshotDisciplineSettings = overrides?.disciplineSettings || disciplineSettings;
+    return {
+      users: snapshotUsers.map((user) => ({
+        id: user.id,
+        nome: user.nome,
+        email: user.email,
+        online: user.online,
+        disciplina: user.disciplina,
+        cargo: user.cargo,
+        alocacao: user.alocacao,
+        contrato: user.contrato,
+        isAdmin: user.isAdmin,
+        onlyThirdParty: user.onlyThirdParty,
+        status: user.status,
+        allowedTabs: user.allowedTabs,
+      })),
+      disciplinas: snapshotDisciplineSettings.map((item) => ({
+        nome: item.nome,
+        showInCharts: item.showInCharts,
+      })),
+      cargos: overrides?.cargos || cargos,
+      alocacoes: overrides?.alocacoes || alocacoes,
+      terceirizadas: (overrides?.terceirizadas || adminTerceirizadas).map((item) => ({
+        id: item.id,
+        nome: item.nome,
+        disciplina: item.disciplina,
+      })),
+      roleTabPermissions: overrides?.roleTabPermissions || roleTabPermissions,
+      databaseLinks: overrides?.databaseLinks || databaseLinks,
+    };
+  }, [adminTerceirizadas, alocacoes, cargos, databaseLinks, disciplineSettings, roleTabPermissions, usuarios]);
+
+  const syncAdminSnapshotToFirebase = useCallback(async (overrides?: Parameters<typeof buildAdminFirebaseSnapshot>[0]) => {
+    if (!isFirebaseConfigured()) return;
+    await upsertFirebaseAppData('admin', buildAdminFirebaseSnapshot(overrides));
+  }, [buildAdminFirebaseSnapshot]);
 
   useEffect(() => {
     const lockedContract = lockedContractCode;
@@ -910,11 +1080,13 @@ export default function App() {
           const adminState = getAdminState(scopedCachedData);
           setUsuarios(adminState.usuarios);
           setDisciplinas(adminState.disciplinas);
+          setDisciplineSettings(adminState.disciplineSettings);
           setCargos(adminState.cargos);
           setAlocacoes(adminState.alocacoes);
           setTerceirizadas(adminState.terceirizadas);
           setRoleTabPermissions(adminState.roleTabPermissions);
           setDatabaseLinks(adminState.databaseLinks);
+          setCurrentUser((prev) => prev ? applyAdminUserContext(prev, scopedCachedData.admin) : prev);
         }
         setPreloading(false); setBooting(false);
         void loadGlobalEnvironment(user, true);
@@ -961,11 +1133,13 @@ export default function App() {
           const adminState = getAdminState(fullData);
           setUsuarios(adminState.usuarios);
           setDisciplinas(adminState.disciplinas);
+          setDisciplineSettings(adminState.disciplineSettings);
           setCargos(adminState.cargos);
           setAlocacoes(adminState.alocacoes);
           setTerceirizadas(adminState.terceirizadas);
           setRoleTabPermissions(adminState.roleTabPermissions);
           setDatabaseLinks(adminState.databaseLinks);
+          setCurrentUser((prev) => prev ? applyAdminUserContext(prev, fullData.admin) : prev);
         }
       if (!isBackgroundSync && progressInterval) {
         clearInterval(progressInterval); setLoadProgress(100); setLoadText('Tudo pronto!');
@@ -1073,11 +1247,13 @@ export default function App() {
         const adminState = getAdminState(fullData);
         setUsuarios(adminState.usuarios);
         setDisciplinas(adminState.disciplinas);
+        setDisciplineSettings(adminState.disciplineSettings);
         setCargos(adminState.cargos);
         setAlocacoes(adminState.alocacoes);
         setTerceirizadas(adminState.terceirizadas);
         setRoleTabPermissions(adminState.roleTabPermissions);
         setDatabaseLinks(adminState.databaseLinks);
+        setCurrentUser((prev) => prev ? applyAdminUserContext(prev, fullData.admin) : prev);
       }
     } finally {
       setIsBackgroundSyncing(false);
@@ -1097,7 +1273,7 @@ export default function App() {
     if (firstTab) setActiveTab(firstTab);
   };
 
-  const handleLogout = () => { clearSession(); setCurrentUser(null); setGlobalData({}); setRoleTabPermissions({}); setDirtyUserIds([]); setPendingTerceirizadas([]); };
+  const handleLogout = () => { clearSession(); setCurrentUser(null); setGlobalData({}); setRoleTabPermissions({}); setDisciplineSettings([]); setDirtyUserIds([]); setPendingTerceirizadas([]); };
 
   const handleRegister = async (name: string, email: string, password: string) => {
     // Apps Script registra o usuário e envia e-mail de confirmação
@@ -1125,14 +1301,17 @@ export default function App() {
   const persistUser = useCallback(async (user: UserAccessRecord) => {
     setUsuarios((prev) => prev.map((item) => item.id === user.id ? user : item));
     try {
-      const response = await postToAppsScript<GenericResponse>({ action: 'saveUserAccess', email: user.email, name: user.nome, role: user.cargo, discipline: user.disciplina, allocation: user.alocacao, contract: user.contrato, isAdmin: user.isAdmin, status: user.status, allowedTabs: user.allowedTabs });
+      const response = await postToAppsScript<GenericResponse>({ action: 'saveUserAccess', email: user.email, name: user.nome, role: user.cargo, discipline: user.disciplina, allocation: user.alocacao, contract: user.contrato, isAdmin: user.isAdmin, status: user.status, allowedTabs: user.allowedTabs, onlyThirdParty: user.onlyThirdParty });
       assertSuccess(response);
+      await syncAdminSnapshotToFirebase({
+        usuarios: usuarios.map((item) => item.id === user.id ? user : item),
+      });
       await loadAdminData();
     } catch (error) {
       await loadAdminData();
       throw error;
     }
-  }, [loadAdminData]);
+  }, [loadAdminData, syncAdminSnapshotToFirebase, usuarios]);
 
   const applyRolePresetTabs = useCallback((cargo: string) => {
     const roleTabs = roleTabPermissions[cargo] || [];
@@ -1163,6 +1342,11 @@ export default function App() {
     markUserDirty(userId);
   }, [markUserDirty]);
 
+  const toggleUsuarioOnlyThirdPartyDraft = useCallback((userId: string, checked: boolean) => {
+    setUsuarios((prev) => prev.map((user) => user.id === userId ? { ...user, onlyThirdParty: checked } : user));
+    markUserDirty(userId);
+  }, [markUserDirty]);
+
   const toggleUsuarioTabDraft = useCallback((userId: string, tab: AppTabKey) => {
     setUsuarios((prev) => prev.map((user) => {
       if (user.id !== userId) return user;
@@ -1182,55 +1366,73 @@ export default function App() {
       await persistUser(user);
     }
 
-    for (const terceirizada of pendingTerceirizadas) {
-      const response = await postToAppsScript<GenericResponse & { id?: string }>({
-        action: 'saveTerceirizada',
-        nome: terceirizada.nome,
-        disciplina: terceirizada.disciplina,
-      });
-      assertSuccess(response, 'Falha ao salvar terceirizada.');
-    }
+    const syncedTerceirizadas = [...terceirizadas, ...pendingTerceirizadas];
+    await syncAdminSnapshotToFirebase({
+      usuarios,
+      terceirizadas: syncedTerceirizadas,
+    });
 
     setDirtyUserIds([]);
     setPendingTerceirizadas([]);
     await loadAdminData();
-  }, [dirtyUserIds, loadAdminData, pendingTerceirizadas, persistUser, usuarios]);
+  }, [dirtyUserIds, loadAdminData, pendingTerceirizadas, persistUser, syncAdminSnapshotToFirebase, terceirizadas, usuarios]);
 
-  const saveConfigOptions = useCallback(async (nextCargos: string[], nextDisciplinas: string[], nextAlocacoes: string[]) => {
+  const saveConfigOptions = useCallback(async (nextCargos: string[], nextDisciplinas: string[], nextAlocacoes: string[], nextDisciplineSettings?: DisciplineSettingRecord[]) => {
     setCargos(nextCargos);
     setDisciplinas(nextDisciplinas);
     setAlocacoes(nextAlocacoes);
+    if (nextDisciplineSettings) setDisciplineSettings(nextDisciplineSettings);
     try {
       const response = await postToAppsScript<GenericResponse>({ action: 'saveConfigOptions', cargos: nextCargos, disciplinas: nextDisciplinas, alocacoes: nextAlocacoes });
       assertSuccess(response);
+      await syncAdminSnapshotToFirebase({
+        cargos: nextCargos,
+        alocacoes: nextAlocacoes,
+        disciplineSettings: nextDisciplineSettings || disciplineSettings,
+      });
       await loadAdminData();
     } catch (error) {
       await loadAdminData();
       throw error;
     }
-  }, [loadAdminData]);
+  }, [disciplineSettings, loadAdminData, syncAdminSnapshotToFirebase]);
 
   const saveRoleTabPermissions = useCallback(async (nextPermissions: RoleTabPermissions) => {
     setRoleTabPermissions(nextPermissions);
     try {
       const response = await postToAppsScript<GenericResponse>({ action: 'saveRoleTabPermissions', roleTabPermissions: nextPermissions });
       assertSuccess(response);
+      await syncAdminSnapshotToFirebase({ roleTabPermissions: nextPermissions });
       await loadAdminData();
     } catch (error) {
       await loadAdminData();
       throw error;
     }
-  }, [loadAdminData]);
+  }, [loadAdminData, syncAdminSnapshotToFirebase]);
 
   const addDisciplina = useCallback(async (value: string) => {
     const item = value.trim();
     if (!item) return;
-    await saveConfigOptions(cargos, Array.from(new Set([...disciplinas, item])), alocacoes);
-  }, [alocacoes, cargos, disciplinas, saveConfigOptions]);
+    const nextDisciplineSettings = normalizeDisciplineSettings([
+      ...disciplineSettings,
+      { nome: item, showInCharts: true },
+    ]);
+    await saveConfigOptions(cargos, Array.from(new Set([...disciplinas, item])), alocacoes, nextDisciplineSettings);
+  }, [alocacoes, cargos, disciplineSettings, disciplinas, saveConfigOptions]);
 
   const removeDisciplina = useCallback(async (value: string) => {
-    await saveConfigOptions(cargos, disciplinas.filter((item) => item !== value), alocacoes);
-  }, [alocacoes, cargos, disciplinas, saveConfigOptions]);
+    const nextDisciplineSettings = disciplineSettings.filter((item) => item.nome !== value);
+    await saveConfigOptions(cargos, disciplinas.filter((item) => item !== value), alocacoes, nextDisciplineSettings);
+  }, [alocacoes, cargos, disciplineSettings, disciplinas, saveConfigOptions]);
+
+  const toggleDisciplineCharts = useCallback(async (value: string, checked: boolean) => {
+    const nextDisciplineSettings = normalizeDisciplineSettings(
+      disciplineSettings.some((item) => item.nome === value)
+        ? disciplineSettings.map((item) => item.nome === value ? { ...item, showInCharts: checked } : item)
+        : [...disciplineSettings, { nome: value, showInCharts: checked }]
+    );
+    await saveConfigOptions(cargos, disciplinas, alocacoes, nextDisciplineSettings);
+  }, [alocacoes, cargos, disciplineSettings, disciplinas, saveConfigOptions]);
 
   const addCargo = useCallback(async (value: string) => {
     const item = value.trim();
@@ -1266,8 +1468,12 @@ export default function App() {
     assertSuccess(permissionsResponse);
     setCargos((prev) => prev.filter((item) => item !== value));
     setRoleTabPermissions(nextPermissions);
+    await syncAdminSnapshotToFirebase({
+      cargos: cargos.filter((item) => item !== value),
+      roleTabPermissions: nextPermissions,
+    });
     await loadAdminData();
-  }, [alocacoes, cargos, disciplinas, loadAdminData, roleTabPermissions]);
+  }, [alocacoes, cargos, disciplinas, loadAdminData, roleTabPermissions, syncAdminSnapshotToFirebase]);
 
   const toggleRoleTabPermission = useCallback(async (cargo: string, tab: AppTabKey) => {
     const currentTabs = roleTabPermissions[cargo] || [];
@@ -1284,30 +1490,47 @@ export default function App() {
   const saveDatabaseLink = useCallback(async (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => {
     const response = await postToAppsScript<GenericResponse>({ action: 'saveDatabaseLink', ...payload });
     assertSuccess(response);
+    const nextDatabaseLinks = payload.id
+      ? databaseLinks.map((item) => item.id === payload.id ? { ...item, ...payload } : item)
+      : [...databaseLinks, { id: payload.id || createDraftId('db-link'), ...payload }];
+    await syncAdminSnapshotToFirebase({ databaseLinks: nextDatabaseLinks });
     await loadAdminData();
-  }, [loadAdminData]);
+  }, [databaseLinks, loadAdminData, syncAdminSnapshotToFirebase]);
 
   const deleteDatabaseLink = useCallback(async (id: string) => {
     const response = await postToAppsScript<GenericResponse>({ action: 'deleteDatabaseLink', id });
     assertSuccess(response);
     setDatabaseLinks((prev) => prev.filter((item) => item.id !== id));
+    await syncAdminSnapshotToFirebase({ databaseLinks: databaseLinks.filter((item) => item.id !== id) });
     await loadAdminData();
-  }, [loadAdminData]);
+  }, [databaseLinks, loadAdminData, syncAdminSnapshotToFirebase]);
 
   const saveTerceirizada = useCallback(async (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => {
     const nome = String(payload.nome || '').trim();
     const disciplina = String(payload.disciplina || '').trim();
     if (!nome || !disciplina) return;
 
-    setPendingTerceirizadas((prev) => [
-      ...prev,
+    const normalizedNome = normalizeUserText(nome);
+    const normalizedDisciplina = normalizeUserText(disciplina);
+    const mergedBase = [...terceirizadas, ...pendingTerceirizadas].filter((item) => (
+      payload.id
+        ? item.id !== payload.id
+        : !(normalizeUserText(item.nome) === normalizedNome && normalizeUserText(item.disciplina) === normalizedDisciplina)
+    ));
+    const nextTerceirizadas = [
+      ...mergedBase,
       {
-        id: payload.id || createDraftId('draft-terceirizada'),
+        id: payload.id || createDraftId('terceirizada'),
         nome,
         disciplina,
       },
-    ]);
-  }, []);
+    ];
+
+    setTerceirizadas(nextTerceirizadas);
+    setPendingTerceirizadas([]);
+    await syncAdminSnapshotToFirebase({ terceirizadas: nextTerceirizadas });
+    await loadAdminData();
+  }, [loadAdminData, pendingTerceirizadas, syncAdminSnapshotToFirebase, terceirizadas]);
 
   const deleteTerceirizada = useCallback(async (id: string) => {
     if (id.indexOf('draft-terceirizada:') === 0) {
@@ -1315,11 +1538,11 @@ export default function App() {
       return;
     }
 
-    const response = await postToAppsScript<GenericResponse>({ action: 'deleteTerceirizada', id });
-    assertSuccess(response);
-    setTerceirizadas((prev) => prev.filter((item) => item.id !== id));
+    const nextTerceirizadas = terceirizadas.filter((item) => item.id !== id);
+    setTerceirizadas(nextTerceirizadas);
+    await syncAdminSnapshotToFirebase({ terceirizadas: nextTerceirizadas });
     await loadAdminData();
-  }, [loadAdminData]);
+  }, [loadAdminData, syncAdminSnapshotToFirebase, terceirizadas]);
 
   const acceptUser = useCallback(async (userId: string) => {
     const user = usuarios.find((item) => item.id === userId);
@@ -1558,7 +1781,7 @@ export default function App() {
               )}
               {activeTab === 'administracao' && currentUser?.isAdmin && (
                 <Administracao
-                  usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} alocacoes={alocacoes} terceirizadas={adminTerceirizadas} contratos={contratos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
+                  usuarios={usuarios} disciplinas={disciplinas} disciplineSettings={disciplineSettings} cargos={cargos} alocacoes={alocacoes} terceirizadas={adminTerceirizadas} contratos={contratos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
                   onUpdateUsuario={updateUsuarioDraft}
                   onToggleAdmin={toggleUsuarioAdminDraft}
                   onToggleTabPermission={toggleUsuarioTabDraft}
@@ -1566,7 +1789,7 @@ export default function App() {
                   dirtyUserIds={dirtyUserIds}
                   pendingTerceirizadaIds={pendingTerceirizadas.map((item) => item.id)}
                   activeSection={adminSubTab}
-                  onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onAddCargo={addCargo} onRemoveCargo={removeCargo} onAddAlocacao={addAlocacao} onRemoveAlocacao={removeAlocacao} onSaveTerceirizada={saveTerceirizada} onDeleteTerceirizada={deleteTerceirizada} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
+                  onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onToggleDisciplineCharts={toggleDisciplineCharts} onAddCargo={addCargo} onRemoveCargo={removeCargo} onAddAlocacao={addAlocacao} onRemoveAlocacao={removeAlocacao} onSaveTerceirizada={saveTerceirizada} onDeleteTerceirizada={deleteTerceirizada} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
                 />
               )}
             </React.Suspense>

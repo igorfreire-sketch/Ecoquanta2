@@ -40,7 +40,7 @@ interface ComposicaoDeProfissionaisPorOSProps {
 const COLORS = ['#F05D28', '#1E40AF', '#10B981', '#F59E0B', '#8B5CF6', '#3B82F6', '#71717A', '#EF4444', '#14B8A6', '#A855F7'];
 
 function normalizeText(value?: string) {
-  return (value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 }
 
 function disciplinaKey(value?: string) {

@@ -231,11 +231,42 @@ function hasNonEmptyArray(value: any) {
   return Array.isArray(value) && value.length > 0;
 }
 
+function isNonEmptyObject(value: any) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
+}
+
+function mergeModulePayload(baseModule: any, incomingModule: any) {
+  if (!incomingModule || typeof incomingModule !== 'object') return baseModule;
+  if (!baseModule || typeof baseModule !== 'object') return incomingModule;
+
+  const next: Record<string, any> = { ...baseModule };
+
+  Object.entries(incomingModule).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      if (value.length > 0 || !Array.isArray(baseModule[key])) next[key] = value;
+      return;
+    }
+
+    if (isNonEmptyObject(value)) {
+      next[key] = isNonEmptyObject(baseModule[key])
+        ? { ...baseModule[key], ...value }
+        : value;
+      return;
+    }
+
+    if (value !== undefined && value !== null && value !== '') {
+      next[key] = value;
+    }
+  });
+
+  return next;
+}
+
 function mergeGlobalData(base: GlobalData, incoming?: Partial<GlobalData> | null): GlobalData {
   if (!incoming || typeof incoming !== 'object') return base;
   const baseActivities = Array.isArray(base.registro?.activitiesList) ? base.registro.activitiesList : [];
   const incomingActivities = Array.isArray(incoming.registro?.activitiesList) ? incoming.registro.activitiesList : [];
-  const mergedRegistro = incoming.registro ? { ...(base.registro || {}), ...incoming.registro } : base.registro;
+  const mergedRegistro = incoming.registro ? mergeModulePayload(base.registro, incoming.registro) : base.registro;
 
   if (mergedRegistro && baseActivities.length > incomingActivities.length) {
     mergedRegistro.activitiesList = baseActivities;
@@ -245,8 +276,8 @@ function mergeGlobalData(base: GlobalData, incoming?: Partial<GlobalData> | null
     ...base,
     ...incoming,
     registro: mergedRegistro,
-    admin: incoming.admin ? { ...(base.admin || {}), ...incoming.admin } : base.admin,
-    eap: incoming.eap ? { ...(base.eap || {}), ...incoming.eap } : base.eap,
+    admin: incoming.admin ? mergeModulePayload(base.admin, incoming.admin) : base.admin,
+    eap: incoming.eap ? mergeModulePayload(base.eap, incoming.eap) : base.eap,
   };
 }
 
@@ -398,6 +429,54 @@ function TabLoadingFallback() {
       </div>
     </div>
   );
+}
+
+class TabErrorBoundary extends React.Component<
+  { children: React.ReactNode; resetKey: string },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode; resetKey: string }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('Erro ao renderizar aba:', error);
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-[320px] flex items-center justify-center px-4">
+          <div className="max-w-md rounded-2xl border border-[#FECACA] bg-white p-6 text-center shadow-sm">
+            <h3 className="text-[16px] font-bold text-[#991B1B]">Esta aba encontrou um erro</h3>
+            <p className="mt-2 text-[13px] text-[#6B7280]">
+              A interface foi protegida para evitar a tela branca. Tente abrir a aba novamente ou recarregar a página.
+            </p>
+            <button
+              type="button"
+              onClick={() => this.setState({ hasError: false })}
+              className="mt-4 inline-flex h-11 items-center justify-center rounded-xl bg-[#F05D28] px-4 text-[13px] font-bold text-white transition hover:opacity-90"
+            >
+              Tentar de novo
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
 function normalizeUser(raw: any): AuthUser {
@@ -929,14 +1008,14 @@ export default function App() {
       if (moduleName === 'registro') {
         const registro = await fetchRegistroDataFromFirebase(currentUser);
         setGlobalData((prev) => {
-          const next = { ...prev, registro: { ...(prev.registro || {}), ...registro } };
+          const next = mergeGlobalData(prev, { registro });
           saveGlobalDataCache(next);
           return next;
         });
       } else if (moduleName === 'cronograma') {
         const cronograma = await fetchCronogramaDataFromFirebase();
         setGlobalData((prev) => {
-          const next = { ...prev, cronograma };
+          const next = mergeGlobalData(prev, { cronograma });
           saveGlobalDataCache(next);
           return next;
         });
@@ -985,12 +1064,7 @@ export default function App() {
       if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
 
       setGlobalData((prev) => {
-        const next = {
-          ...prev,
-          admin: fullData.admin || prev.admin,
-          registro: fullData.registro || prev.registro,
-          cronograma: fullData.cronograma || prev.cronograma,
-        };
+        const next = mergeGlobalData(prev, fullData);
         saveGlobalDataCache(next);
         return next;
       });
@@ -1446,55 +1520,57 @@ export default function App() {
         </header>
 
         <main className={`flex-1 overflow-y-auto p-8 ${activeTab === 'registro' && areaTecnicaSubTab === 'atividades' ? 'bg-white' : 'bg-[#F8F9FA]'}`}>
-          <React.Suspense fallback={<TabLoadingFallback />}>
-            {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
-              areaTecnicaSubTab === 'atividades'
-                ? <RegistroDeAtividade currentUser={currentUser} preloadedData={effectiveGlobalData.registro} viewMode="atividades" />
-                : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
-            )}
-            {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />}
-            {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
-              planejamentoSubTab === 'dashboard'
-                ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="planejamento" />
-                : planejamentoSubTab === 'tecnico'
-                  ? <PlanejamentoTecnico preloadedData={effectiveGlobalData} />
-                  : planejamentoSubTab === 'alertas'
-                  ? <Alertas preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
-                  : planejamentoSubTab === 'cronograma'
-                  ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+          <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}`}>
+            <React.Suspense fallback={<TabLoadingFallback />}>
+              {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
+                areaTecnicaSubTab === 'atividades'
+                  ? <RegistroDeAtividade currentUser={currentUser} preloadedData={effectiveGlobalData.registro} viewMode="atividades" />
                   : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
-            )}
-            {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />}
-            {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
-              <NaoConformidades
-                activeTab={nc2SubTab}
-                onTabChange={setNc2SubTab}
-                currentUser={currentUser}
-                activeContractCode={lockedContractCode || filtrosAtivos.contrato}
-                preloadedData={effectiveGlobalData}
-                lockedContractCode={lockedContractCode}
-                disciplinas={disciplinas}
-                terceirizadas={adminTerceirizadas}
-                pendingTerceirizadaIds={pendingTerceirizadas.map((item) => item.id)}
-                onSaveTerceirizada={saveTerceirizada}
-                onDeleteTerceirizada={deleteTerceirizada}
-                onSavePendingInfo={savePendingUsers}
-              />
-            )}
-            {activeTab === 'administracao' && currentUser?.isAdmin && (
-              <Administracao
-                usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} alocacoes={alocacoes} terceirizadas={adminTerceirizadas} contratos={contratos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
-                onUpdateUsuario={updateUsuarioDraft}
-                onToggleAdmin={toggleUsuarioAdminDraft}
-                onToggleTabPermission={toggleUsuarioTabDraft}
-                onSavePendingUsers={savePendingUsers}
-                dirtyUserIds={dirtyUserIds}
-                pendingTerceirizadaIds={pendingTerceirizadas.map((item) => item.id)}
-                activeSection={adminSubTab}
-                onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onAddCargo={addCargo} onRemoveCargo={removeCargo} onAddAlocacao={addAlocacao} onRemoveAlocacao={removeAlocacao} onSaveTerceirizada={saveTerceirizada} onDeleteTerceirizada={deleteTerceirizada} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
-              />
-            )}
-          </React.Suspense>
+              )}
+              {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />}
+              {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
+                planejamentoSubTab === 'dashboard'
+                  ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="planejamento" />
+                  : planejamentoSubTab === 'tecnico'
+                    ? <PlanejamentoTecnico preloadedData={effectiveGlobalData} />
+                    : planejamentoSubTab === 'alertas'
+                    ? <Alertas preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
+                    : planejamentoSubTab === 'cronograma'
+                    ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                    : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+              )}
+              {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />}
+              {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
+                <NaoConformidades
+                  activeTab={nc2SubTab}
+                  onTabChange={setNc2SubTab}
+                  currentUser={currentUser}
+                  activeContractCode={lockedContractCode || filtrosAtivos.contrato}
+                  preloadedData={effectiveGlobalData}
+                  lockedContractCode={lockedContractCode}
+                  disciplinas={disciplinas}
+                  terceirizadas={adminTerceirizadas}
+                  pendingTerceirizadaIds={pendingTerceirizadas.map((item) => item.id)}
+                  onSaveTerceirizada={saveTerceirizada}
+                  onDeleteTerceirizada={deleteTerceirizada}
+                  onSavePendingInfo={savePendingUsers}
+                />
+              )}
+              {activeTab === 'administracao' && currentUser?.isAdmin && (
+                <Administracao
+                  usuarios={usuarios} disciplinas={disciplinas} cargos={cargos} alocacoes={alocacoes} terceirizadas={adminTerceirizadas} contratos={contratos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
+                  onUpdateUsuario={updateUsuarioDraft}
+                  onToggleAdmin={toggleUsuarioAdminDraft}
+                  onToggleTabPermission={toggleUsuarioTabDraft}
+                  onSavePendingUsers={savePendingUsers}
+                  dirtyUserIds={dirtyUserIds}
+                  pendingTerceirizadaIds={pendingTerceirizadas.map((item) => item.id)}
+                  activeSection={adminSubTab}
+                  onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onAddCargo={addCargo} onRemoveCargo={removeCargo} onAddAlocacao={addAlocacao} onRemoveAlocacao={removeAlocacao} onSaveTerceirizada={saveTerceirizada} onDeleteTerceirizada={deleteTerceirizada} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
+                />
+              )}
+            </React.Suspense>
+          </TabErrorBoundary>
         </main>
       </div>
     </div>

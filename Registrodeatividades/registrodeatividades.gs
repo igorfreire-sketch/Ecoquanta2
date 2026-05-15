@@ -16,7 +16,7 @@
  */
 
 var DEFAULT_EAP_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec";
-var DEFAULT_EAP_PUBLIC_JSON_URL = "https://raw.githubusercontent.com/igorfreire-sketch/Ecoquanta2/main/Publica/eap-unificada.json";
+var DEFAULT_EAP_PUBLIC_JSON_URL = "";
 var DEFAULT_FIREBASE_PROJECT_ID = "ecoquanta-c2720";
 var DEFAULT_FIREBASE_API_KEY = "AIzaSyCGJ4UHPGyaf1GqayvTXUhvn3eLdu9ZW9g";
 var FIREBASE_AUTH_CACHE_KEY = "firebase_anonymous_id_token";
@@ -2003,14 +2003,14 @@ function formatDateYmdSafe_(date) {
 }
 // --- PUBLICACAO DE JSON CRIPTOGRAFADO ---
 var PUBLIC_JSON_FOLDER = "Publica";
-var REGISTRO_PUBLIC_JSON_FILE = "registro-atividades.json";
-var REGISTRO_ATIVIDADES_JSON_FILE = "registrodeatividades.json";
-var APP_REGISTRO_JSON_FILE = "app-registro.json";
-var APP_ADMIN_JSON_FILE = "app-administracao.json";
-var APP_CRONOGRAMA_JSON_FILE = "app-cronograma.json";
-var APP_CONTROLE_JSON_FILE = "app-controle.json";
-var APP_CONTRATO_JSON_FILE = "app-contrato.json";
-var APP_NC_JSON_FILE = "app-nc.json";
+var REGISTRO_PUBLIC_JSON_FILE = "";
+var REGISTRO_ATIVIDADES_JSON_FILE = "";
+var APP_REGISTRO_JSON_FILE = "";
+var APP_ADMIN_JSON_FILE = "";
+var APP_CRONOGRAMA_JSON_FILE = "";
+var APP_CONTROLE_JSON_FILE = "";
+var APP_CONTRATO_JSON_FILE = "";
+var APP_NC_JSON_FILE = "";
 var REGISTRO_ATIVIDADES_IMPORT_SHEET = "registrodeatividades_limpo";
 var PUBLIC_JSON_FAST_DELAY_MS = 1000;
 var PUBLIC_JSON_FULL_REFRESH_DELAY_MS = 90 * 1000;
@@ -3303,5 +3303,18 @@ function computeSha256Hex_(text) {
     return ("0" + (b & 255).toString(16)).slice(-2);
   }).join("");
 }
+
+// JSON publico desativado: o sistema agora usa somente Firebase.
+function schedulePublicJsonPublish() { return "Publicacao JSON desativada."; }
+function schedulePublicJsonPublish_() { return "Publicacao JSON desativada."; }
+function flushAndSchedulePublicJsonPublish_() { return "Publicacao JSON desativada."; }
+function scheduleFullPublicJsonRefresh() { return "Publicacao JSON desativada."; }
+function publishFullDatabaseToPublicJsonNow() { return "Publicacao JSON desativada."; }
+function syncAllPublicJsonNow() { return "Publicacao JSON desativada."; }
+function publishFullDatabaseToPublicJsonByTrigger() { return "Publicacao JSON desativada."; }
+function publishFullDatabaseToPublicJson() { return "Publicacao JSON desativada."; }
+function publishAppModuleJsons_() { return "Publicacao JSON desativada."; }
+function publishRegistroAtividadesJson_() { return "Publicacao JSON desativada."; }
+function requestEapImmediateRefresh_() { return "Publicacao JSON desativada."; }
 
 

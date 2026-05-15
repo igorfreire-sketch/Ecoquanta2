@@ -8,7 +8,7 @@
 // - Quando json_crypto_key/crypto_key existir, publique envelope criptografado;
 //   velocidade nao deve abrir janela publica para dados sensiveis.
 var PUBLIC_JSON_FOLDER = "Publica";
-var EAP_PUBLIC_JSON_FILE = "eap-unificada.json";
+var EAP_PUBLIC_JSON_FILE = "";
 var DEFAULT_REGISTRO_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec";
 var PUBLIC_JSON_FAST_DELAY_MS = 1000;
 var DEFAULT_FIREBASE_PROJECT_ID = "ecoquanta-c2720";
@@ -1410,3 +1410,13 @@ function json_(obj) {
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
+
+// JSON publico desativado: a EAP agora permanece somente no Firebase.
+function scheduleCompressedDataPublicJson() { return "Publicacao JSON desativada."; }
+function scheduleCompressedDataPublicJson_() { return "Publicacao JSON desativada."; }
+function scheduleFullPublicJsonRefresh() { return "Publicacao JSON desativada."; }
+function publishCompressedDataToPublicJsonByTrigger() { return "Publicacao JSON desativada."; }
+function publishCompressedDataToPublicJsonNow() { return "Publicacao JSON desativada."; }
+function syncAllPublicJsonNow() { return "Publicacao JSON desativada."; }
+function requestRegistroImmediateSync_() { return "Publicacao JSON desativada."; }
+function publishCompressedDataToPublicJson() { return publishCompressedDataToFirebaseNow(); }

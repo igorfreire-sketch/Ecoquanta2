@@ -47,7 +47,6 @@ const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Con
 const Administracao = React.lazy(() => import('./components/Administracao'));
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
-const PUBLIC_JSON_SYNC_DELAY_MS = 15000;
 const APP_VERSION_LABEL = getAppVersionLabel();
 
 // Domínio corporativo: usuários deste domínio são aprovados automaticamente
@@ -443,10 +442,6 @@ function assertSuccess(response: GenericResponse, fallbackMessage = 'Falha ao sa
   if (!response?.success) {
     throw new Error(response?.error || response?.message || fallbackMessage);
   }
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function createDraftId(prefix: string) {

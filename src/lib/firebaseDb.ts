@@ -14,14 +14,6 @@ import {
   writeBatch,
   type Firestore,
 } from 'firebase/firestore';
-import {
-  fetchAdminModulePublicData,
-  fetchCronogramaModulePublicData,
-  fetchEapAppsScriptData,
-  fetchEapPublicData,
-  fetchRegistroModulePublicData,
-} from './publicJson';
-
 interface FirebaseRuntimeConfig {
   apiKey: string;
   authDomain: string;
@@ -96,6 +88,21 @@ interface BatchWriteResponse {
   syncError?: string;
   registroSnapshot?: Partial<RegistroDataResponse>;
 }
+
+const EMPTY_REGISTRO_RESPONSE: RegistroDataResponse = {
+  success: true,
+  contracts: [],
+  osOptions: [],
+  itemOptions: [],
+  hierarchyNodes: [],
+  childrenByParent: {},
+  rootCodes: [],
+  professionals: [],
+  professionalsByDisciplina: {},
+  activitiesList: [],
+  activeActivities: [],
+  completedActivities: [],
+};
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
@@ -313,12 +320,6 @@ async function readChunkedAppData(dbRef: Firestore, name: string, chunkCount: nu
     .map((entry) => entry.value);
 }
 
-function unwrapPublicData(payload: any, key?: string) {
-  const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
-  if (key && data?.[key] !== undefined) return data[key];
-  return data;
-}
-
 function isNonEmptyObject(value: any) {
   return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
 }
@@ -347,89 +348,8 @@ function mergePublishedRegistro(...sources: any[]) {
   return out;
 }
 
-function hasFullEapData(value: any) {
-  const data = value?.data && typeof value.data === 'object' ? value.data : value;
-  return Boolean(
-    data
-    && typeof data === 'object'
-    && Array.isArray(data.atual)
-    && data.atual.length > 0,
-  );
-}
-
-async function tryPublic<T>(label: string, loader: () => Promise<T>): Promise<T | null> {
-  try {
-    return await loader();
-  } catch (error) {
-    console.warn(`Falha ao carregar fallback publico (${label}):`, error);
-    return null;
-  }
-}
-
-async function fetchBootstrapDataFromPublicJson(): Promise<GlobalData> {
-  const [registroPayload, adminPayload, eapPayload] = await Promise.all([
-    tryPublic('app-registro.json', () => fetchRegistroModulePublicData<any>()),
-    tryPublic('app-administracao.json', () => fetchAdminModulePublicData<any>()),
-    tryPublic('eap-unificada.json', () => fetchEapPublicData<any>()),
-  ]);
-  const eapData = unwrapPublicData(eapPayload);
-  const registro = mergePublishedRegistro(unwrapPublicData(registroPayload, 'registro'), eapData?.registro);
-
-  return {
-    registro: isNonEmptyObject(registro) ? registro : undefined,
-    admin: unwrapPublicData(adminPayload, 'admin') || undefined,
-    eap: eapData || undefined,
-  };
-}
-
-async function fetchEapDataFromPublicSources(): Promise<any | null> {
-  const publicPayload = await tryPublic('eap-unificada.json', () => fetchEapPublicData<any>());
-  const publicData = unwrapPublicData(publicPayload);
-  if (hasFullEapData(publicData)) return publicData;
-
-  const appsScriptData = await tryPublic('EAP Apps Script', () => fetchEapAppsScriptData<any>());
-  return hasFullEapData(appsScriptData) ? appsScriptData : null;
-}
-
-async function fetchCronogramaDataFromPublicJson(): Promise<any[]> {
-  const payload = await tryPublic('app-cronograma.json', () => fetchCronogramaModulePublicData<any>());
-  const data = unwrapPublicData(payload);
-  if (Array.isArray(data?.cronograma)) return data.cronograma;
-  if (Array.isArray(data)) return data;
-  return [];
-}
-
-async function fetchRegistroDataFromPublicJson(user: AuthUserLike): Promise<RegistroDataResponse> {
-  const [payload, adminPayload, eapPayload] = await Promise.all([
-    tryPublic('app-registro.json', () => fetchRegistroModulePublicData<any>()),
-    tryPublic('app-administracao.json', () => fetchAdminModulePublicData<any>()),
-    tryPublic('eap-unificada.json', () => fetchEapPublicData<any>()),
-  ]);
-  const registro = mergePublishedRegistro(unwrapPublicData(payload, 'registro'), unwrapPublicData(eapPayload)?.registro);
-  const admin = unwrapPublicData(adminPayload, 'admin') || undefined;
-  const activitiesList = Array.isArray(registro.activitiesList) ? registro.activitiesList.map(normalizeFirestoreRecord) : [];
-  const professionalsByDisciplina = mergeRegistroProfessionalsByDiscipline(registro, admin);
-  const professionals = getProfessionalsForUser({ ...registro, professionalsByDisciplina }, user, admin);
-  const split = splitActivitiesForUser(activitiesList, user, professionals);
-
-  return {
-    success: true,
-    contracts: registro.contracts || [],
-    osOptions: registro.osOptions || [],
-    itemOptions: registro.itemOptions || [],
-    hierarchyNodes: registro.hierarchyNodes || [],
-    childrenByParent: registro.childrenByParent || {},
-    rootCodes: registro.rootCodes || [],
-    professionalsByDisciplina,
-    professionals,
-    activitiesList,
-    activeActivities: split.activeActivities,
-    completedActivities: split.completedActivities,
-  };
-}
-
 export async function fetchGlobalDataFromFirebase(user?: AuthUserLike): Promise<GlobalData> {
-  if (!isFirebaseConfigured()) return fetchBootstrapDataFromPublicJson();
+  if (!isFirebaseConfigured()) return {};
 
   await ensureFirebaseAuth();
   const dbRef = getDb();
@@ -473,7 +393,7 @@ export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
   try {
     if (!isFirebaseConfigured()) {
       console.warn('⚠️ Firebase não configurado - retornando dados vazios');
-      return fetchBootstrapDataFromPublicJson();
+      return {};
     }
     await ensureFirebaseAuth();
     const dbRef = getDb();
@@ -496,35 +416,35 @@ export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
     };
   } catch (error) {
     console.error('❌ Erro ao fetch bootstrap data:', error);
-    return fetchBootstrapDataFromPublicJson();
+    return {};
   }
 }
 
 export async function fetchEapDataFromFirebase(): Promise<any> {
   try {
-    if (!isFirebaseConfigured()) return fetchEapDataFromPublicSources();
+    if (!isFirebaseConfigured()) return null;
     await ensureFirebaseAuth();
     const dbRef = getDb();
     const eapData = await getAppDataDoc<any>(dbRef, 'eap');
-    return hasFullEapData(eapData) ? eapData : await fetchEapDataFromPublicSources();
+    return eapData || null;
   } catch (error) {
     console.error('❌ Erro ao fetch EAP data:', error);
-    return fetchEapDataFromPublicSources();
+    return null;
   }
 }
 
 export async function fetchCronogramaDataFromFirebase(): Promise<any[]> {
   try {
-    if (!isFirebaseConfigured()) return fetchCronogramaDataFromPublicJson();
+    if (!isFirebaseConfigured()) return [];
     await ensureFirebaseAuth();
     const dbRef = getDb();
     const cronograma = await getAppDataDoc<any>(dbRef, 'cronograma');
     if (Array.isArray(cronograma)) return cronograma;
     if (Array.isArray(cronograma?.cronograma)) return cronograma.cronograma;
-    return fetchCronogramaDataFromPublicJson();
+    return [];
   } catch (error) {
     console.error('❌ Erro ao fetch cronograma data:', error);
-    return fetchCronogramaDataFromPublicJson();
+    return [];
   }
 }
 
@@ -550,7 +470,7 @@ function getProfessionalsForUser(registro: any, user: AuthUserLike, admin?: any)
 export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise<RegistroDataResponse> {
   try {
     if (!isFirebaseConfigured()) {
-      return fetchRegistroDataFromPublicJson(user);
+      return EMPTY_REGISTRO_RESPONSE;
     }
     
     await ensureFirebaseAuth();
@@ -588,7 +508,7 @@ export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise
     };
   } catch (error) {
     console.error('Erro ao fetch registro data:', error);
-    return fetchRegistroDataFromPublicJson(user);
+    return EMPTY_REGISTRO_RESPONSE;
   }
 }
 

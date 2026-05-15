@@ -18,7 +18,6 @@ import {
   registerActivitiesInFirebase,
   updateActivitiesInFirebase,
 } from '../lib/firebaseDb';
-const PUBLIC_JSON_SYNC_DELAY_MS = 15000;
 const PLANNING_TODOS_STORAGE_KEY = 'quanta_planejamento_tecnico_itens';
 
 type DifficultyLevel = 'Facil' | 'Moderada' | 'Dificil';
@@ -639,10 +638,6 @@ function filterRegistroPayloadByContract<T extends { contracts?: any[]; osOption
   };
 }
 
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
 async function fetchRegistroData(currentUser: AuthUser): Promise<RegistroDataResponse> {
   if (!isFirebaseConfigured()) throw new Error('Firebase nao configurado para Registro de Atividades.');
   return fetchRegistroDataFromFirebase(currentUser);
@@ -709,7 +704,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   const [sendingBatch, setSendingBatch] = useState(false);
   const [savingChanges, setSavingChanges] = useState(false);
   const [savingAll, setSavingAll] = useState(false);
-  const [syncingPublishedJson, setSyncingPublishedJson] = useState(false);
   const [balloonMessage, setBalloonMessage] = useState('');
   const [searchText, setSearchText] = useState('');
   const deferredSearchText = useDeferredValue(searchText);
@@ -948,16 +942,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
     freshDataAttemptRef.current = true;
     void fetchFreshData();
   }, [contracts.length, currentUser.contrato, currentUser.disciplina, currentUser.email, currentUser.role, itemOptions.length, osOptions.length, preloadedData, professionals.length]);
-
-  const refreshFromPublishedJsonAfterSheetUpdate = async () => {
-    setSyncingPublishedJson(true);
-    try {
-      await wait(PUBLIC_JSON_SYNC_DELAY_MS);
-      await fetchFreshData();
-    } finally {
-      setSyncingPublishedJson(false);
-    }
-  };
 
   useEffect(() => {
     if (!balloonMessage) return;
@@ -1474,18 +1458,18 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       {(hasQueuedActivities || hasPendingChanges) && (
         <div className="fixed right-8 bottom-8 z-30 flex flex-col sm:flex-row gap-3">
           {hasBothPending ? (
-            <button type="button" disabled={savingAll || syncingPublishedJson} onClick={() => void handleSaveAll()} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
+            <button type="button" disabled={savingAll} onClick={() => void handleSaveAll()} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
               Salvar tudo <Save size={18} />
             </button>
           ) : (
             <>
               {hasQueuedActivities && (
-                <button type="button" disabled={sendingBatch || syncingPublishedJson} onClick={() => void sendQueuedActivities()} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
+                <button type="button" disabled={sendingBatch} onClick={() => void sendQueuedActivities()} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
                   {draftQueue.length === 1 ? 'Enviar 1 atividade' : `Enviar ${draftQueue.length} atividades`} <Send size={18} />
                 </button>
               )}
               {hasPendingChanges && (
-                <button type="button" disabled={savingChanges || syncingPublishedJson} onClick={() => void savePendingChanges()} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
+                <button type="button" disabled={savingChanges} onClick={() => void savePendingChanges()} className="h-14 px-6 bg-bentham-orange text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-bentham-orange/25 disabled:opacity-70">
                   Salvar alterações <Save size={18} />
                 </button>
               )}

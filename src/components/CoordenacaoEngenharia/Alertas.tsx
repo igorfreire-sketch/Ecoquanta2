@@ -1,11 +1,14 @@
 import React from 'react';
-import { AlertTriangle, ChevronDown, ChevronUp, ClipboardList, FileWarning, ListChecks, TimerReset } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp, ClipboardList, FileWarning, TimerReset } from 'lucide-react';
+import type { AuthUser } from '../LoginScreen';
+import { isFirebaseConfigured, updateFirebaseRegistroActivity } from '../../lib/firebaseDb';
 
 const CONTRACT_PRIORITY_STORAGE_KEY = 'quanta_contract_priorities';
 const CONTRACT_INTERFERENCES_STORAGE_KEY = 'quanta_contract_interferences';
 const PLANNING_TODOS_STORAGE_KEY = 'quanta_planejamento_tecnico_itens';
 
 type AlertasProps = {
+  currentUser: AuthUser;
   preloadedData?: {
     registro?: any;
     admin?: any;
@@ -27,6 +30,7 @@ type AlertActivity = {
   avancoAtual: number;
   profissionais: string[];
   status: string;
+  ultimaAtualizacao: string;
 };
 
 type StoredInterference = {
@@ -125,6 +129,7 @@ function buildActivities(registro: any): AlertActivity[] {
         avancoAtual: Number(item?.avancoAtual || 0),
         profissionais,
         status: String(item?.status || '').trim(),
+        ultimaAtualizacao: String(item?.ultimaAtualizacao || '').trim(),
       };
     })
     .filter((item) => {
@@ -138,6 +143,18 @@ function filterByContract<T extends { contratoCodigo?: string }>(list: T[], cont
   if (isAllContract(contractCode)) return list;
   const target = normalizeText(contractCode);
   return list.filter((item) => normalizeText(item.contratoCodigo) === target);
+}
+
+function buildActivityAlertSignature(activity: Pick<AlertActivity, 'id' | 'avaliacao' | 'ultimaAtualizacao'>) {
+  return [
+    String(activity.id || '').trim(),
+    normalizeText(activity.avaliacao),
+    String(activity.ultimaAtualizacao || '').trim(),
+  ].join('|');
+}
+
+function nowPtBr() {
+  return new Date().toLocaleString('pt-BR');
 }
 
 function AccordionSection({
@@ -182,9 +199,13 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
-export default function Alertas({ preloadedData, activeContractCode }: AlertasProps) {
+export default function Alertas({ currentUser: _currentUser, preloadedData, activeContractCode }: AlertasProps) {
+  const [resolvingActivityIds, setResolvingActivityIds] = React.useState<string[]>([]);
+  const [resolvedAlertSignatures, setResolvedAlertSignatures] = React.useState<string[]>([]);
+
   const activities = React.useMemo(() => buildActivities(preloadedData?.registro), [preloadedData?.registro]);
-  const criticalActivities = React.useMemo(
+
+  const criticalActivitiesBase = React.useMemo(
     () => filterByContract(
       activities.filter((item) => {
         const avaliacao = normalizeText(item.avaliacao);
@@ -195,6 +216,17 @@ export default function Alertas({ preloadedData, activeContractCode }: AlertasPr
     [activities, activeContractCode]
   );
 
+  React.useEffect(() => {
+    if (!resolvedAlertSignatures.length) return;
+    const activeSignatures = new Set(criticalActivitiesBase.map(buildActivityAlertSignature));
+    setResolvedAlertSignatures((prev) => prev.filter((signature) => activeSignatures.has(signature)));
+  }, [criticalActivitiesBase, resolvedAlertSignatures.length]);
+
+  const criticalActivities = React.useMemo(
+    () => criticalActivitiesBase.filter((item) => !resolvedAlertSignatures.includes(buildActivityAlertSignature(item))),
+    [criticalActivitiesBase, resolvedAlertSignatures]
+  );
+
   const storedPriorities = React.useMemo(() => readStoredPriorities(), []);
   const priorityActivities = React.useMemo(() => {
     const confirmedIds = new Set(
@@ -202,6 +234,7 @@ export default function Alertas({ preloadedData, activeContractCode }: AlertasPr
         .filter(([, confirmed]) => Boolean(confirmed))
         .map(([id]) => id)
     );
+
     return filterByContract(
       activities
         .filter((item) => confirmedIds.has(item.id))
@@ -226,14 +259,47 @@ export default function Alertas({ preloadedData, activeContractCode }: AlertasPr
     });
   }, [planningTodos, activities]);
 
+  const handleResolveCriticalActivity = async (activity: AlertActivity) => {
+    const signature = buildActivityAlertSignature(activity);
+    setResolvingActivityIds((prev) => (prev.includes(activity.id) ? prev : [...prev, activity.id]));
+    setResolvedAlertSignatures((prev) => (prev.includes(signature) ? prev : [...prev, signature]));
+
+    try {
+      if (!isFirebaseConfigured()) {
+        throw new Error('Firebase nao configurado para atualizar o alerta.');
+      }
+
+      await updateFirebaseRegistroActivity(activity.id, {
+        avaliacaoAtual: 'Dentro do esperado',
+        ultimaAtualizacao: nowPtBr(),
+      });
+    } catch (error) {
+      setResolvedAlertSignatures((prev) => prev.filter((item) => item !== signature));
+      console.error('Erro ao resolver alerta:', error);
+    } finally {
+      setResolvingActivityIds((prev) => prev.filter((item) => item !== activity.id));
+    }
+  };
+
   return (
     <div className="space-y-6 font-['Montserrat']">
-      <AccordionSection title="Atividades com alerta de execução" count={criticalActivities.length} icon={<AlertTriangle size={18} />}>
+      <AccordionSection title="Atividades com alerta de execucao" count={criticalActivities.length} icon={<AlertTriangle size={18} />}>
         <div className="space-y-3">
           {criticalActivities.length === 0 && <EmptyState text="Nenhuma atividade marcada como Pior que o esperado ou Problema/Bloqueio." />}
           {criticalActivities.map((item) => (
             <div key={item.id} className="rounded-2xl border border-[#FECACA] bg-[#FEF2F2] p-4">
-              <div className="text-[12px] font-black uppercase tracking-[1px] text-[#B91C1C]">{item.avaliacao}</div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-[12px] font-black uppercase tracking-[1px] text-[#B91C1C]">{item.avaliacao}</div>
+                <button
+                  type="button"
+                  onClick={() => void handleResolveCriticalActivity(item)}
+                  disabled={resolvingActivityIds.includes(item.id)}
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[#FCA5A5] bg-white px-3 text-[11px] font-black uppercase tracking-[1px] text-[#B91C1C] transition hover:bg-[#FEE2E2] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Check size={14} />
+                  {resolvingActivityIds.includes(item.id) ? 'Salvando' : 'Resolvido'}
+                </button>
+              </div>
               <div className="mt-1 text-[15px] font-black text-[#111827]">{item.itemNome}</div>
               <div className="mt-1 text-[12px] font-semibold text-[#64748B]">{item.contratoCodigo} · {item.osNome || item.osCodigo} · {item.disciplina || 'Sem disciplina'}</div>
               {item.descricao && <p className="mt-2 text-[13px] text-[#4B5563]">{item.descricao}</p>}

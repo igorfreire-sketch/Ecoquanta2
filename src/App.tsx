@@ -1534,7 +1534,7 @@ export default function App() {
                   : planejamentoSubTab === 'tecnico'
                     ? <PlanejamentoTecnico preloadedData={effectiveGlobalData} />
                     : planejamentoSubTab === 'alertas'
-                    ? <Alertas preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
+                    ? <Alertas currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                     : planejamentoSubTab === 'cronograma'
                     ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
                     : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />

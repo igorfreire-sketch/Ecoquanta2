@@ -109,7 +109,7 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
         {(subTab === 'profissionais' || subTab === 'dashboard' || subTab === 'alocacoes') && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="profissionais" activeContractCode={activeContractCode} />}
         {subTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
         {subTab === 'planejamento' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="planejamento" />}
-        {subTab === 'alertas' && <Alertas preloadedData={preloadedData} activeContractCode={activeContractCode} />}
+        {subTab === 'alertas' && <Alertas currentUser={currentUser} preloadedData={preloadedData} activeContractCode={activeContractCode} />}
         {subTab === 'cronograma' && <Cronograma preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
       </div>
     </div>

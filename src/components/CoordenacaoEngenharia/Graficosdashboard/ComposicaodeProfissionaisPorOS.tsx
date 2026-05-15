@@ -52,6 +52,10 @@ function isAllValue(value?: string) {
   return (!v || v === 'todos' || v === 'todas as os' || v === 'todos os contratos' || v === 'todas as disciplinas');
 }
 
+function getOsLabel(item: DadoOS) {
+  return String(item.nomeCompleto || item.os || '').trim();
+}
+
 function buildDisciplinaMetas(disciplinas: string[] | undefined, dados: DadoOS[]): DisciplinaMeta[] {
   const labels = (disciplinas || []).map((item) => String(item || '').trim()).filter(Boolean);
 
@@ -90,15 +94,14 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
 
     if (filtros?.contrato && !isAllValue(filtros.contrato)) {
       const contratoFiltro = normalizeText(filtros.contrato);
-      resultado = resultado.filter((item) => normalizeText(item.contrato).includes(contratoFiltro));
+      resultado = resultado.filter((item) => normalizeText(item.contrato) === contratoFiltro);
     }
 
     if (filtros?.os && !isAllValue(filtros.os)) {
       const osFiltro = normalizeText(filtros.os);
       resultado = resultado.filter((item) =>
         normalizeText(item.os) === osFiltro ||
-        normalizeText(item.nomeCompleto) === osFiltro ||
-        normalizeText(item.nomeCompleto).includes(osFiltro)
+        normalizeText(getOsLabel(item)) === osFiltro
       );
     }
     return resultado;
@@ -151,6 +154,22 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
   }, [dadosProcessados, modoDisciplina, disciplinaMeta, totalDisciplinaRecorte]);
 
   const minWidthChart = Math.max(800, chartData.length * (modoDisciplina ? 100 : Math.max(180, disciplinaMetas.length * 42)));
+  const chartHeight = 380;
+
+  if (!chartData.length || !disciplinaMetas.length) {
+    return (
+      <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8 flex flex-col min-h-[460px] h-full">
+        <div className="mb-6">
+          <h3 className="text-base font-bold text-[#2D2D2D] uppercase tracking-tight mb-1">
+            COMPOSICAO DE PROFISSIONAIS POR OS
+          </h3>
+        </div>
+        <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-6 text-center text-[13px] font-medium text-[#64748B]">
+          Nenhuma composicao encontrada para os filtros selecionados.
+        </div>
+      </div>
+    );
+  }
 
   const FixedCustomLegend = () => (
     <div className="flex flex-wrap items-center justify-end gap-3 mt-4 sm:mt-0">
@@ -204,8 +223,8 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
       </div>
 
       <div className="flex-1 w-full overflow-x-auto overflow-y-hidden">
-        <div style={{ minWidth: `${minWidthChart}px`, height: '100%', minHeight: '360px' }}>
-          <ResponsiveContainer width="100%" height="100%">
+        <div style={{ minWidth: `${minWidthChart}px`, height: `${chartHeight}px`, minHeight: `${chartHeight}px` }}>
+          <ResponsiveContainer width="100%" height={chartHeight}>
             <BarChart
               data={chartData}
               margin={{ top: 35, right: 24, left: 0, bottom: 20 }}
@@ -220,6 +239,7 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
                 axisLine={false}
                 tickLine={false}
                 interval={0}
+                minTickGap={24}
               />
 
               <YAxis
@@ -247,6 +267,7 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
                     dataKey={disciplina.key}
                     name={disciplina.label}
                     fill={disciplina.color}
+                    stackId="composicao"
                     radius={[4, 4, 0, 0]}
                     maxBarSize={55}
                   >

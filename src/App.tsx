@@ -6,7 +6,9 @@ import {
   AlertTriangle,
   Calendar,
   LogOut,
-  Menu,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
   X,
   LayoutDashboard,
   TrendingUp,
@@ -34,7 +36,6 @@ import {
   fetchFirebaseCollection,
   fetchRegistroDataFromFirebase,
   isFirebaseConfigured,
-  subscribeFirebaseCollection,
   upsertFirebaseAppData,
 } from './lib/firebaseDb';
 
@@ -280,17 +281,19 @@ function mergeModulePayload(baseModule: any, incomingModule: any) {
   if (!incomingModule || typeof incomingModule !== 'object') return baseModule;
   if (!baseModule || typeof baseModule !== 'object') return incomingModule;
 
-  const next: Record<string, any> = { ...baseModule };
+  const baseRecord = baseModule as Record<string, any>;
+  const next: Record<string, any> = { ...baseRecord };
 
   Object.entries(incomingModule).forEach(([key, value]) => {
     if (Array.isArray(value)) {
-      if (value.length > 0 || !Array.isArray(baseModule[key])) next[key] = value;
+      if (value.length > 0 || !Array.isArray(baseRecord[key])) next[key] = value;
       return;
     }
 
     if (isNonEmptyObject(value)) {
-      next[key] = isNonEmptyObject(baseModule[key])
-        ? { ...baseModule[key], ...value }
+      const currentValue = baseRecord[key];
+      next[key] = isNonEmptyObject(currentValue)
+        ? { ...(currentValue as Record<string, any>), ...(value as Record<string, any>) }
         : value;
       return;
     }
@@ -472,6 +475,13 @@ class TabErrorBoundary extends React.Component<
   { children: React.ReactNode; resetKey: string },
   { hasError: boolean }
 > {
+  declare props: { children: React.ReactNode; resetKey: string };
+  declare state: { hasError: boolean };
+  declare setState: React.Component<
+    { children: React.ReactNode; resetKey: string },
+    { hasError: boolean }
+  >['setState'];
+
   constructor(props: { children: React.ReactNode; resetKey: string }) {
     super(props);
     this.state = { hasError: false };
@@ -575,6 +585,8 @@ function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
   const admin = data.admin || {};
   const usersSource = Array.isArray(admin.users)
     ? admin.users
+    : Array.isArray(admin.usuarios)
+      ? admin.usuarios
     : admin.usersByEmail && typeof admin.usersByEmail === 'object'
       ? Object.values(admin.usersByEmail)
       : Array.isArray(data.registro?.usersSummary)
@@ -593,6 +605,7 @@ function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
       alocacao: String(u.alocacao || u.allocation || ''),
       contrato: String(u.contrato || u.contract || ''),
       isAdmin: Boolean(u.isAdmin),
+      showInCharts: u.showInCharts !== false,
       onlyThirdParty: Boolean(u.onlyThirdParty || u.onlyThirdPartyUsers || u.somenteTerceirizados),
       status: String(u.status || 'pending') as UserAccessRecord['status'],
       allowedTabs: (Array.isArray(u.allowedTabs) ? u.allowedTabs : Array.isArray(u.abas) ? u.abas : [])
@@ -601,9 +614,29 @@ function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
     }));
 }
 
+function normalizeLoadedAdmin(admin: any, data: GlobalData) {
+  if (!admin || typeof admin !== 'object') return admin;
+
+  const normalizedUsers = normalizeAdminUsers({ ...data, admin });
+  const disciplineSettings = normalizeDisciplineSettings(
+    admin.disciplineSettings
+    ?? admin.disciplinas
+    ?? admin.disciplinasConfiguradas
+    ?? [],
+  );
+
+  return {
+    ...admin,
+    users: normalizedUsers,
+    usuarios: normalizedUsers,
+    disciplineSettings,
+    disciplinas: getDisciplineNamesFromSettings(disciplineSettings),
+  };
+}
+
 function getAdminState(data: GlobalData) {
   const admin = data.admin || {};
-  const disciplineSettings = normalizeDisciplineSettings(admin.disciplinas);
+  const disciplineSettings = normalizeDisciplineSettings(admin.disciplineSettings ?? admin.disciplinas);
   return {
     usuarios: normalizeAdminUsers(data),
     disciplinas: getDisciplineNamesFromSettings(disciplineSettings),
@@ -749,6 +782,7 @@ function buildProfessionalsForSeed(registro: any, admin: any) {
       ? Object.values(admin.usersByEmail)
       : [];
   adminUsers.forEach((user: any) => {
+    if (!shouldShowUserInCharts(user)) return;
     push(user?.disciplina || user?.discipline, user?.nome || user?.name, user?.email);
   });
 
@@ -763,6 +797,10 @@ function buildThirdPartyEmail(id: string, nome: string) {
   const cleanId = String(id || '').trim();
   if (cleanId) return `terceirizada:${cleanId}`;
   return `terceirizada:${String(nome || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+}
+
+function shouldShowUserInCharts(user: any) {
+  return user?.showInCharts !== false;
 }
 
 function buildRegistroProfessionalsByDiscipline(registro: any, admin: any) {
@@ -819,10 +857,47 @@ function applyAdminDataToRegistro(data: GlobalData, currentUser?: AuthUser | nul
   if (!data.registro || typeof data.registro !== 'object') return data;
 
   const professionalsByDisciplina = buildRegistroProfessionalsByDiscipline(data.registro, data.admin);
+  const adminUsers = Array.isArray(data.admin?.users)
+    ? data.admin.users
+    : data.admin?.usersByEmail && typeof data.admin.usersByEmail === 'object'
+      ? Object.values(data.admin.usersByEmail)
+      : [];
+  const hiddenEmails = new Set(
+    adminUsers
+      .filter((user: any) => !shouldShowUserInCharts(user))
+      .map((user: any) => normalizeUserText(user?.email))
+      .filter(Boolean)
+  );
+  const filterActivityProfessionals = (activity: any) => {
+    const rawEmails = Array.isArray(activity?.profissionaisEmails)
+      ? activity.profissionaisEmails.map((item: any) => String(item || '').trim())
+      : String(activity?.profissionaisEmails || '').split(' | ').map((item) => item.trim()).filter(Boolean);
+    const rawNames = Array.isArray(activity?.profissionais)
+      ? activity.profissionais.map((item: any) => String(item || '').trim())
+      : String(activity?.profissionais || '').split(' | ').map((item) => item.trim()).filter(Boolean);
+    const keptPairs = rawEmails
+      .map((email: string, index: number) => ({ email, nome: rawNames[index] || '' }))
+      .filter((item: { email: string }) => !hiddenEmails.has(normalizeUserText(item.email)));
+
+    return {
+      ...activity,
+      profissionaisEmails: keptPairs.map((item: { email: string }) => item.email),
+      profissionais: keptPairs.map((item: { nome: string }) => item.nome).filter(Boolean),
+    };
+  };
+  const filteredProfessionalsByDisciplina = Object.fromEntries(
+    Object.entries(professionalsByDisciplina).map(([disciplina, profissionais]) => [
+      disciplina,
+      (Array.isArray(profissionais) ? profissionais : []).filter((item: any) => {
+        const email = normalizeUserText(item?.email);
+        return !email || !hiddenEmails.has(email);
+      }),
+    ])
+  );
   const effectiveUser = currentUser && data.admin ? applyAdminUserContext(currentUser, data.admin) : currentUser;
   const targetDisciplina = String(effectiveUser?.disciplina || '').trim();
-  const matchingKey = Object.keys(professionalsByDisciplina).find((key) => normalizeUserText(key) === normalizeUserText(targetDisciplina));
-  let professionals = matchingKey ? professionalsByDisciplina[matchingKey] || [] : [];
+  const matchingKey = Object.keys(filteredProfessionalsByDisciplina).find((key) => normalizeUserText(key) === normalizeUserText(targetDisciplina));
+  let professionals = matchingKey ? filteredProfessionalsByDisciplina[matchingKey] || [] : [];
 
   if (effectiveUser?.onlyThirdParty) {
     professionals = professionals.filter((item: any) => String(item?.email || '').startsWith('terceirizada:'));
@@ -832,7 +907,14 @@ function applyAdminDataToRegistro(data: GlobalData, currentUser?: AuthUser | nul
     ...data,
     registro: {
       ...data.registro,
-      professionalsByDisciplina,
+      professionalsByDisciplina: filteredProfessionalsByDisciplina,
+      usersSummary: (Array.isArray(data.registro.usersSummary) ? data.registro.usersSummary : []).filter((user: any) => {
+        const email = normalizeUserText(user?.email);
+        return !email || !hiddenEmails.has(email);
+      }),
+      activitiesList: (Array.isArray(data.registro.activitiesList) ? data.registro.activitiesList : []).map(filterActivityProfessionals),
+      activeActivities: (Array.isArray(data.registro.activeActivities) ? data.registro.activeActivities : []).map(filterActivityProfessionals),
+      completedActivities: (Array.isArray(data.registro.completedActivities) ? data.registro.completedActivities : []).map(filterActivityProfessionals),
       professionals,
     },
   };
@@ -1037,6 +1119,7 @@ export default function App() {
         alocacao: user.alocacao,
         contrato: user.contrato,
         isAdmin: user.isAdmin,
+        showInCharts: user.showInCharts !== false,
         onlyThirdParty: user.onlyThirdParty,
         status: user.status,
         allowedTabs: user.allowedTabs,
@@ -1063,12 +1146,16 @@ export default function App() {
   }, [buildAdminFirebaseSnapshot]);
 
   const applyLoadedGlobalData = useCallback((fullData: GlobalData) => {
-    setGlobalData(fullData);
-    saveGlobalDataCache(fullData);
+    const normalizedData = fullData.admin
+      ? { ...fullData, admin: normalizeLoadedAdmin(fullData.admin, fullData) }
+      : fullData;
+
+    setGlobalData(normalizedData);
+    saveGlobalDataCache(normalizedData);
     setLoadedModules({});
 
-    if (fullData.admin) {
-      const adminState = getAdminState(fullData);
+    if (normalizedData.admin) {
+      const adminState = getAdminState(normalizedData);
       setUsuarios(adminState.usuarios);
       setDisciplinas(adminState.disciplinas);
       setDisciplineSettings(adminState.disciplineSettings);
@@ -1077,7 +1164,7 @@ export default function App() {
       setTerceirizadas(adminState.terceirizadas);
       setRoleTabPermissions(adminState.roleTabPermissions);
       setDatabaseLinks(adminState.databaseLinks);
-      setCurrentUser((prev) => prev ? applyAdminUserContext(prev, fullData.admin) : prev);
+      setCurrentUser((prev) => prev ? applyAdminUserContext(prev, normalizedData.admin) : prev);
     }
   }, []);
 
@@ -1216,26 +1303,12 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !isFirebaseConfigured()) return;
 
-    let refreshTimeout: number | undefined;
-    const scheduleRefresh = () => {
-      if (refreshTimeout) window.clearTimeout(refreshTimeout);
-      refreshTimeout = window.setTimeout(() => {
-        void refreshRealtimeEnvironment(currentUser);
-      }, 250);
-    };
-
-    const unsubscribers = [
-      subscribeFirebaseCollection('appData', scheduleRefresh),
-      subscribeFirebaseCollection('registroAtividades', scheduleRefresh),
-      subscribeFirebaseCollection('planningTodos', scheduleRefresh),
-      subscribeFirebaseCollection('contractPriorities', scheduleRefresh),
-      subscribeFirebaseCollection('contractInterferences', scheduleRefresh),
-      subscribeFirebaseCollection('resolvedAlerts', scheduleRefresh),
-    ];
+    const autoRefreshInterval = window.setInterval(() => {
+      void refreshRealtimeEnvironment(currentUser);
+    }, 60 * 60 * 1000);
 
     return () => {
-      if (refreshTimeout) window.clearTimeout(refreshTimeout);
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
+      window.clearInterval(autoRefreshInterval);
     };
   }, [currentUser, refreshRealtimeEnvironment]);
 
@@ -1319,6 +1392,41 @@ export default function App() {
       setIsBackgroundSyncing(false);
     }
   }, [applyLoadedGlobalData, currentUser, globalData]);
+
+  useEffect(() => {
+    if (!globalData.admin) return;
+    if (usuarios.length > 0 && disciplinas.length > 0) return;
+
+    const normalizedAdmin = normalizeLoadedAdmin(globalData.admin, globalData);
+    const adminState = getAdminState({ ...globalData, admin: normalizedAdmin });
+
+    if (usuarios.length === 0 && adminState.usuarios.length > 0) setUsuarios(adminState.usuarios);
+    if (disciplinas.length === 0 && adminState.disciplinas.length > 0) setDisciplinas(adminState.disciplinas);
+    if (disciplineSettings.length === 0 && adminState.disciplineSettings.length > 0) setDisciplineSettings(adminState.disciplineSettings);
+    if (cargos.length === 0 && adminState.cargos.length > 0) setCargos(adminState.cargos);
+    if (alocacoes.length === 0 && adminState.alocacoes.length > 0) setAlocacoes(adminState.alocacoes);
+    if (terceirizadas.length === 0 && adminState.terceirizadas.length > 0) setTerceirizadas(adminState.terceirizadas);
+    if (databaseLinks.length === 0 && adminState.databaseLinks.length > 0) setDatabaseLinks(adminState.databaseLinks);
+    if (Object.keys(roleTabPermissions).length === 0 && Object.keys(adminState.roleTabPermissions).length > 0) {
+      setRoleTabPermissions(adminState.roleTabPermissions);
+    }
+  }, [
+    alocacoes.length,
+    cargos.length,
+    databaseLinks.length,
+    disciplinas.length,
+    disciplineSettings.length,
+    globalData,
+    roleTabPermissions,
+    terceirizadas.length,
+    usuarios.length,
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== 'administracao' || !currentUser?.isAdmin) return;
+    if (usuarios.length > 0 || disciplinas.length > 0) return;
+    void loadAdminData();
+  }, [activeTab, currentUser?.isAdmin, disciplinas.length, loadAdminData, usuarios.length]);
 
   const handleLogin = async (email: string, password: string, rememberMe: boolean) => {
     const response = await postToAppsScript<AuthResponse>({ action: 'authUser', email, password });
@@ -1644,12 +1752,10 @@ export default function App() {
 
   const headerTabs = (() => {
     if (activeTab === 'controle') {
-      return [
-        { key: 'profissionais', label: 'Dashboard', icon: <Users size={16} />, active: subTab === 'profissionais', onClick: () => setSubTab('profissionais') },
-        { key: 'alocacoes', label: 'Alocações', icon: <Users size={16} />, active: subTab === 'alocacoes', onClick: () => setSubTab('alocacoes') },
-        { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
-        { key: 'planejamento', label: 'Planejamento', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
-        { key: 'alertas', label: 'Alertas', icon: <AlertTriangle size={16} />, active: subTab === 'alertas', onClick: () => setSubTab('alertas') },
+        return [
+          { key: 'profissionais', label: 'Profissionais', icon: <Users size={16} />, active: subTab === 'profissionais', onClick: () => setSubTab('profissionais') },
+          { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
+          { key: 'alertas', label: 'Alertas', icon: <AlertTriangle size={16} />, active: subTab === 'alertas', onClick: () => setSubTab('alertas') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: subTab === 'cronograma', onClick: () => setSubTab('cronograma') }] : []),
       ];
     }
@@ -1700,7 +1806,7 @@ export default function App() {
   })();
 
   const visibleHeaderTabs = activeTab === 'controle'
-    ? headerTabs.filter((tab) => tab.key !== 'alocacoes' && tab.key !== 'dashboard' && tab.key !== 'planejamento')
+    ? headerTabs.filter((tab) => tab.key !== 'alocacoes')
     : headerTabs;
 
   if (!currentUser && !preloading) {
@@ -1760,18 +1866,19 @@ export default function App() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="h-24 bg-white border-b border-[#E5E7EB] flex items-center justify-between px-8 shrink-0 relative">
           <div className="flex items-center gap-6">
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 text-[#757575] hover:bg-[#F4F5F7] rounded-lg transition-colors"><Menu size={24} /></button>
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-[#F8FAFC] text-[#9CA3AF] transition-colors hover:bg-[#F1F5F9] hover:text-[#6B7280]"
+              aria-label={sidebarOpen ? 'Recuar menu lateral' : 'Expandir menu lateral'}
+              title={sidebarOpen ? 'Recuar menu lateral' : 'Expandir menu lateral'}
+            >
+              {sidebarOpen ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
+            </button>
             <div className="flex flex-col shrink-0">
               <div className="flex items-center gap-3">
                 <h2 className="text-[18px] font-bold text-[#2D2D2D] leading-tight">
                   {activeTab === 'registro' ? 'Área Técnica' : activeTab === 'controle' ? 'Coordenação de Engenharia' : activeTab === 'planejamento' ? 'Planejamento' : activeTab === 'contrato' ? 'Contrato' : activeTab === 'nc2' ? 'Conformidade' : 'Administração'}
                 </h2>
-                {isBackgroundSyncing && (
-                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#EFF6FF] text-[#1D4ED8] text-[10px] font-bold">
-                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                    Atualizando Firebase...
-                  </span>
-                )}
               </div>
               <span className="text-[10px] font-medium text-[#757575] uppercase tracking-widest mt-1">EcoQuanta · Ecossistema Quanta</span>
             </div>
@@ -1795,6 +1902,16 @@ export default function App() {
           )}
 
           <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => currentUser && void refreshRealtimeEnvironment(currentUser)}
+              disabled={!currentUser || isBackgroundSyncing}
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#9CA3AF] transition-colors hover:bg-[#F8FAFC] hover:text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60"
+              aria-label="Atualizar dados do Firebase"
+              title="Atualizar dados do Firebase"
+            >
+              <RefreshCw size={18} className={isBackgroundSyncing ? 'animate-spin' : ''} />
+            </button>
             <div className="w-10 h-10 rounded-full border border-[#E5E7EB] bg-white flex items-center justify-center text-[#F05D28] font-bold text-sm hidden sm:flex">
               {currentUser ? getUserInitials(currentUser.nome) : ''}
             </div>
@@ -1806,13 +1923,13 @@ export default function App() {
             <React.Suspense fallback={<TabLoadingFallback />}>
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'atividades'
-                  ? <RegistroDeAtividade currentUser={currentUser} preloadedData={effectiveGlobalData.registro} viewMode="atividades" />
+                  ? <RegistroDeAtividade currentUser={currentUser} preloadedData={effectiveGlobalData} viewMode="atividades" />
                   : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
                 planejamentoSubTab === 'dashboard'
-                  ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="planejamento" />
+                  ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="dashboard" activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                   : planejamentoSubTab === 'tecnico'
                     ? <PlanejamentoTecnico preloadedData={effectiveGlobalData} />
                     : planejamentoSubTab === 'alertas'

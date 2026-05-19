@@ -235,6 +235,7 @@ function getPlanningTodoSources(preloadedData: any): any[] {
   const registro = preloadedData?.registro || preloadedData || {};
   const planejamento = preloadedData?.planejamento || {};
   const candidates = [
+    preloadedData?.planningTodos,
     registro.itensAFazer,
     registro.itensAFazerOptions,
     registro.planejamentoItens,
@@ -249,9 +250,11 @@ function getPlanningTodoSources(preloadedData: any): any[] {
 function buildTodoOptions(preloadedData: any): TodoOption[] {
   return getPlanningTodoSources(preloadedData)
     .map((item: any, index: number) => {
-      const titulo = String(item?.titulo || item?.nome || item?.name || item?.descricao || item?.description || '').trim();
+      const titulo = String(item?.titulo || item?.atividadeNome || item?.itemNome || item?.nome || item?.name || item?.descricao || item?.description || '').trim();
       const descricao = String(item?.descricao || item?.description || titulo).trim();
-      const id = String(item?.id || item?.codigo || item?.code || `${item?.itemCodigo || 'todo'}-${index}`).trim();
+      const itemCodigo = String(item?.itemCodigo || item?.atividadeCodigo || item?.activityCode || '').trim();
+      const itemNome = String(item?.itemNome || item?.atividadeNome || item?.activityName || '').trim();
+      const id = String(item?.id || item?.codigo || item?.code || `${itemCodigo || 'todo'}-${index}`).trim();
       return {
         id,
         titulo: titulo || `Item a fazer ${index + 1}`,
@@ -260,8 +263,8 @@ function buildTodoOptions(preloadedData: any): TodoOption[] {
         contratoCodigo: String(item?.contratoCodigo || item?.contractCode || '').trim(),
         osCodigo: String(item?.osCodigo || item?.osCode || '').trim(),
         osNome: String(item?.osNome || item?.osName || '').trim(),
-        itemCodigo: String(item?.itemCodigo || item?.activityCode || '').trim(),
-        itemNome: String(item?.itemNome || item?.activityName || '').trim(),
+        itemCodigo,
+        itemNome,
       };
     })
     .filter((item) => item.id && item.titulo);

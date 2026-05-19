@@ -31,6 +31,26 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /planningTodos/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    match /contractPriorities/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    match /contractInterferences/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    match /resolvedAlerts/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
     match /emergencies/{document} {
       allow read, create, update: if isSignedIn();
       allow delete: if false;

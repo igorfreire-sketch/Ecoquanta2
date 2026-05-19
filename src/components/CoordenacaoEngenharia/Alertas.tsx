@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, Check, ChevronDown, ChevronUp, ClipboardList, FileWarning, TimerReset } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp, ClipboardList, FileWarning, Save, TimerReset } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
 import { isFirebaseConfigured, setFirebaseDocument, updateFirebaseRegistroActivity } from '../../lib/firebaseDb';
 
@@ -193,10 +193,11 @@ function EmptyState({ text }: { text: string }) {
 }
 
 export default function Alertas({ currentUser: _currentUser, preloadedData, activeContractCode }: AlertasProps) {
-  const [resolvingActivityIds, setResolvingActivityIds] = React.useState<string[]>([]);
+  const [savingResolvedAlerts, setSavingResolvedAlerts] = React.useState(false);
   const [resolvedAlertSignatures, setResolvedAlertSignatures] = React.useState<string[]>(
     () => (Array.isArray(preloadedData?.resolvedAlerts) ? preloadedData.resolvedAlerts : []).map((item) => String(item.signature || '').trim()).filter(Boolean)
   );
+  const [pendingResolvedAlerts, setPendingResolvedAlerts] = React.useState<Array<{ activityId: string; signature: string }>>([]);
 
   const activities = React.useMemo(() => buildActivities(preloadedData?.registro), [preloadedData?.registro]);
 
@@ -217,9 +218,18 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
     setResolvedAlertSignatures((prev) => prev.filter((signature) => activeSignatures.has(signature)));
   }, [criticalActivitiesBase, resolvedAlertSignatures.length]);
 
+  React.useEffect(() => {
+    const activeSignatures = new Set(criticalActivitiesBase.map(buildActivityAlertSignature));
+    setPendingResolvedAlerts((prev) => prev.filter((item) => activeSignatures.has(item.signature)));
+  }, [criticalActivitiesBase]);
+
   const criticalActivities = React.useMemo(
-    () => criticalActivitiesBase.filter((item) => !resolvedAlertSignatures.includes(buildActivityAlertSignature(item))),
-    [criticalActivitiesBase, resolvedAlertSignatures]
+    () => criticalActivitiesBase.filter((item) => {
+      const signature = buildActivityAlertSignature(item);
+      return !resolvedAlertSignatures.includes(signature)
+        && !pendingResolvedAlerts.some((entry) => entry.signature === signature);
+    }),
+    [criticalActivitiesBase, pendingResolvedAlerts, resolvedAlertSignatures]
   );
 
   React.useEffect(() => {
@@ -262,31 +272,45 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
     });
   }, [planningTodos, activities]);
 
-  const handleResolveCriticalActivity = async (activity: AlertActivity) => {
+  const handleToggleResolveCriticalActivity = (activity: AlertActivity) => {
     const signature = buildActivityAlertSignature(activity);
-    setResolvingActivityIds((prev) => (prev.includes(activity.id) ? prev : [...prev, activity.id]));
-    setResolvedAlertSignatures((prev) => (prev.includes(signature) ? prev : [...prev, signature]));
+    setPendingResolvedAlerts((prev) => {
+      const exists = prev.some((item) => item.signature === signature);
+      if (exists) return prev.filter((item) => item.signature !== signature);
+      return [...prev, { activityId: activity.id, signature }];
+    });
+  };
 
+  const handleSaveResolvedAlerts = async () => {
+    if (!pendingResolvedAlerts.length || savingResolvedAlerts) return;
     try {
+      setSavingResolvedAlerts(true);
       if (!isFirebaseConfigured()) {
         throw new Error('Firebase nao configurado para atualizar o alerta.');
       }
 
-      await updateFirebaseRegistroActivity(activity.id, {
-        avaliacaoAtual: 'Dentro do esperado',
-        ultimaAtualizacao: nowPtBr(),
-      });
-      await setFirebaseDocument('resolvedAlerts', signature, {
-        id: signature,
-        activityId: activity.id,
-        signature,
-        updatedAt: new Date().toISOString(),
-      });
+      for (const item of pendingResolvedAlerts) {
+        await updateFirebaseRegistroActivity(item.activityId, {
+          avaliacaoAtual: 'Dentro do esperado',
+          ultimaAtualizacao: nowPtBr(),
+        });
+        await setFirebaseDocument('resolvedAlerts', item.signature, {
+          id: item.signature,
+          activityId: item.activityId,
+          signature: item.signature,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      setResolvedAlertSignatures((prev) => [
+        ...prev,
+        ...pendingResolvedAlerts.map((item) => item.signature).filter((signature) => !prev.includes(signature)),
+      ]);
+      setPendingResolvedAlerts([]);
     } catch (error) {
-      setResolvedAlertSignatures((prev) => prev.filter((item) => item !== signature));
-      console.error('Erro ao resolver alerta:', error);
+      console.error('Erro ao enviar resolucao dos alertas:', error);
     } finally {
-      setResolvingActivityIds((prev) => prev.filter((item) => item !== activity.id));
+      setSavingResolvedAlerts(false);
     }
   };
 
@@ -301,12 +325,11 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
                 <div className="text-[12px] font-black uppercase tracking-[1px] text-[#B91C1C]">{item.avaliacao}</div>
                 <button
                   type="button"
-                  onClick={() => void handleResolveCriticalActivity(item)}
-                  disabled={resolvingActivityIds.includes(item.id)}
+                  onClick={() => handleToggleResolveCriticalActivity(item)}
                   className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[#FCA5A5] bg-white px-3 text-[11px] font-black uppercase tracking-[1px] text-[#B91C1C] transition hover:bg-[#FEE2E2] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Check size={14} />
-                  {resolvingActivityIds.includes(item.id) ? 'Salvando' : 'Resolvido'}
+                  Resolvido
                 </button>
               </div>
               <div className="mt-1 text-[15px] font-black text-[#111827]">{item.itemNome}</div>
@@ -356,6 +379,20 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
           ))}
         </div>
       </AccordionSection>
+
+      {pendingResolvedAlerts.length > 0 && (
+        <div className="fixed right-8 bottom-8 z-30 flex">
+          <button
+            type="button"
+            onClick={() => void handleSaveResolvedAlerts()}
+            disabled={savingResolvedAlerts}
+            className="h-14 px-6 bg-[#F05D28] text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-[#F05D28]/25 disabled:opacity-70"
+          >
+            <Save size={18} />
+            {savingResolvedAlerts ? 'Enviando...' : `Enviar informacoes (${pendingResolvedAlerts.length})`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -168,7 +168,12 @@ async function ensureFirebaseAuth() {
   if (!app) return;
 
   if (!authPromise) {
-    authPromise = signInAnonymously(getAuth(app)).then(() => undefined);
+    authPromise = signInAnonymously(getAuth(app))
+      .then(() => undefined)
+      .catch((error) => {
+        authPromise = null;
+        throw error;
+      });
   }
   await authPromise;
 }

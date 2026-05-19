@@ -49,6 +49,7 @@ export interface UserAccessRecord {
   alocacao: string;
   contrato: string;
   isAdmin: boolean;
+  showInCharts: boolean;
   onlyThirdParty: boolean;
   status: UserStatus;
   allowedTabs: AppTabKey[];
@@ -1002,6 +1003,21 @@ export default function Administracao({
                       type="checkbox"
                       checked={user.isAdmin}
                       onChange={(e) => onToggleAdmin(user.id, e.target.checked)}
+                      className="w-4 h-4 accent-[#F05D28] cursor-pointer"
+                    />
+                  </label>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="bentham-label">Mostrar em graficos</label>
+                  <label className="h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center justify-between cursor-pointer">
+                    <span className="text-[13px] font-medium text-[#2D2D2D]">
+                      {user.showInCharts !== false ? 'Sim' : 'Nao'}
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={user.showInCharts !== false}
+                      onChange={(e) => onUpdateUsuario(user.id, { showInCharts: e.target.checked })}
                       className="w-4 h-4 accent-[#F05D28] cursor-pointer"
                     />
                   </label>

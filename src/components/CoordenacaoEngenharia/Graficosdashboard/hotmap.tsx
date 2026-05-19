@@ -91,7 +91,6 @@ export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
   if (!disciplinas.length || !osLabels.length) {
     return (
       <div className="flex flex-col w-full font-['Montserrat'] min-h-[280px]">
-        <h3 className="text-base font-bold text-[#2D2D2D] tracking-tight mb-4">Alocacao de Disciplina por OS</h3>
         <div className="rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] py-12 px-6 text-center text-[13px] font-medium text-[#64748B]">
           Nenhuma atividade encontrada para montar o mapa de alocacao.
         </div>
@@ -104,10 +103,6 @@ export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
   return (
     <div className="flex flex-col w-full font-['Montserrat'] min-h-[280px]">
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-5 gap-4">
-        <div>
-          <h3 className="text-base font-bold text-[#2D2D2D] tracking-tight">Alocacao de Disciplina por OS</h3>
-        </div>
-
         <div className="flex items-center gap-2 text-[11px] font-semibold text-[#757575]">
           <span>0</span>
           <div className="flex h-3 w-32 overflow-hidden rounded-sm">

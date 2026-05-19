@@ -37,7 +37,7 @@ type DashboardEngenhariaProps = {
     admin?: any;
     contractPriorities?: Array<{ id: string; activityId: string; monthlyCycle?: string; licitatoria?: boolean }>;
   };
-  mode?: 'profissionais' | 'planejamento';
+  mode?: 'dashboard' | 'profissionais' | 'planejamento';
   activeContractCode?: string;
 };
 
@@ -665,7 +665,7 @@ function FilterField({
   );
 }
 
-export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode = 'profissionais', activeContractCode }: DashboardEngenhariaProps) {
+export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode = 'dashboard', activeContractCode }: DashboardEngenhariaProps) {
   const filtroContratoGlobal = filtrosAtivos?.contrato || 'Todos';
   const filtroOSGlobal = filtrosAtivos?.os || 'Todos';
   const filtroDisciplina = filtrosAtivos?.disciplina || 'Todos';
@@ -1003,7 +1003,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6">
-        {mode === 'profissionais' && (
+        {mode === 'dashboard' && (
           <>
             <div className="lg:col-span-12">
               <ExpandableSection title="Composicao de Profissionais por OS">
@@ -1021,16 +1021,6 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
               </ExpandableSection>
             </div>
 
-            <div className="lg:col-span-12">
-              <ExpandableSection title="Profissionais">
-                <Alocacoes preloadedData={preloadedData} activeContractCode={activeContractCode} dadosTabela={tableConsultaGraficos} />
-              </ExpandableSection>
-            </div>
-          </>
-        )}
-
-        {mode === 'planejamento' && (
-          <>
             <div className="lg:col-span-6">
               <ExpandableSection title="Matriz de Priorizacao">
                 <MatrizDePriorizacao
@@ -1057,9 +1047,20 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
             </div>
           </>
         )}
+
+        {mode === 'profissionais' && (
+          <>
+            <div className="lg:col-span-12">
+              <ExpandableSection title="Profissionais">
+                <Alocacoes preloadedData={preloadedData} activeContractCode={activeContractCode} dadosTabela={tableConsultaGraficos} />
+              </ExpandableSection>
+            </div>
+          </>
+        )}
+
       </div>
 
-      {mode === 'profissionais' && (
+      {mode === 'dashboard' && (
       <ExpandableSection title="Consulta de Atividades">
       <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8">
         <div className="flex items-center gap-3 border-b border-[#E5E7EB] pb-4 mb-6">
@@ -1144,30 +1145,6 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
       </ExpandableSection>
       )}
 
-      {mode === 'profissionais' && (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ExpandableSection title="Matriz de Priorizacao">
-          <MatrizDePriorizacao
-            tableFiltrada={tableMatrizFiltrada}
-            maxPrazo={maxPrazo}
-            filtros={filtrosMatriz}
-            contractOptions={contractOptionsMatriz}
-            osOptions={osOptionsMatriz}
-            onFiltroChange={updateFiltroMatriz}
-          />
-        </ExpandableSection>
-
-        <ExpandableSection title="Analise de Atuacao Executiva">
-          <SituacaoPorDisciplina
-            dadosBrutos={dadosImpactoEsforco}
-            filtros={filtrosAnalise}
-            contractOptions={contractOptionsAnalise}
-            osOptions={osOptionsAnalise}
-            onFiltroChange={updateFiltroAnalise}
-          />
-        </ExpandableSection>
-      </div>
-      )}
     </div>
   );
 }

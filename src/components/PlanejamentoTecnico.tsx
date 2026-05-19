@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ClipboardList, Pencil, Plus, Trash2 } from 'lucide-react';
 import { deleteFirebaseDocument, isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
 
@@ -36,7 +36,12 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
   const osOptions = Array.isArray(preloadedData?.registro?.osOptions) ? preloadedData!.registro!.osOptions : [];
   const itemOptions = Array.isArray(preloadedData?.registro?.itemOptions) ? preloadedData!.registro!.itemOptions : [];
   const disciplinas = Array.isArray(preloadedData?.admin?.disciplinas) ? preloadedData!.admin!.disciplinas : [];
-  const items = Array.isArray(preloadedData?.planningTodos) ? preloadedData.planningTodos : [];
+  const initialItems = useMemo(
+    () => (Array.isArray(preloadedData?.planningTodos) ? preloadedData.planningTodos : []),
+    [preloadedData?.planningTodos]
+  );
+  const initialItemIds = useMemo(() => new Set(initialItems.map((item) => item.id)), [initialItems]);
+  const [items, setItems] = useState<PlannedItem[]>(initialItems);
   const [formData, setFormData] = useState({
     contratoCodigo: '',
     osCodigo: '',
@@ -45,6 +50,16 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
     descricao: '',
   });
   const [editingId, setEditingId] = useState('');
+  const [pendingUpserts, setPendingUpserts] = useState<Record<string, PlannedItem>>({});
+  const [pendingDeletes, setPendingDeletes] = useState<string[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  useEffect(() => {
+    setItems(initialItems);
+    setPendingUpserts({});
+    setPendingDeletes([]);
+  }, [initialItems]);
 
   const selectedContract = useMemo(
     () => contracts.find((item: any) => String(item?.codigo || '') === formData.contratoCodigo),
@@ -67,9 +82,25 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
     [filteredItems, formData.atividadeCodigo]
   );
 
-  const saveItem = async () => {
-    if (!formData.contratoCodigo || !formData.osCodigo || !formData.atividadeCodigo || !formData.disciplina || !formData.descricao.trim()) return;
-    if (!isFirebaseConfigured()) return;
+  const resetForm = () => {
+    setEditingId('');
+    setFormData({
+      contratoCodigo: '',
+      osCodigo: '',
+      atividadeCodigo: '',
+      disciplina: '',
+      descricao: '',
+    });
+  };
+
+  const saveItem = () => {
+    if (!formData.contratoCodigo || !formData.osCodigo || !formData.atividadeCodigo || !formData.disciplina || !formData.descricao.trim()) {
+      setErrorMessage('Preencha contrato, OS, atividade, disciplina e descricao antes de adicionar.');
+      return;
+    }
+
+    setErrorMessage('');
+    const currentItem = items.find((item) => item.id === editingId);
     const nextItem: PlannedItem = {
       id: editingId || createLocalId(),
       contratoCodigo: formData.contratoCodigo,
@@ -81,16 +112,32 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
       disciplina: formData.disciplina,
       titulo: String(selectedItem?.nome || selectedItem?.name || 'Atividade planejada'),
       descricao: formData.descricao.trim(),
-      createdAt: items.find((item) => item.id === editingId)?.createdAt || new Date().toISOString(),
+      createdAt: currentItem?.createdAt || new Date().toISOString(),
     };
-    await setFirebaseDocument('planningTodos', nextItem.id, nextItem);
-    setEditingId('');
-    setFormData((prev) => ({ ...prev, atividadeCodigo: '', descricao: '' }));
+
+    setItems((prev) => {
+      const hasItem = prev.some((item) => item.id === nextItem.id);
+      if (hasItem) return prev.map((item) => (item.id === nextItem.id ? nextItem : item));
+      return [nextItem, ...prev];
+    });
+    setPendingUpserts((prev) => ({ ...prev, [nextItem.id]: nextItem }));
+    setPendingDeletes((prev) => prev.filter((id) => id !== nextItem.id));
+    resetForm();
   };
 
-  const removeItem = async (id: string) => {
-    if (!isFirebaseConfigured()) return;
-    await deleteFirebaseDocument('planningTodos', id);
+  const removeItem = (id: string) => {
+    setItems((prev) => prev.filter((item) => item.id !== id));
+    setPendingUpserts((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setPendingDeletes((prev) => {
+      if (!initialItemIds.has(id) || prev.includes(id)) return prev;
+      return [...prev, id];
+    });
+    if (editingId === id) resetForm();
+    setErrorMessage('');
   };
 
   const editItem = (item: PlannedItem) => {
@@ -102,6 +149,34 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
       disciplina: item.disciplina,
       descricao: item.descricao,
     });
+    setErrorMessage('');
+  };
+
+  const pendingChangesCount = Object.keys(pendingUpserts).length + pendingDeletes.length;
+
+  const submitPendingChanges = async () => {
+    if (pendingChangesCount === 0) return;
+    if (!isFirebaseConfigured()) {
+      setErrorMessage('Firebase nao configurado para salvar o planejamento tecnico.');
+      return;
+    }
+
+    setIsSaving(true);
+    setErrorMessage('');
+    try {
+      const upserts = Object.values(pendingUpserts) as PlannedItem[];
+      await Promise.all([
+        ...pendingDeletes.map((id) => deleteFirebaseDocument('planningTodos', id)),
+        ...upserts.map((item) => setFirebaseDocument('planningTodos', item.id, item)),
+      ]);
+      setPendingUpserts({});
+      setPendingDeletes([]);
+    } catch (error) {
+      console.error('Erro ao enviar itens do planejamento tecnico:', error);
+      setErrorMessage('Nao foi possivel salvar no Firebase. Tente novamente.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -111,7 +186,7 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
           <div>
             <div className="inline-flex items-center gap-2 rounded-full bg-[#ECFDF5] px-3 py-1 text-[11px] font-black uppercase tracking-[1px] text-[#047857]">
               <ClipboardList size={14} />
-              Planejamento Técnico
+              Planejamento Tecnico
             </div>
             <h2 className="mt-3 text-[22px] font-black text-[#111827]">Itens planejados por atividade</h2>
             <p className="mt-1 text-[13px] text-[#64748B]">
@@ -156,7 +231,7 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
               value={formData.atividadeCodigo}
               onChange={(event) => setFormData((prev) => ({ ...prev, atividadeCodigo: event.target.value }))}
             >
-              <option value="">{formData.osCodigo ? 'Selecione o Item 4...' : 'Aguardando OS...'}</option>
+              <option value="">{formData.osCodigo ? 'Selecione...' : 'Aguardando OS...'}</option>
               {filteredItems.map((item: any) => {
                 const code = String(item?.codigo || item?.code || item?.id || '');
                 const nome = String(item?.nome || item?.name || code);
@@ -189,18 +264,24 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
           />
           <button
             type="button"
-            onClick={() => void saveItem()}
-            disabled={!formData.contratoCodigo || !formData.osCodigo || !formData.atividadeCodigo || !formData.disciplina || !formData.descricao.trim()}
+            onClick={saveItem}
+            disabled={isSaving || !formData.contratoCodigo || !formData.osCodigo || !formData.atividadeCodigo || !formData.disciplina || !formData.descricao.trim()}
             className="inline-flex h-12 items-center justify-center gap-2 self-end rounded-xl bg-[#10B981] px-5 text-[13px] font-black text-white transition hover:bg-[#059669] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus size={16} />
-            {editingId ? 'Salvar edição' : 'Adicionar'}
+            {editingId ? 'Atualizar localmente' : 'Adicionar'}
           </button>
         </div>
+
+        {errorMessage && (
+          <div className="mt-4 rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">
+            {errorMessage}
+          </div>
+        )}
       </section>
 
       <section className="rounded-[24px] border border-[#E5E7EB] bg-white p-5 shadow-sm">
-        <h3 className="text-[15px] font-black text-[#111827]">Itens cadastrados não iniciados</h3>
+        <h3 className="text-[15px] font-black text-[#111827]">Itens cadastrados nao iniciados</h3>
         <div className="mt-4 space-y-3">
           {items.length === 0 && (
             <div className="rounded-2xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-6 text-[13px] text-[#64748B]">
@@ -228,7 +309,7 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
                   </button>
                   <button
                     type="button"
-                    onClick={() => void removeItem(item.id)}
+                    onClick={() => removeItem(item.id)}
                     className="rounded-xl border border-[#FECACA] bg-white p-2 text-[#DC2626] transition hover:bg-[#FEF2F2]"
                     aria-label="Excluir item planejado"
                   >
@@ -240,6 +321,23 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
           ))}
         </div>
       </section>
+
+      {pendingChangesCount > 0 && (
+        <div className="fixed bottom-6 right-6 z-[90] flex items-center gap-3 rounded-2xl border border-[#FED7AA] bg-white px-4 py-3 shadow-[0_18px_50px_rgba(240,93,40,0.18)]">
+          <div>
+            <div className="text-[11px] font-black uppercase tracking-[1px] text-[#C2410C]">Planejamento tecnico</div>
+            <div className="text-[13px] font-semibold text-[#9A3412]">{pendingChangesCount} alteracao(oes) aguardando envio</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void submitPendingChanges()}
+            disabled={isSaving}
+            className="h-14 px-6 bg-[#F05D28] text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-[#F05D28]/25 disabled:opacity-70"
+          >
+            {isSaving ? 'Enviando...' : `Enviar informacoes (${pendingChangesCount})`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

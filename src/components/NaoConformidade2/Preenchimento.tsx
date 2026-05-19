@@ -138,6 +138,7 @@ export default function Preenchimento({
   const [draftRecords, setDraftRecords] = useState<Nc2Record[]>([]);
   const [saved, setSaved] = useState(false);
   const [sending, setSending] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const contracts = preloadedData?.registro?.contracts || [];
   const osOptions = preloadedData?.registro?.osOptions || [];
@@ -265,7 +266,7 @@ export default function Preenchimento({
   };
 
   const buildRecord = (): Nc2Record | null => {
-    if (!formData.avaliador || !formData.contrato || !formData.os || !formData.disciplina || !formData.objetoOs) {
+    if (!formData.avaliador || !formData.contrato || !formData.os || !formData.disciplina || !formData.objetoOs || checkedItems.length === 0) {
       return null;
     }
 
@@ -314,7 +315,11 @@ export default function Preenchimento({
 
   const handleRegistrarProxima = () => {
     const record = buildRecord();
-    if (!record) return;
+    if (!record) {
+      setErrorMessage('Preencha os campos obrigatorios e marque pelo menos um item verificado.');
+      return;
+    }
+    setErrorMessage('');
     setDraftRecords((prev) => [record, ...prev]);
     handleLimpar();
   };
@@ -328,19 +333,23 @@ export default function Preenchimento({
     if (queue.length === 0) return;
 
     setSending(true);
+    setErrorMessage('');
     try {
       await saveRecordsBatch(queue, { nome: currentUser.nome, email: currentUser.email });
       setDraftRecords([]);
       handleLimpar();
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
+    } catch (error) {
+      console.error('Erro ao enviar atividades de conformidade:', error);
+      setErrorMessage('Nao foi possivel enviar para o Firebase. Verifique a conexao e tente novamente.');
     } finally {
       setSending(false);
     }
   };
 
   const canRegisterCurrent = Boolean(
-    formData.avaliador && formData.contrato && formData.os && formData.disciplina && formData.objetoOs && formData.origemAtividade
+    formData.avaliador && formData.contrato && formData.os && formData.disciplina && formData.objetoOs && formData.origemAtividade && checkedItems.length > 0
   );
 
   return (
@@ -641,6 +650,12 @@ export default function Preenchimento({
           Registrar proxima atividade +
         </button>
       </div>
+
+      {errorMessage && (
+        <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">
+          {errorMessage}
+        </div>
+      )}
 
       {(draftRecords.length > 0 || canRegisterCurrent) && (
         <div className="sticky bottom-6 z-20 flex justify-end">

@@ -114,12 +114,6 @@ export default function MatrizDePriorizacao({ tableFiltrada, filtros, contractOp
   return (
     <div className="flex flex-col min-h-[520px] h-full overflow-hidden font-sans">
       <div className="mb-4 shrink-0">
-        <div className="flex flex-col gap-3">
-          <div>
-            <h3 className="text-[16px] font-black text-[#2D2D2D] uppercase tracking-tight leading-none">Matriz de Priorizacao</h3>
-          </div>
-        </div>
-
         <div className="flex flex-wrap gap-2 mt-4">
           <ChipResumo label="Atividades criticas" valor={resumo.criticas} color="text-[#EF4444]" />
           <ChipResumo label="Maior peso" valor={resumo.maior} color="text-[#F05D28]" />

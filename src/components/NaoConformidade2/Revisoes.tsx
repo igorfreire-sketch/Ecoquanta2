@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, Save } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
-import { getRecords, updateRecord, type Nc2Item, type Nc2Record } from './ncStore';
+import { getDemoRecords, getRecords, updateRecord, type Nc2Item, type Nc2Record } from './ncStore';
 
 function itemUnitLabel(item: Nc2Item) {
   const total = item.quantidadeT || item.quantidadeC || 0;
@@ -13,13 +13,23 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
   const [records, setRecords] = useState<Nc2Record[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
         const next = await getRecords();
-        if (active) setRecords(next);
+        if (active) {
+          setRecords(next);
+          setErrorMessage('');
+        }
+      } catch (error) {
+        console.error('Erro ao carregar revisoes:', error);
+        if (active) {
+          setRecords(getDemoRecords());
+          setErrorMessage('Firebase recusou acesso as revisoes reais. Mostrando 5 registros de demonstracao.');
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -34,6 +44,10 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
     try {
       const updated = await updateRecord(record, { nome: currentUser.nome, email: currentUser.email });
       setRecords((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setErrorMessage('');
+    } catch (error) {
+      console.error('Erro ao salvar revisao:', error);
+      setErrorMessage('Nao foi possivel salvar as alteracoes no Firebase.');
     } finally {
       setSavingIds((prev) => {
         const next = new Set(prev);
@@ -73,11 +87,17 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
         </p>
       </div>
 
+      {errorMessage && (
+        <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">
+          {errorMessage}
+        </div>
+      )}
+
       {records.length === 0 && (
         <div className="bg-white border border-[#E5E7EB] rounded-2xl p-12 flex flex-col items-center gap-3 text-center shadow-sm">
-          <p className="text-[15px] font-bold text-[#2D2D2D]">Nenhuma revisao registrada</p>
+          <p className="text-[15px] font-bold text-[#2D2D2D]">{errorMessage ? 'Falha ao carregar revisoes' : 'Nenhuma revisao registrada'}</p>
           <p className="text-[13px] text-[#9CA3AF]">
-            Quando houver atividades enviadas em Preenchimento, elas aparecerao aqui.
+            {errorMessage ? 'Confira a conexao com o Firebase e tente novamente.' : 'Quando houver atividades enviadas em Preenchimento, elas aparecerao aqui.'}
           </p>
         </div>
       )}

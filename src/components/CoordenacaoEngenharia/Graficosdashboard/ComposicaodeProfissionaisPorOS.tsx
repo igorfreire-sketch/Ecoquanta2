@@ -161,11 +161,6 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
   if (!chartData.length || !disciplinaMetas.length) {
     return (
       <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8 flex flex-col min-h-[460px] h-full">
-        <div className="mb-6">
-          <h3 className="text-base font-bold text-[#2D2D2D] uppercase tracking-tight mb-1">
-            COMPOSICAO DE PROFISSIONAIS POR OS
-          </h3>
-        </div>
         <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-6 text-center text-[13px] font-medium text-[#64748B]">
           Nenhuma composicao encontrada para os filtros selecionados.
         </div>
@@ -188,12 +183,6 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
     <div className="flex flex-col min-h-[360px] h-full">
       <div className="mb-4 border-b-0">
         <div className="flex flex-col gap-3">
-          <div>
-            <h3 className="text-base font-bold text-[#2D2D2D] uppercase tracking-tight mb-1">
-              COMPOSICAO DE PROFISSIONAIS POR OS
-            </h3>
-          </div>
-
           {!modoDisciplina && <FixedCustomLegend />}
         </div>
       </div>

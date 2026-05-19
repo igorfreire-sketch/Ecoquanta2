@@ -91,12 +91,6 @@ const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos }) => {
   return (
     <div className="flex flex-col h-full overflow-hidden font-sans relative min-h-[520px]">
       <div className="mb-4 shrink-0">
-        <div className="flex flex-col gap-3">
-          <div>
-            <h3 className="text-[16px] font-black text-[#2D2D2D] uppercase tracking-tight leading-none">Analise de Atuacao Executiva</h3>
-          </div>
-        </div>
-
         <div className="flex flex-wrap gap-2 mt-4">
           <ChipResumo label="Ganhos rapidos" valor={resumo.ganhosRapidos} color="text-[#10B981]" />
           <ChipResumo label="Estruturantes" valor={resumo.estruturantes} color="text-[#F05D28]" />

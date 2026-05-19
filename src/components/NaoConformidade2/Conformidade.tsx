@@ -17,6 +17,7 @@ import Preenchimento from './Preenchimento';
 import Revisoes from './Revisoes';
 import TerceirizadasCadastro from '../TerceirizadasCadastro';
 import Cronograma from '../Cronograma';
+import { getDemoRecords, getRecords, type Nc2Record } from './ncStore';
 import type { TerceirizadaRecord } from '../Administracao';
 import type { AuthUser } from '../LoginScreen';
 
@@ -54,31 +55,109 @@ const getOsName = (os: RegistroOs) =>
 const getOsContractCode = (os: RegistroOs) =>
   String(os.contractCode || os.contrato || os.contractId || '').trim();
 
-const disciplinesData = [
-  { name: 'Estrutura', Interno: 12, Terceirizado: 25 },
-  { name: 'Impermeab.', Interno: 8, Terceirizado: 15 },
-  { name: 'Hidrossanit.', Interno: 15, Terceirizado: 30 },
-  { name: 'PCI', Interno: 5, Terceirizado: 10 },
-  { name: 'Eletrica', Interno: 10, Terceirizado: 22 },
-  { name: 'Arquitetura', Interno: 20, Terceirizado: 45 },
-];
+const ITEM_GROUP_LABELS: Record<string, string> = {
+  relatorio: 'Relatorio',
+  carimbo: 'Carimbo',
+  desenho: 'Desenho',
+  faltaarquivo: 'Falta de Arquivos',
+};
 
-const groupsData = [
-  { name: 'Relatorio', Interno: 30, Terceirizado: 50 },
-  { name: 'Carimbo', Interno: 15, Terceirizado: 25 },
-  { name: 'Desenho', Interno: 45, Terceirizado: 80 },
-  { name: 'Falta Arq.', Interno: 10, Terceirizado: 15 },
-];
+function normalizeText(value?: string) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
 
-const totalAnalyzedData = [
-  { name: 'Revisado Interno', value: 350, color: '#64748B' },
-  { name: 'Revisado Externo', value: 450, color: '#F05D28' },
-  { name: 'Sem NC', value: 647, color: '#10B981' },
-];
+function getRecordOrigin(record: Nc2Record) {
+  return normalizeText(record.origemAtividade) === 'terceirizado' ? 'Terceirizado' : 'Interno';
+}
+
+function getItemGroupLabel(item: { itemKey?: string; itemLabel?: string }) {
+  const key = normalizeText(item.itemKey);
+  if (ITEM_GROUP_LABELS[key]) return ITEM_GROUP_LABELS[key];
+
+  const label = normalizeText(item.itemLabel);
+  if (ITEM_GROUP_LABELS[label]) return ITEM_GROUP_LABELS[label];
+
+  if (label.includes('falta')) return 'Falta de Arquivos';
+  if (label.includes('relatorio')) return 'Relatorio';
+  if (label.includes('carimbo')) return 'Carimbo';
+  if (label.includes('desenho')) return 'Desenho';
+  return String(item.itemLabel || item.itemKey || 'Outros').trim() || 'Outros';
+}
+
+function buildDashboardMetrics(records: Nc2Record[], disciplinasBase: string[]) {
+  const disciplineMap = new Map<string, { name: string; Interno: number; Terceirizado: number }>();
+  const groupMap = new Map<string, { name: string; Interno: number; Terceirizado: number }>();
+
+  disciplinasBase.forEach((disciplina) => {
+    const name = String(disciplina || '').trim();
+    if (!name) return;
+    disciplineMap.set(normalizeText(name), { name, Interno: 0, Terceirizado: 0 });
+  });
+
+  ['Relatorio', 'Carimbo', 'Desenho', 'Falta de Arquivos'].forEach((name) => {
+    groupMap.set(normalizeText(name), { name, Interno: 0, Terceirizado: 0 });
+  });
+
+  let perfectFiles = 0;
+  let internalNcFiles = 0;
+  let thirdPartyNcFiles = 0;
+
+  records.forEach((record) => {
+    const origin = getRecordOrigin(record);
+    const disciplinaName = String(record.disciplina || 'Sem disciplina').trim() || 'Sem disciplina';
+    const disciplinaKey = normalizeText(disciplinaName);
+    if (!disciplineMap.has(disciplinaKey)) {
+      disciplineMap.set(disciplinaKey, { name: disciplinaName, Interno: 0, Terceirizado: 0 });
+    }
+
+    const itens = Array.isArray(record.itens) ? record.itens : [];
+    const totalNc = itens.reduce((sum, item) => sum + Number(item.quantidadeT || 0), 0);
+    const totalPerfect = itens.reduce((sum, item) => sum + Number(item.quantidadeC || 0), 0);
+
+    disciplineMap.get(disciplinaKey)![origin] += totalNc;
+    perfectFiles += totalPerfect;
+    if (origin === 'Terceirizado') thirdPartyNcFiles += totalNc;
+    else internalNcFiles += totalNc;
+
+    itens.forEach((item) => {
+      const groupName = getItemGroupLabel(item);
+      const groupKey = normalizeText(groupName);
+      if (!groupMap.has(groupKey)) {
+        groupMap.set(groupKey, { name: groupName, Interno: 0, Terceirizado: 0 });
+      }
+      groupMap.get(groupKey)![origin] += Number(item.quantidadeT || 0);
+    });
+  });
+
+  const disciplinesData = Array.from(disciplineMap.values())
+    .filter((item) => item.Interno > 0 || item.Terceirizado > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+
+  const groupsData = ['Relatorio', 'Carimbo', 'Desenho', 'Falta de Arquivos']
+    .map((name) => groupMap.get(normalizeText(name)) || { name, Interno: 0, Terceirizado: 0 });
+
+  const totalAnalyzedData = [
+    { name: 'Interno', value: internalNcFiles, color: '#64748B' },
+    { name: 'Terceirizado', value: thirdPartyNcFiles, color: '#F05D28' },
+    { name: 'Arquivos perfeitos', value: perfectFiles, color: '#10B981' },
+  ].filter((item) => item.value > 0);
+
+  return {
+    disciplinesData,
+    groupsData,
+    totalAnalyzedData,
+    totalFiles: internalNcFiles + thirdPartyNcFiles + perfectFiles,
+  };
+}
 
 function Dashboard({
   preloadedData,
   lockedContractCode,
+  disciplinas = [],
 }: {
   preloadedData?: {
     registro?: {
@@ -87,10 +166,14 @@ function Dashboard({
     };
   };
   lockedContractCode?: string;
+  disciplinas?: string[];
 }) {
   const [activeMonth, setActiveMonth] = useState('SETEMBRO');
   const [selectedContract, setSelectedContract] = useState(lockedContractCode || '');
   const [selectedOs, setSelectedOs] = useState('');
+  const [records, setRecords] = useState<Nc2Record[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const contracts = useMemo(
     () => preloadedData?.registro?.contracts || [],
@@ -108,10 +191,49 @@ function Dashboard({
     }
   }, [lockedContractCode]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        const next = await getRecords();
+        if (!cancelled) {
+          setRecords(next);
+          setErrorMessage('');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRecords(getDemoRecords());
+          setErrorMessage('Firebase recusou acesso aos dados reais. Mostrando 5 registros de demonstracao.');
+        }
+        console.error('Erro ao carregar registros de conformidade:', error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => { cancelled = true; };
+  }, []);
+
   const filteredOsOptions = useMemo(() => {
     if (!selectedContract) return osOptions;
     return osOptions.filter((os) => getOsContractCode(os) === selectedContract);
   }, [osOptions, selectedContract]);
+
+  const filteredRecords = useMemo(() => {
+    return records.filter((record) => {
+      const matchesContract = !selectedContract || record.contratoCodigo === selectedContract;
+      const matchesOs = !selectedOs || selectedOs === 'Todas' || record.osCodigo === selectedOs;
+      return matchesContract && matchesOs;
+    });
+  }, [records, selectedContract, selectedOs]);
+
+  const { disciplinesData, groupsData, totalAnalyzedData, totalFiles } = useMemo(
+    () => buildDashboardMetrics(filteredRecords, disciplinas),
+    [filteredRecords, disciplinas],
+  );
 
   return (
     <div className="flex flex-col md:flex-row gap-6 w-full animate-in fade-in duration-500">
@@ -180,20 +302,32 @@ function Dashboard({
       </aside>
 
       <div className="flex-1 flex flex-col gap-6">
+        {errorMessage && (
+          <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">
+            {errorMessage}
+          </div>
+        )}
+
         <div className="bg-white border border-[#E5E7EB] rounded-xl p-6 shadow-sm">
           <h3 className="text-[16px] font-bold text-[#2D2D2D] text-center mb-8">Nao Conformidades por disciplinas</h3>
           <div className="h-[350px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={disciplinesData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#757575', fontSize: 11 }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#757575', fontSize: 11 }} />
-                <Tooltip cursor={{ fill: '#F8F9FA' }} contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB' }} />
-                <Legend verticalAlign="top" align="center" iconType="circle" wrapperStyle={{ paddingBottom: '30px', fontSize: '12px' }} />
-                <Bar dataKey="Interno" stackId="a" fill="#64748B" barSize={40} />
-                <Bar dataKey="Terceirizado" stackId="a" fill="#F05D28" radius={[4, 4, 0, 0]} barSize={40} />
-              </BarChart>
-            </ResponsiveContainer>
+            {loading ? (
+              <div className="h-full flex items-center justify-center text-[13px] text-[#757575]">Carregando registros...</div>
+            ) : disciplinesData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-[13px] text-[#757575]">Nenhuma nao conformidade encontrada para esse filtro.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={disciplinesData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#757575', fontSize: 11 }} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#757575', fontSize: 11 }} />
+                  <Tooltip cursor={{ fill: '#F8F9FA' }} contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB' }} />
+                  <Legend verticalAlign="top" align="center" iconType="circle" wrapperStyle={{ paddingBottom: '30px', fontSize: '12px' }} />
+                  <Bar dataKey="Interno" fill="#64748B" radius={[4, 4, 0, 0]} barSize={40} />
+                  <Bar dataKey="Terceirizado" fill="#F05D28" radius={[4, 4, 0, 0]} barSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
@@ -201,17 +335,21 @@ function Dashboard({
           <div className="bg-white border border-[#E5E7EB] rounded-xl p-6 shadow-sm">
             <h3 className="text-[16px] font-bold text-[#2D2D2D] text-center mb-8">Grupos de Nao Conformidades</h3>
             <div className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={groupsData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#757575', fontSize: 11 }} dy={10} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#757575', fontSize: 11 }} />
-                  <Tooltip cursor={{ fill: '#F8F9FA' }} contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB' }} />
-                  <Legend verticalAlign="top" align="center" iconType="circle" wrapperStyle={{ paddingBottom: '20px', fontSize: '11px' }} />
-                  <Bar dataKey="Interno" fill="#64748B" radius={[4, 4, 0, 0]} barSize={25} />
-                  <Bar dataKey="Terceirizado" fill="#F05D28" radius={[4, 4, 0, 0]} barSize={25} />
-                </BarChart>
-              </ResponsiveContainer>
+              {loading ? (
+                <div className="h-full flex items-center justify-center text-[13px] text-[#757575]">Carregando registros...</div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={groupsData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#757575', fontSize: 11 }} dy={10} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#757575', fontSize: 11 }} />
+                    <Tooltip cursor={{ fill: '#F8F9FA' }} contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB' }} />
+                    <Legend verticalAlign="top" align="center" iconType="circle" wrapperStyle={{ paddingBottom: '20px', fontSize: '11px' }} />
+                    <Bar dataKey="Interno" fill="#64748B" radius={[4, 4, 0, 0]} barSize={25} />
+                    <Bar dataKey="Terceirizado" fill="#F05D28" radius={[4, 4, 0, 0]} barSize={25} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 
@@ -226,18 +364,24 @@ function Dashboard({
               ))}
             </div>
             <div className="h-[250px] w-full relative">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={totalAnalyzedData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                    {totalAnalyzedData.map((entry) => (
-                      <Cell key={entry.name} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB' }} />
-                </PieChart>
-              </ResponsiveContainer>
+              {loading ? (
+                <div className="h-full flex items-center justify-center text-[13px] text-[#757575]">Carregando registros...</div>
+              ) : totalAnalyzedData.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-[13px] text-[#757575]">Nenhum arquivo analisado para esse filtro.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={totalAnalyzedData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                      {totalAnalyzedData.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB' }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <span className="text-[24px] font-bold text-[#2D2D2D]">1.447</span>
+                <span className="text-[24px] font-bold text-[#2D2D2D]">{totalFiles}</span>
                 <span className="text-[10px] font-medium text-[#757575] uppercase tracking-wider">Total</span>
               </div>
             </div>
@@ -299,7 +443,7 @@ export default function Conformidade({
   return (
     <div className="w-full flex flex-col font-['Montserrat']">
       <div className="w-full">
-        {activeTab === 'dashboard' && <Dashboard preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
+        {activeTab === 'dashboard' && <Dashboard preloadedData={preloadedData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />}
         {activeTab === 'preenchimento' && <Preenchimento currentUser={currentUser} preloadedData={preloadedData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />}
         {activeTab === 'revisoes' && <Revisoes currentUser={currentUser} />}
         {activeTab === 'cronograma' && <Cronograma preloadedData={preloadedData as any} lockedContractCode={lockedContractCode} />}

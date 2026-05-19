@@ -4,6 +4,9 @@ interface Atividade {
   os: string;
   osCodigo?: string;
   osNome?: string;
+  profissional?: string;
+  profissionalEmail?: string;
+  activityId?: string;
   disciplina: string;
 }
 
@@ -25,16 +28,35 @@ export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
     const disciplinasSet = new Set<string>();
     const osMap = new Map<string, string>();
     const matrix: Record<string, Record<string, number>> = {};
+    const profissionaisPorOs: Record<string, Set<string>> = {};
+    const profissionaisPorDisciplinaOs: Record<string, Record<string, Set<string>>> = {};
+    const atividadesPorOs: Record<string, Set<string>> = {};
+    const atividadesPorDisciplinaOs: Record<string, Record<string, Set<string>>> = {};
 
     dados.forEach((atividade) => {
       const disciplina = String(atividade?.disciplina || '').trim() || 'Sem disciplina';
       const osCodigo = String(atividade?.osCodigo || atividade?.os || '').trim() || 'Sem OS';
       const osNome = String(atividade?.osNome || atividade?.os || '').trim() || osCodigo;
+      const profissionalKey = String(atividade?.profissionalEmail || atividade?.profissional || '').trim().toLowerCase();
+      const activityId = String(atividade?.activityId || '').trim();
 
       disciplinasSet.add(disciplina);
       if (!osMap.has(osCodigo)) osMap.set(osCodigo, osNome);
-      if (!matrix[disciplina]) matrix[disciplina] = {};
-      matrix[disciplina][osCodigo] = (matrix[disciplina][osCodigo] || 0) + 1;
+      if (!profissionaisPorOs[osCodigo]) profissionaisPorOs[osCodigo] = new Set<string>();
+      if (!profissionaisPorDisciplinaOs[disciplina]) profissionaisPorDisciplinaOs[disciplina] = {};
+      if (!profissionaisPorDisciplinaOs[disciplina][osCodigo]) profissionaisPorDisciplinaOs[disciplina][osCodigo] = new Set<string>();
+      if (!atividadesPorOs[osCodigo]) atividadesPorOs[osCodigo] = new Set<string>();
+      if (!atividadesPorDisciplinaOs[disciplina]) atividadesPorDisciplinaOs[disciplina] = {};
+      if (!atividadesPorDisciplinaOs[disciplina][osCodigo]) atividadesPorDisciplinaOs[disciplina][osCodigo] = new Set<string>();
+
+      if (profissionalKey) {
+        profissionaisPorOs[osCodigo].add(profissionalKey);
+        profissionaisPorDisciplinaOs[disciplina][osCodigo].add(profissionalKey);
+      }
+      if (activityId) {
+        atividadesPorOs[osCodigo].add(activityId);
+        atividadesPorDisciplinaOs[disciplina][osCodigo].add(activityId);
+      }
     });
 
     const disciplinasArray = Array.from(disciplinasSet);
@@ -43,7 +65,13 @@ export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
     disciplinasArray.forEach((disciplina) => {
       if (!matrix[disciplina]) matrix[disciplina] = {};
       osEntries.forEach((os) => {
-        if (matrix[disciplina][os.codigo] === undefined) matrix[disciplina][os.codigo] = 0;
+        const totalProfissionais = profissionaisPorOs[os.codigo]?.size || 0;
+        const totalAtividades = atividadesPorOs[os.codigo]?.size || 0;
+        const profissionaisDisciplina = profissionaisPorDisciplinaOs[disciplina]?.[os.codigo]?.size || 0;
+        const atividadesDisciplina = atividadesPorDisciplinaOs[disciplina]?.[os.codigo]?.size || 0;
+        const densidadeProfissionais = totalProfissionais > 0 ? profissionaisDisciplina / totalProfissionais : 0;
+        const densidadeAtividades = totalAtividades > 0 ? atividadesDisciplina / totalAtividades : 0;
+        matrix[disciplina][os.codigo] = Math.round(Math.max(densidadeProfissionais, densidadeAtividades) * 100);
       });
     });
 
@@ -62,7 +90,7 @@ export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
 
   if (!disciplinas.length || !osLabels.length) {
     return (
-      <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8 flex flex-col w-full font-['Montserrat']">
+      <div className="flex flex-col w-full font-['Montserrat'] min-h-[280px]">
         <h3 className="text-base font-bold text-[#2D2D2D] tracking-tight mb-4">Alocacao de Disciplina por OS</h3>
         <div className="rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] py-12 px-6 text-center text-[13px] font-medium text-[#64748B]">
           Nenhuma atividade encontrada para montar o mapa de alocacao.
@@ -74,8 +102,8 @@ export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
   const minWidth = Math.max(780, osLabels.length * 140);
 
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8 flex flex-col w-full font-['Montserrat']">
-      <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
+    <div className="flex flex-col w-full font-['Montserrat'] min-h-[280px]">
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-5 gap-4">
         <div>
           <h3 className="text-base font-bold text-[#2D2D2D] tracking-tight">Alocacao de Disciplina por OS</h3>
         </div>
@@ -119,9 +147,9 @@ export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
                       <div
                         key={`${disciplina}-${os.codigo}`}
                         className={`flex-1 flex items-center justify-center text-[12px] font-bold text-[#1F2937] transition-opacity hover:opacity-85 cursor-default ${getHeatmapColor(valor, maxValor)}`}
-                        title={`${disciplina} em ${os.nome}: ${valor} profissional(is)`}
+                        title={`${disciplina} em ${os.nome}: ${valor}% de densidade`}
                       >
-                        {valor > 0 ? valor : ''}
+                        {valor > 0 ? `${valor}%` : ''}
                       </div>
                     );
                   })}

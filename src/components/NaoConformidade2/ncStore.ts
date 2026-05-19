@@ -18,6 +18,7 @@ export interface Nc2Record {
   objetoOs: string;
   objetoOsCodigo: string;
   disciplina: string;
+  origemAtividade?: 'interno' | 'terceirizado';
   avaliador: string;
   avaliadorEmail: string;
   observacoes: string;

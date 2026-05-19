@@ -81,6 +81,40 @@ function findParentCode(code: string, candidates: string[]) {
   return best;
 }
 
+function compareHierarchy(a: string, b: string) {
+  const aParts = a.split('.').map((item) => Number(item.replace(/\D/g, '')) || 0);
+  const bParts = b.split('.').map((item) => Number(item.replace(/\D/g, '')) || 0);
+  const maxLength = Math.max(aParts.length, bParts.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const diff = (aParts[index] || 0) - (bParts[index] || 0);
+    if (diff !== 0) return diff;
+  }
+  return a.localeCompare(b, 'pt-BR');
+}
+
+function collectVisibleRows(rows: CronogramaRow[], contractFilter: string, osFilter: string) {
+  const rowMap = new Map(rows.map((row) => [normalizeText(row.code), row]));
+  const codes = new Set<string>();
+
+  rows.forEach((row) => {
+    const code = normalizeText(row.code);
+    const matchContract = contractFilter === 'Todos' || code === contractFilter || code.startsWith(`${contractFilter}.`);
+    const matchOs = osFilter === 'Todas' || code === osFilter || code.startsWith(`${osFilter}.`);
+    if (!matchContract || !matchOs) return;
+    codes.add(code);
+    const parts = code.split('.');
+    while (parts.length > 1) {
+      parts.pop();
+      codes.add(parts.join('.'));
+    }
+  });
+
+  return Array.from(codes)
+    .map((code) => rowMap.get(code))
+    .filter((row): row is CronogramaRow => Boolean(row))
+    .sort((a, b) => compareHierarchy(normalizeText(a.code), normalizeText(b.code)));
+}
+
 function buildContractOptions(rows: CronogramaRow[], preloadedData?: CronogramaProps['preloadedData']) {
   const fromRegistro = Array.isArray(preloadedData?.registro?.contracts) ? preloadedData!.registro!.contracts! : [];
   if (fromRegistro.length) return fromRegistro.map((item) => ({ code: item.codigo, name: item.nome }));
@@ -126,14 +160,7 @@ export default function Cronograma({ preloadedData, lockedContractCode }: Cronog
     setOsFilter('Todas');
   }, [lockedContractCode]);
 
-  const filteredRows = useMemo(() => {
-    return rows.filter((row) => {
-      const code = normalizeText(row.code);
-      const matchContract = contractFilter === 'Todos' || code === contractFilter || code.startsWith(`${contractFilter}.`);
-      const matchOs = osFilter === 'Todas' || code === osFilter || code.startsWith(`${osFilter}.`);
-      return matchContract && matchOs;
-    });
-  }, [rows, contractFilter, osFilter]);
+  const filteredRows = useMemo(() => collectVisibleRows(rows, contractFilter, osFilter), [rows, contractFilter, osFilter]);
 
   const dateRange = useMemo(() => {
     const dates = filteredRows
@@ -228,10 +255,11 @@ export default function Cronograma({ preloadedData, lockedContractCode }: Cronog
             const code = normalizeText(row.code);
             const plannedStart = parseDate(row.plannedStart);
             const plannedEnd = parseDate(row.plannedEnd);
-            const level = Math.min(dotCount(code), 4);
+            const level = Math.min(dotCount(code), 5);
             const progress = Math.max(0, Math.min(100, toPercent(row.progress)));
             const left = plannedStart ? Math.max(0, diffDays(dateRange.start, plannedStart) / totalDays * 100) : 0;
             const width = plannedStart && plannedEnd ? Math.max(2, diffDays(plannedStart, plannedEnd) / totalDays * 100) : 2;
+            const predecessor = normalizeText(row.predecessor);
 
             return (
               <div key={code} className="grid grid-cols-[minmax(260px,360px)_1fr] border-b border-[#F3F4F6] last:border-b-0 min-h-[58px]">
@@ -240,6 +268,10 @@ export default function Cronograma({ preloadedData, lockedContractCode }: Cronog
                   <p className="text-[11px] text-[#757575] mt-1">
                     {formatDateBR(row.plannedStart)} a {formatDateBR(row.plannedEnd)} · {progress}%
                   </p>
+                  {predecessor && <p className="text-[10px] text-[#94A3B8] mt-1">Predecessora: {predecessor}</p>}
+                  <div className="mt-2 h-1.5 w-full rounded-full bg-[#EEF2F7] overflow-hidden">
+                    <div className="h-full rounded-full bg-[#F05D28]" style={{ width: `${progress}%` }} />
+                  </div>
                 </div>
 
                 <div className="relative px-5 py-4 min-w-[640px]">

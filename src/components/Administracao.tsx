@@ -251,7 +251,7 @@ function InlineListManager({
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="space-y-3">
         {items.length === 0 && (
           <span className="text-[13px] text-[#757575]">Nenhum item cadastrado.</span>
         )}
@@ -259,9 +259,9 @@ function InlineListManager({
         {items.map((item) => (
           <div
             key={item}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB]"
+            className="flex items-center justify-between gap-3 rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] p-4"
           >
-            <span className="text-[13px] font-medium text-[#2D2D2D]">{item}</span>
+            <span className="text-[14px] font-bold text-[#2D2D2D]">{item}</span>
 
             <button
               type="button"
@@ -327,7 +327,7 @@ function DisciplineSettingsManager({
   return (
     <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
       <div>
-        <h3 className="text-[16px] font-bold text-[#2D2D2D]">Graficos por Disciplina</h3>
+        <h3 className="text-[16px] font-bold text-[#2D2D2D]">Gerenciar Disciplinas</h3>
         <p className="text-[13px] text-[#757575] mt-1">
           Adicione ou remova disciplinas e defina quais delas aparecem nos graficos.
         </p>
@@ -1093,13 +1093,12 @@ export default function Administracao({
           onRemove={onRemoveCargo}
         />
 
-        <InlineListManager
-          title="Gerenciar Disciplinas"
-          subtitle="Adicione ou remova as disciplinas que aparecerão nas cascatas do sistema."
+        <DisciplineSettingsManager
           items={disciplinas}
-          placeholder="Nova disciplina"
+          settings={disciplineSettings}
           onAdd={onAddDisciplina}
           onRemove={onRemoveDisciplina}
+          onToggleCharts={onToggleDisciplineCharts}
         />
         <InlineListManager
           title="Gerenciar Alocação"
@@ -1111,15 +1110,6 @@ export default function Administracao({
         />
       </section>
 
-      <section className="grid grid-cols-1 gap-6">
-        <DisciplineSettingsManager
-          items={disciplinas}
-          settings={disciplineSettings}
-          onAdd={onAddDisciplina}
-          onRemove={onRemoveDisciplina}
-          onToggleCharts={onToggleDisciplineCharts}
-        />
-      </section>
 
       <RoleTabPermissionsManager
         cargos={cargos}

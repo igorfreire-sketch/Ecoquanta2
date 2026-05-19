@@ -31,8 +31,10 @@ import {
   fetchBootstrapDataFromFirebase,
   fetchCronogramaDataFromFirebase,
   fetchEapDataFromFirebase,
+  fetchFirebaseCollection,
   fetchRegistroDataFromFirebase,
   isFirebaseConfigured,
+  subscribeFirebaseCollection,
   upsertFirebaseAppData,
 } from './lib/firebaseDb';
 
@@ -104,6 +106,10 @@ interface GlobalData {
   cronograma?: any;
   admin?: any;
   eap?: any;
+  planningTodos?: any[];
+  contractPriorities?: any[];
+  contractInterferences?: any[];
+  resolvedAlerts?: any[];
 }
 
 interface PublicGlobalRegistroPayload {
@@ -1056,6 +1062,75 @@ export default function App() {
     await upsertFirebaseAppData('admin', buildAdminFirebaseSnapshot(overrides));
   }, [buildAdminFirebaseSnapshot]);
 
+  const applyLoadedGlobalData = useCallback((fullData: GlobalData) => {
+    setGlobalData(fullData);
+    saveGlobalDataCache(fullData);
+    setLoadedModules({});
+
+    if (fullData.admin) {
+      const adminState = getAdminState(fullData);
+      setUsuarios(adminState.usuarios);
+      setDisciplinas(adminState.disciplinas);
+      setDisciplineSettings(adminState.disciplineSettings);
+      setCargos(adminState.cargos);
+      setAlocacoes(adminState.alocacoes);
+      setTerceirizadas(adminState.terceirizadas);
+      setRoleTabPermissions(adminState.roleTabPermissions);
+      setDatabaseLinks(adminState.databaseLinks);
+      setCurrentUser((prev) => prev ? applyAdminUserContext(prev, fullData.admin) : prev);
+    }
+  }, []);
+
+  const loadCollaborationData = useCallback(async () => {
+    if (!isFirebaseConfigured()) {
+      return {
+        planningTodos: [],
+        contractPriorities: [],
+        contractInterferences: [],
+        resolvedAlerts: [],
+      };
+    }
+
+    const [planningTodos, contractPriorities, contractInterferences, resolvedAlerts] = await Promise.all([
+      fetchFirebaseCollection('planningTodos'),
+      fetchFirebaseCollection('contractPriorities'),
+      fetchFirebaseCollection('contractInterferences'),
+      fetchFirebaseCollection('resolvedAlerts'),
+    ]);
+
+    return { planningTodos, contractPriorities, contractInterferences, resolvedAlerts };
+  }, []);
+
+  const refreshRealtimeEnvironment = useCallback(async (user: AuthUser) => {
+    setIsBackgroundSyncing(true);
+    try {
+      const [bootstrapData, registro, cronograma, eap, collaboration] = await Promise.all([
+        fetchBootstrapDataFromFirebase(),
+        fetchRegistroDataFromFirebase(user),
+        fetchCronogramaDataFromFirebase(),
+        fetchEapDataFromFirebase(),
+        loadCollaborationData(),
+      ]);
+
+      const mergedData = applyUnifiedEapData(mergeGlobalData(bootstrapData, {
+        registro,
+        cronograma,
+        eap,
+        ...collaboration,
+      }), eap);
+
+      const scopedData = filterGlobalDataByContract(
+        mergedData,
+        shouldLockUserToContract(user) ? user.contrato || '' : '',
+      );
+
+      if (scopedData.admin) scopedData.admin.users = normalizeAdminUsers(scopedData);
+      applyLoadedGlobalData(scopedData);
+    } finally {
+      setIsBackgroundSyncing(false);
+    }
+  }, [applyLoadedGlobalData, loadCollaborationData]);
+
   useEffect(() => {
     const lockedContract = lockedContractCode;
     if (lockedContract) {
@@ -1070,19 +1145,7 @@ export default function App() {
       const cachedData = getGlobalDataCache();
       if (cachedData && Object.keys(cachedData).length > 0) {
         const scopedCachedData = filterGlobalDataByContract(cachedData, shouldLockUserToContract(user) ? user.contrato || '' : '');
-        setGlobalData(scopedCachedData);
-        if (scopedCachedData.admin) {
-          const adminState = getAdminState(scopedCachedData);
-          setUsuarios(adminState.usuarios);
-          setDisciplinas(adminState.disciplinas);
-          setDisciplineSettings(adminState.disciplineSettings);
-          setCargos(adminState.cargos);
-          setAlocacoes(adminState.alocacoes);
-          setTerceirizadas(adminState.terceirizadas);
-          setRoleTabPermissions(adminState.roleTabPermissions);
-          setDatabaseLinks(adminState.databaseLinks);
-          setCurrentUser((prev) => prev ? applyAdminUserContext(prev, scopedCachedData.admin) : prev);
-        }
+        applyLoadedGlobalData(scopedCachedData);
         setPreloading(false); setBooting(false);
         void loadGlobalEnvironment(user, true);
         return;
@@ -1109,7 +1172,14 @@ export default function App() {
       let fullData: GlobalData = {};
       
       try {
-        fullData = await fetchBootstrapDataFromFirebase();
+        const [bootstrapData, collaboration] = await Promise.all([
+          fetchBootstrapDataFromFirebase(),
+          loadCollaborationData(),
+        ]);
+        fullData = {
+          ...bootstrapData,
+          ...collaboration,
+        };
       } catch (fbError) {
         console.error('Erro ao carregar dados publicados:', fbError);
         if (!isBackgroundSync) setLoadText('Erro ao conectar dados publicados. Usando cache...');
@@ -1121,21 +1191,7 @@ export default function App() {
         // Converte o índice por e-mail do JSON público de volta para o array esperado pelo app
         if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
 
-        setGlobalData(fullData); 
-        saveGlobalDataCache(fullData);
-        setLoadedModules({});
-        if (fullData.admin) {
-          const adminState = getAdminState(fullData);
-          setUsuarios(adminState.usuarios);
-          setDisciplinas(adminState.disciplinas);
-          setDisciplineSettings(adminState.disciplineSettings);
-          setCargos(adminState.cargos);
-          setAlocacoes(adminState.alocacoes);
-          setTerceirizadas(adminState.terceirizadas);
-          setRoleTabPermissions(adminState.roleTabPermissions);
-          setDatabaseLinks(adminState.databaseLinks);
-          setCurrentUser((prev) => prev ? applyAdminUserContext(prev, fullData.admin) : prev);
-        }
+        applyLoadedGlobalData(fullData);
       if (!isBackgroundSync && progressInterval) {
         clearInterval(progressInterval); setLoadProgress(100); setLoadText('Tudo pronto!');
         setTimeout(() => { setPreloading(false); setBooting(false); }, 500);
@@ -1155,7 +1211,33 @@ export default function App() {
     const savedUser = readSession();
     if (savedUser) { setCurrentUser(savedUser); void loadGlobalEnvironment(savedUser); }
     else { setBooting(false); }
-  }, []);
+  }, [applyLoadedGlobalData, loadCollaborationData]);
+
+  useEffect(() => {
+    if (!currentUser || !isFirebaseConfigured()) return;
+
+    let refreshTimeout: number | undefined;
+    const scheduleRefresh = () => {
+      if (refreshTimeout) window.clearTimeout(refreshTimeout);
+      refreshTimeout = window.setTimeout(() => {
+        void refreshRealtimeEnvironment(currentUser);
+      }, 250);
+    };
+
+    const unsubscribers = [
+      subscribeFirebaseCollection('appData', scheduleRefresh),
+      subscribeFirebaseCollection('registroAtividades', scheduleRefresh),
+      subscribeFirebaseCollection('planningTodos', scheduleRefresh),
+      subscribeFirebaseCollection('contractPriorities', scheduleRefresh),
+      subscribeFirebaseCollection('contractInterferences', scheduleRefresh),
+      subscribeFirebaseCollection('resolvedAlerts', scheduleRefresh),
+    ];
+
+    return () => {
+      if (refreshTimeout) window.clearTimeout(refreshTimeout);
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [currentUser, refreshRealtimeEnvironment]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -1232,28 +1314,11 @@ export default function App() {
       const fullData = await fetchBootstrapDataFromFirebase();
       if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
 
-      setGlobalData((prev) => {
-        const next = mergeGlobalData(prev, fullData);
-        saveGlobalDataCache(next);
-        return next;
-      });
-
-      if (fullData.admin) {
-        const adminState = getAdminState(fullData);
-        setUsuarios(adminState.usuarios);
-        setDisciplinas(adminState.disciplinas);
-        setDisciplineSettings(adminState.disciplineSettings);
-        setCargos(adminState.cargos);
-        setAlocacoes(adminState.alocacoes);
-        setTerceirizadas(adminState.terceirizadas);
-        setRoleTabPermissions(adminState.roleTabPermissions);
-        setDatabaseLinks(adminState.databaseLinks);
-        setCurrentUser((prev) => prev ? applyAdminUserContext(prev, fullData.admin) : prev);
-      }
+      applyLoadedGlobalData(mergeGlobalData(globalData, fullData));
     } finally {
       setIsBackgroundSyncing(false);
     }
-  }, [currentUser]);
+  }, [applyLoadedGlobalData, currentUser, globalData]);
 
   const handleLogin = async (email: string, password: string, rememberMe: boolean) => {
     const response = await postToAppsScript<AuthResponse>({ action: 'authUser', email, password });
@@ -1580,7 +1645,7 @@ export default function App() {
   const headerTabs = (() => {
     if (activeTab === 'controle') {
       return [
-        { key: 'profissionais', label: 'Profissionais', icon: <Users size={16} />, active: subTab === 'profissionais', onClick: () => setSubTab('profissionais') },
+        { key: 'profissionais', label: 'Dashboard', icon: <Users size={16} />, active: subTab === 'profissionais', onClick: () => setSubTab('profissionais') },
         { key: 'alocacoes', label: 'Alocações', icon: <Users size={16} />, active: subTab === 'alocacoes', onClick: () => setSubTab('alocacoes') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
         { key: 'planejamento', label: 'Planejamento', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
@@ -1591,7 +1656,7 @@ export default function App() {
 
     if (activeTab === 'planejamento') {
       return [
-        { key: 'dashboard', label: 'Planejamento', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'dashboard', onClick: () => setPlanejamentoSubTab('dashboard') },
+        { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'dashboard', onClick: () => setPlanejamentoSubTab('dashboard') },
         { key: 'tecnico', label: 'Planejamento Técnico', icon: <ClipboardList size={16} />, active: planejamentoSubTab === 'tecnico', onClick: () => setPlanejamentoSubTab('tecnico') },
         { key: 'alertas', label: 'Alertas', icon: <AlertTriangle size={16} />, active: planejamentoSubTab === 'alertas', onClick: () => setPlanejamentoSubTab('alertas') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: planejamentoSubTab === 'cronograma', onClick: () => setPlanejamentoSubTab('cronograma') }] : []),
@@ -1612,7 +1677,6 @@ export default function App() {
       return [
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: contratoSubTab === 'dashboard', onClick: () => setContratoSubTab('dashboard') },
         { key: 'interferencias', label: 'Interferências', icon: <AlertTriangle size={16} />, active: contratoSubTab === 'interferencias', onClick: () => setContratoSubTab('interferencias') },
-        { key: 'prioridades', label: 'Prioridades do contrato', icon: <ClipboardList size={16} />, active: contratoSubTab === 'prioridades', onClick: () => setContratoSubTab('prioridades') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: contratoSubTab === 'cronograma', onClick: () => setContratoSubTab('cronograma') }] : []),
       ];
     }
@@ -1715,7 +1779,7 @@ export default function App() {
 
           {false && activeTab === 'controle' && (
             <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-[#E5E7EB]">
-              <HeaderTab active={subTab === 'profissionais'} onClick={() => setSubTab('profissionais')} icon={<Users size={16} />} label="Profissionais" />
+              <HeaderTab active={subTab === 'profissionais'} onClick={() => setSubTab('profissionais')} icon={<Users size={16} />} label="Dashboard" />
               <HeaderTab active={subTab === 'curva-s'} onClick={() => setSubTab('curva-s')} icon={<TrendingUp size={16} />} label="Curva S" />
               <HeaderTab active={subTab === 'planejamento'} onClick={() => setSubTab('planejamento')} icon={<LayoutGrid size={16} />} label="Planejamento" />
               <HeaderTab active={subTab === 'alertas'} onClick={() => setSubTab('alertas')} icon={<AlertTriangle size={16} />} label="Alertas" />

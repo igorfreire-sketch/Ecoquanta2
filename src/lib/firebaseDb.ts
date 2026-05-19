@@ -2,10 +2,12 @@ import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
   getFirestore,
+  onSnapshot,
   query,
   serverTimestamp,
   setDoc,
@@ -728,4 +730,31 @@ export async function setFirebaseDocuments(collectionName: string, rows: Array<o
     }, { merge: true });
   });
   await batch.commit();
+}
+
+export async function deleteFirebaseDocument(collectionName: string, id: string) {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  await deleteDoc(doc(dbRef, collectionName, id));
+}
+
+export function subscribeFirebaseCollection(
+  collectionName: string,
+  onChange: () => void,
+  onError?: (error: Error) => void
+) {
+  const config = readFirebaseConfig();
+  if (!config) return () => {};
+
+  try {
+    const dbRef = getDb();
+    return onSnapshot(
+      collection(dbRef, collectionName),
+      () => onChange(),
+      (error) => onError?.(error as Error),
+    );
+  } catch (error) {
+    onError?.(error as Error);
+    return () => {};
+  }
 }

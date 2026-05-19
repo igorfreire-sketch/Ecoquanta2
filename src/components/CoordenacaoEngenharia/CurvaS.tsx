@@ -169,8 +169,8 @@ function InfoCard({ label, value, highlight, extraClass = "", textColorClass = "
   if (textColorClass) finalTextColor = textColorClass; else if (highlight) finalTextColor = 'text-[#F97316]';
   return (
     <div className={`bg-white border border-[#E5E7EB] rounded-2xl p-4 shadow-sm flex flex-col justify-center ${extraClass}`}>
-      <p className="text-[10px] font-bold text-[#757575] uppercase tracking-wider mb-1">{label}</p>
-      <p className={`${isLongText ? 'text-[15px]' : 'text-[18px]'} font-bold ${finalTextColor}`}>{value}</p>
+      <p className="text-[10px] font-semibold text-[#757575] uppercase tracking-wider mb-1">{label}</p>
+      <p className={`${isLongText ? 'text-[15px]' : 'text-[18px]'} font-semibold ${finalTextColor}`}>{value}</p>
     </div>
   );
 }
@@ -232,15 +232,15 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
   return (
     <div ref={fullPanelRef} className="pt-8 border-b-2 border-dashed border-gray-200 pb-12 mb-8 relative bg-white px-2">
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
-        <h3 className="text-xl font-bold text-gray-800 flex items-center gap-3 border-l-4 border-[#3B82F6] pl-4">
+        <h3 className="text-xl font-semibold text-gray-800 flex items-center gap-3 border-l-4 border-[#3B82F6] pl-4">
           <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-md text-sm">OS {data.osCode}</span> {data.osName}
         </h3>
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => setEditMode(!editMode)} className={`h-9 px-4 rounded-xl flex items-center gap-2 text-[11px] font-bold transition-all border ${editMode ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-500 hover:text-blue-500'}`}>
+          <button onClick={() => setEditMode(!editMode)} className={`h-9 px-4 rounded-xl flex items-center gap-2 text-[11px] font-semibold transition-all border ${editMode ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-500 hover:text-blue-500'}`}>
             {editMode ? <><X size={14}/> FECHAR EDIÇÃO</> : <><Edit3 size={14}/> REAJUSTAR</>}
           </button>
-          <button onClick={() => downloadJPG(chartOnlyRef, 'Grafico')} className="h-9 bg-blue-50 text-[#3B82F6] px-4 rounded-xl flex items-center gap-2 text-[11px] font-bold hover:bg-blue-100 transition-colors"><Download size={14} /> BAIXAR GRÁFICO</button>
-          <button onClick={() => downloadJPG(fullPanelRef, 'Completo')} className="h-9 bg-[#3B82F6] text-white px-4 rounded-xl flex items-center gap-2 text-[11px] font-bold hover:bg-blue-600 transition-colors"><Download size={14} /> BAIXAR PAINEL</button>
+          <button onClick={() => downloadJPG(chartOnlyRef, 'Grafico')} className="h-9 bg-blue-50 text-[#3B82F6] px-4 rounded-xl flex items-center gap-2 text-[11px] font-semibold hover:bg-blue-100 transition-colors"><Download size={14} /> BAIXAR GRÁFICO</button>
+          <button onClick={() => downloadJPG(fullPanelRef, 'Completo')} className="h-9 bg-[#3B82F6] text-white px-4 rounded-xl flex items-center gap-2 text-[11px] font-semibold hover:bg-blue-600 transition-colors"><Download size={14} /> BAIXAR PAINEL</button>
         </div>
       </div>
       <div className="grid grid-cols-3 gap-4 mb-4">
@@ -534,7 +534,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
             <TrendingUp size={24} />
           </div>
           <div>
-            <h2 className="text-[22px] font-bold text-[#111827] tracking-tight">Curva S Dinâmica</h2>
+            <h2 className="text-[22px] font-semibold text-[#111827] tracking-tight">Curva S Dinâmica</h2>
             <p className="text-[13px] text-[#6B7280]">Gestão Física com Compressão Extrema</p>
           </div>
         </div>

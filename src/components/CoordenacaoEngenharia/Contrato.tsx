@@ -15,9 +15,7 @@ import {
 } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
 import Cronograma from '../Cronograma';
-
-const CONTRACT_PRIORITY_STORAGE_KEY = 'quanta_contract_priorities';
-const CONTRACT_INTERFERENCES_STORAGE_KEY = 'quanta_contract_interferences';
+import { deleteFirebaseDocument, isFirebaseConfigured, setFirebaseDocument } from '../../lib/firebaseDb';
 
 interface ContratoProps {
   currentUser: AuthUser;
@@ -25,6 +23,8 @@ interface ContratoProps {
     registro?: any;
     cronograma?: any;
     admin?: any;
+    contractPriorities?: ContractPriorityRecord[];
+    contractInterferences?: Interferencia[];
   };
   activeContractCode?: string;
   lockedContractCode?: string;
@@ -56,6 +56,15 @@ interface Interferencia {
   osImpactada: string;
   contratoCodigo?: string;
   contratoNome?: string;
+  updatedAt?: string;
+}
+
+interface ContractPriorityRecord {
+  id: string;
+  activityId: string;
+  monthlyCycle?: string;
+  licitatoria?: boolean;
+  updatedAt?: string;
 }
 
 interface StoredPrioritiesState {
@@ -80,6 +89,12 @@ function normalizeText(value?: string) {
 function isAllContract(value?: string) {
   const normalized = normalizeText(value);
   return !normalized || normalized === 'todos' || normalized === 'todos os contratos';
+}
+
+function matchesContract(activity: Pick<ActivityRow, 'contratoCodigo' | 'contratoNome'>, selectedContract?: string) {
+  if (isAllContract(selectedContract)) return true;
+  const target = normalizeText(selectedContract);
+  return [activity.contratoCodigo, activity.contratoNome].some((value) => normalizeText(String(value || '')) === target);
 }
 
 function isDateLikeLabel(value?: string) {
@@ -153,40 +168,28 @@ function buildLegacyPriorityState(
   return { values, confirmed };
 }
 
-function readStoredPriorities(): StoredPrioritiesState {
-  try {
-    const raw = localStorage.getItem(CONTRACT_PRIORITY_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    const monthly = parsed?.monthly && typeof parsed.monthly === 'object' ? parsed.monthly as Record<string, string> : {};
-    const licitatoria = parsed?.licitatoria && typeof parsed.licitatoria === 'object'
-      ? parsed.licitatoria as Record<string, boolean>
-      : parsed?.confirmed && typeof parsed.confirmed === 'object'
-        ? Object.fromEntries(
-            Object.entries(parsed.confirmed)
-              .filter(([, confirmed]) => Boolean(confirmed))
-              .map(([id]) => [id, true])
-          ) as Record<string, boolean>
-        : {};
-    const legacy = buildLegacyPriorityState(monthly, licitatoria, getMonthlyPriorityCycleKey());
-    return {
-      values: legacy.values,
-      confirmed: legacy.confirmed,
-      monthly,
-      licitatoria,
-    };
-  } catch {
-    return { values: {}, confirmed: {}, monthly: {}, licitatoria: {} };
-  }
+function readStoredPriorities(records: ContractPriorityRecord[], cycleKey: string): StoredPrioritiesState {
+  const monthly: Record<string, string> = {};
+  const licitatoria: Record<string, boolean> = {};
+
+  records.forEach((record) => {
+    const id = String(record?.activityId || record?.id || '').trim();
+    if (!id) return;
+    if (record.monthlyCycle) monthly[id] = String(record.monthlyCycle);
+    if (record.licitatoria) licitatoria[id] = true;
+  });
+
+  const legacy = buildLegacyPriorityState(monthly, licitatoria, cycleKey);
+  return {
+    values: legacy.values,
+    confirmed: legacy.confirmed,
+    monthly,
+    licitatoria,
+  };
 }
 
-function readStoredInterferencias() {
-  try {
-    const raw = localStorage.getItem(CONTRACT_INTERFERENCES_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed as Interferencia[] : [];
-  } catch {
-    return [];
-  }
+function readStoredInterferencias(items?: Interferencia[]) {
+  return Array.isArray(items) ? items : [];
 }
 
 function formatDateBR(value?: string) {
@@ -285,7 +288,7 @@ function getOsOptions(preloadedData?: ContratoProps['preloadedData'], activities
   const targetContract = isAllContract(selectedContract) ? '' : normalizeText(selectedContract);
   const osFromRegistro = Array.isArray(preloadedData?.registro?.osOptions)
     ? preloadedData.registro.osOptions
-        .filter((os: any) => !targetContract || normalizeText(os?.contratoCodigo) === targetContract)
+        .filter((os: any) => !targetContract || [os?.contratoCodigo, os?.contratoNome, os?.contrato].some((value: any) => normalizeText(String(value || '')) === targetContract))
         .filter((os: any) => isOsLabel(cleanDisplayLabel(os?.nome, os?.codigo, '')) || isOsLabel(cleanDisplayLabel(os?.codigo, os?.nome, '')))
         .map((os: any) => ({
           codigo: cleanDisplayLabel(os?.codigo, os?.nome, ''),
@@ -294,7 +297,7 @@ function getOsOptions(preloadedData?: ContratoProps['preloadedData'], activities
     : [];
 
   const osFromActivities = activities
-    .filter((activity) => !targetContract || normalizeText(activity.contratoCodigo) === targetContract)
+    .filter((activity) => matchesContract(activity, selectedContract))
     .filter((activity) => isOsLabel(activity.osNome) || isOsLabel(activity.osCodigo))
     .map((activity) => ({
       codigo: cleanDisplayLabel(activity.osCodigo, activity.osNome, ''),
@@ -340,11 +343,6 @@ function getPeopleLabel(activity: ActivityRow) {
 function ActivityJourney({ activity }: { activity: ActivityRow }) {
   return (
     <div className="border border-[#E5E7EB] bg-white rounded-[12px] p-6 shadow-sm">
-      <div className="flex flex-col gap-1 mb-6">
-        <p className="text-[11px] font-bold uppercase tracking-widest text-[#757575]">{getOsDisplayName(activity)}</p>
-        <h3 className="text-[18px] font-bold text-[#2D2D2D] leading-tight">{getActivityDisplayName(activity)}</h3>
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         {FLOW_STEPS.map((step, index) => {
           const Icon = step.icon;
@@ -393,7 +391,7 @@ function ActivitiesList({
   monthlyCycle: string;
 }) {
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
+    <div className="xl:sticky xl:top-6 xl:self-start bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden xl:max-h-[calc(100vh-9rem)] flex flex-col">
       <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <ClipboardList size={18} className="text-[#F05D28]" />
@@ -402,7 +400,7 @@ function ActivitiesList({
         <span className="text-[11px] font-bold text-[#757575]">{activities.length} em execucao</span>
       </div>
 
-      <div className="divide-y divide-[#E5E7EB]">
+      <div className="divide-y divide-[#E5E7EB] xl:overflow-y-auto">
         {activities.length === 0 && (
           <div className="py-12 px-6 text-center text-[13px] font-medium text-[#757575]">
             Nenhuma atividade em execucao para este contrato.
@@ -477,7 +475,7 @@ function PriorityDesk({
   onToggleLicitatoria: () => void;
 }) {
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden min-h-[420px]">
+    <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden min-h-[360px]">
       <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
         <div>
           <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Balcao unido</p>
@@ -491,24 +489,18 @@ function PriorityDesk({
       <div className="p-6 space-y-5">
         {activity ? (
           <>
-            <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
-              <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">{getOsDisplayName(activity)}</p>
-              <p className="mt-2 text-[15px] font-bold text-[#2D2D2D] leading-snug">{getActivityDisplayName(activity)}</p>
-              <p className="mt-2 text-[12px] font-semibold text-[#4B5563]">{getPeopleLabel(activity)}</p>
-            </div>
-
-            <div className="space-y-4">
-              <div className={`rounded-2xl border p-4 ${monthlyActive ? 'border-[#BBF7D0] bg-[#F0FDF4]' : 'border-[#FDE68A] bg-[#FEFCE8]'}`}>
-                <div className="flex items-start justify-between gap-4">
+            <div className="space-y-3">
+              <div className={`rounded-2xl border p-4 ${monthlyActive ? 'border-[#BBF7D0] bg-[#F0FDF4]' : 'border-[#FDE68A] bg-[#FFFBEB]'}`}>
+                <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-widest text-[#166534]">Prioridade do mes</p>
-                    <p className="mt-2 text-[14px] font-bold text-[#1F2937]">Fica ativa no ciclo atual e reseta automaticamente no dia 05.</p>
-                    <p className="mt-2 text-[12px] font-semibold text-[#4B5563]">Ciclo atual: {currentCycleLabel}</p>
+                    <p className="mt-2 text-[13px] font-semibold text-[#1F2937]">Fica ativa no ciclo atual e reseta automaticamente no dia 05.</p>
+                    <p className="mt-2 text-[12px] text-[#4B5563]">Ciclo atual: {currentCycleLabel}</p>
                   </div>
                   <button
                     type="button"
                     onClick={onToggleMonthly}
-                    className={`min-w-[112px] rounded-xl px-4 py-3 text-[11px] font-black uppercase tracking-wide transition ${
+                    className={`min-w-[92px] rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-wide transition ${
                       monthlyActive
                         ? 'bg-[#10B981] text-white hover:bg-[#059669]'
                         : 'border border-[#86EFAC] bg-white text-[#166534] hover:bg-[#ECFDF5]'
@@ -520,15 +512,15 @@ function PriorityDesk({
               </div>
 
               <div className={`rounded-2xl border p-4 ${licitatoriaActive ? 'border-[#C7D2FE] bg-[#EEF2FF]' : 'border-[#DBEAFE] bg-[#F8FAFC]'}`}>
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-widest text-[#3730A3]">Prioridade licitatoria</p>
-                    <p className="mt-2 text-[14px] font-bold text-[#1F2937]">Nao reseta. Permanece marcada ate o contrato remover manualmente.</p>
+                    <p className="mt-2 text-[13px] font-semibold text-[#1F2937]">Nao reseta. Permanece marcada ate o contrato remover manualmente.</p>
                   </div>
                   <button
                     type="button"
                     onClick={onToggleLicitatoria}
-                    className={`min-w-[112px] rounded-xl px-4 py-3 text-[11px] font-black uppercase tracking-wide transition ${
+                    className={`min-w-[92px] rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-wide transition ${
                       licitatoriaActive
                         ? 'bg-[#4F46E5] text-white hover:bg-[#4338CA]'
                         : 'border border-[#A5B4FC] bg-white text-[#3730A3] hover:bg-[#EEF2FF]'
@@ -540,8 +532,20 @@ function PriorityDesk({
               </div>
             </div>
 
-            <div className="rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-4 text-[12px] font-semibold text-[#64748B]">
-              Uma atividade deixa de ficar pendente quando recebe pelo menos uma prioridade do contrato.
+            <div className="rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">{getOsDisplayName(activity)}</p>
+                  <p className="mt-1 text-[15px] font-bold text-[#2D2D2D] leading-snug break-words">{getActivityDisplayName(activity)}</p>
+                  <p className="mt-2 text-[12px] font-semibold text-[#4B5563]">{getPeopleLabel(activity)}</p>
+                </div>
+                <div className="shrink-0 rounded-full border border-[#FECACA] bg-[#FEF2F2] px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-[#B91C1C]">
+                  Nao Operante
+                </div>
+              </div>
+              <div className="mt-4 border-t border-dashed border-[#D5DCE5] pt-3 text-[12px] font-semibold text-[#64748B]">
+                Uma atividade deixa de ficar pendente quando recebe pelo menos uma prioridade do contrato.
+              </div>
             </div>
           </>
         ) : (
@@ -564,16 +568,24 @@ export default function Contrato({
   const activities = useMemo(() => buildActivities(preloadedData), [preloadedData]);
   const contracts = useMemo(() => getContracts(preloadedData, activities), [preloadedData, activities]);
   const [selectedContract, setSelectedContract] = useState(() => getContractInitialValue(activeContractCode, lockedContractCode));
+  const [selectedOs, setSelectedOs] = useState('Todas');
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
   const monthlyPriorityCycle = useMemo(() => getMonthlyPriorityCycleKey(), []);
   const monthlyPriorityCycleLabel = useMemo(() => formatMonthlyCycleLabel(monthlyPriorityCycle), [monthlyPriorityCycle]);
-  const storedPriorities = useMemo<StoredPrioritiesState>(() => readStoredPriorities(), []);
+  const priorityRecords = useMemo<ContractPriorityRecord[]>(
+    () => Array.isArray(preloadedData?.contractPriorities) ? preloadedData.contractPriorities : [],
+    [preloadedData?.contractPriorities]
+  );
+  const storedPriorities = useMemo<StoredPrioritiesState>(
+    () => readStoredPriorities(priorityRecords, monthlyPriorityCycle),
+    [monthlyPriorityCycle, priorityRecords]
+  );
   const [prioridadeMensal, setPrioridadeMensal] = useState<Record<string, string>>(storedPriorities.monthly);
   const [prioridadeLicitatoria, setPrioridadeLicitatoria] = useState<Record<string, boolean>>(storedPriorities.licitatoria);
   const [showInterferenciaForm, setShowInterferenciaForm] = useState(false);
-  const [interferencias, setInterferencias] = useState<Interferencia[]>(() => readStoredInterferencias());
+  const [interferencias, setInterferencias] = useState<Interferencia[]>(() => readStoredInterferencias(preloadedData?.contractInterferences));
   const [interferenciaDraft, setInterferenciaDraft] = useState({ nome: '', data: '', osImpactada: '', observacao: '' });
   const prioridadesPersistidas = useMemo(
     () => buildLegacyPriorityState(prioridadeMensal, prioridadeLicitatoria, monthlyPriorityCycle),
@@ -582,31 +594,27 @@ export default function Contrato({
 
   React.useEffect(() => {
     setSelectedContract(getContractInitialValue(activeContractCode, lockedContractCode));
+    setSelectedOs('Todas');
   }, [activeContractCode, lockedContractCode]);
 
   React.useEffect(() => {
-    try {
-      localStorage.setItem(CONTRACT_PRIORITY_STORAGE_KEY, JSON.stringify({
-        values: prioridadesPersistidas.values,
-        confirmed: prioridadesPersistidas.confirmed,
-        monthly: prioridadeMensal,
-        licitatoria: prioridadeLicitatoria,
-      }));
-    } catch {}
-  }, [prioridadeLicitatoria, prioridadeMensal, prioridadesPersistidas]);
+    setPrioridadeMensal(storedPriorities.monthly);
+    setPrioridadeLicitatoria(storedPriorities.licitatoria);
+  }, [storedPriorities]);
 
   React.useEffect(() => {
-    try {
-      localStorage.setItem(CONTRACT_INTERFERENCES_STORAGE_KEY, JSON.stringify(interferencias));
-    } catch {}
-  }, [interferencias]);
+    setInterferencias(readStoredInterferencias(preloadedData?.contractInterferences));
+  }, [preloadedData?.contractInterferences]);
 
   const locked = Boolean(String(lockedContractCode || '').trim());
 
   const filteredActivities = useMemo(() => {
     const termo = normalizeText(deferredSearch);
     return activities.filter((activity) => {
-      const matchContract = isAllContract(selectedContract) || normalizeText(activity.contratoCodigo) === normalizeText(selectedContract);
+      const matchContract = matchesContract(activity, selectedContract);
+      const matchOs = selectedOs === 'Todas'
+        || normalizeText(activity.osCodigo) === normalizeText(selectedOs)
+        || normalizeText(activity.osNome) === normalizeText(selectedOs);
       const matchSearch = !termo || normalizeText([
         activity.osCodigo,
         activity.osNome,
@@ -614,9 +622,9 @@ export default function Contrato({
         activity.descricao,
         ...activity.profissionais,
       ].join(' ')).includes(termo);
-      return matchContract && matchSearch;
+      return matchContract && matchOs && matchSearch;
     });
-  }, [activities, deferredSearch, selectedContract]);
+  }, [activities, deferredSearch, selectedContract, selectedOs]);
 
   const selectedActivity = filteredActivities.find((activity) => activity.id === selectedActivityId) || filteredActivities[0] || null;
   const selectedOsActivities = selectedActivity
@@ -647,21 +655,37 @@ export default function Contrato({
     return !monthlyActive && !licitatoriaActive;
   }).length;
 
-  const handleAddInterferencia = () => {
+  const persistPriority = async (activityId: string, nextMonthly?: string, nextLicitatoria?: boolean) => {
+    if (!isFirebaseConfigured()) return;
+    if (!nextMonthly && !nextLicitatoria) {
+      await deleteFirebaseDocument('contractPriorities', activityId);
+      return;
+    }
+
+    await setFirebaseDocument('contractPriorities', activityId, {
+      id: activityId,
+      activityId,
+      monthlyCycle: nextMonthly || '',
+      licitatoria: Boolean(nextLicitatoria),
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const handleAddInterferencia = async () => {
     if (!isInterferenciaValid) return;
+    if (!isFirebaseConfigured()) return;
     const contratoAtual = contracts.find((item) => normalizeText(item.id) === normalizeText(selectedContract));
-    setInterferencias((prev) => [
-      {
-        id: `${Date.now()}-${interferenciaDraft.osImpactada}`,
-        nome: interferenciaDraft.nome.trim(),
-        data: interferenciaDraft.data,
-        osImpactada: interferenciaDraft.osImpactada,
-        observacao: interferenciaDraft.observacao.trim(),
-        contratoCodigo: selectedContract,
-        contratoNome: contratoAtual?.nome || selectedContract,
-      },
-      ...prev,
-    ]);
+    const nextInterferencia = {
+      id: `${Date.now()}-${interferenciaDraft.osImpactada}`,
+      nome: interferenciaDraft.nome.trim(),
+      data: interferenciaDraft.data,
+      osImpactada: interferenciaDraft.osImpactada,
+      observacao: interferenciaDraft.observacao.trim(),
+      contratoCodigo: selectedContract,
+      contratoNome: contratoAtual?.nome || selectedContract,
+      updatedAt: new Date().toISOString(),
+    };
+    await setFirebaseDocument('contractInterferences', nextInterferencia.id, nextInterferencia);
     setInterferenciaDraft({ nome: '', data: '', osImpactada: '', observacao: '' });
     setShowInterferenciaForm(false);
   };
@@ -670,19 +694,38 @@ export default function Contrato({
     <div className="space-y-6 font-['Montserrat']">
       {activeView !== 'cronograma' && (
         <section className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm p-5">
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(220px,280px)_minmax(0,1fr)] gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(220px,280px)_minmax(220px,280px)_minmax(0,1fr)] gap-4">
             <div>
               <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Contrato</label>
               <select
                 value={selectedContract}
                 disabled={locked}
-                onChange={(event) => setSelectedContract(event.target.value)}
+                onChange={(event) => {
+                  setSelectedContract(event.target.value);
+                  setSelectedOs('Todas');
+                }}
                 className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none disabled:bg-[#F8FAFC] disabled:text-[#94A3B8]"
               >
                 {!locked && <option value="Todos">Todos os contratos</option>}
                 {contracts.map((contract) => (
                   <option key={contract.id} value={contract.id}>
                     {contract.id && contract.nome && contract.nome !== contract.id ? `${contract.id} - ${contract.nome}` : contract.nome || contract.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">OS</label>
+              <select
+                value={selectedOs}
+                onChange={(event) => setSelectedOs(event.target.value)}
+                className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none"
+              >
+                <option value="Todas">Todas as OS</option>
+                {osOptions.map((os) => (
+                  <option key={os.codigo} value={os.codigo}>
+                    {os.codigo && os.nome && os.nome !== os.codigo ? `${os.codigo} - ${os.nome}` : os.nome || os.codigo}
                   </option>
                 ))}
               </select>
@@ -704,7 +747,7 @@ export default function Contrato({
         </section>
       )}
 
-      {activeView === 'dashboard' && (
+      {(activeView === 'dashboard' || activeView === 'prioridades') && (
         <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
           <ActivitiesList
             activities={filteredActivities}
@@ -716,13 +759,37 @@ export default function Contrato({
           />
 
           <div className="space-y-6">
-            {selectedOsJourney ? (
-              <ActivityJourney activity={selectedOsJourney} />
-            ) : (
-              <div className="border border-[#E5E7EB] bg-white rounded-[12px] p-6 shadow-sm min-h-[280px] flex items-center justify-center text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">
+            {selectedOsJourney ? <ActivityJourney activity={selectedOsJourney} /> : (
+              <div className="border border-[#E5E7EB] bg-white rounded-[12px] p-6 shadow-sm min-h-[240px] flex items-center justify-center text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">
                 Selecione uma OS
               </div>
             )}
+            <PriorityDesk
+              activity={selectedActivity}
+              pendingCount={pendingPrioritiesCount}
+              monthlyActive={selectedActivity ? isMonthlyPriorityActive(prioridadeMensal[selectedActivity.id], monthlyPriorityCycle) : false}
+              licitatoriaActive={selectedActivity ? Boolean(prioridadeLicitatoria[selectedActivity.id]) : false}
+              currentCycleLabel={monthlyPriorityCycleLabel}
+              onToggleMonthly={() => {
+                if (!selectedActivity) return;
+                const currentValue = prioridadeMensal[selectedActivity.id];
+                const nextMonthly = isMonthlyPriorityActive(currentValue, monthlyPriorityCycle) ? '' : monthlyPriorityCycle;
+                const nextState = { ...prioridadeMensal };
+                if (nextMonthly) nextState[selectedActivity.id] = nextMonthly;
+                else delete nextState[selectedActivity.id];
+                setPrioridadeMensal(nextState);
+                void persistPriority(selectedActivity.id, nextMonthly, prioridadeLicitatoria[selectedActivity.id]);
+              }}
+              onToggleLicitatoria={() => {
+                if (!selectedActivity) return;
+                const nextValue = !prioridadeLicitatoria[selectedActivity.id];
+                const nextState = { ...prioridadeLicitatoria };
+                if (nextValue) nextState[selectedActivity.id] = true;
+                else delete nextState[selectedActivity.id];
+                setPrioridadeLicitatoria(nextState);
+                void persistPriority(selectedActivity.id, prioridadeMensal[selectedActivity.id], nextValue);
+              }}
+            />
           </div>
         </section>
       )}
@@ -746,16 +813,22 @@ export default function Contrato({
             currentCycleLabel={monthlyPriorityCycleLabel}
             onToggleMonthly={() => {
               if (!selectedActivity) return;
-              setPrioridadeMensal((prev) => {
-                const next = { ...prev };
-                if (isMonthlyPriorityActive(next[selectedActivity.id], monthlyPriorityCycle)) delete next[selectedActivity.id];
-                else next[selectedActivity.id] = monthlyPriorityCycle;
-                return next;
-              });
+              const currentValue = prioridadeMensal[selectedActivity.id];
+              const nextMonthly = isMonthlyPriorityActive(currentValue, monthlyPriorityCycle) ? '' : monthlyPriorityCycle;
+              const nextState = { ...prioridadeMensal };
+              if (nextMonthly) nextState[selectedActivity.id] = nextMonthly;
+              else delete nextState[selectedActivity.id];
+              setPrioridadeMensal(nextState);
+              void persistPriority(selectedActivity.id, nextMonthly, prioridadeLicitatoria[selectedActivity.id]);
             }}
             onToggleLicitatoria={() => {
               if (!selectedActivity) return;
-              setPrioridadeLicitatoria((prev) => ({ ...prev, [selectedActivity.id]: !prev[selectedActivity.id] }));
+              const nextValue = !prioridadeLicitatoria[selectedActivity.id];
+              const nextState = { ...prioridadeLicitatoria };
+              if (nextValue) nextState[selectedActivity.id] = true;
+              else delete nextState[selectedActivity.id];
+              setPrioridadeLicitatoria(nextState);
+              void persistPriority(selectedActivity.id, prioridadeMensal[selectedActivity.id], nextValue);
             }}
           />
         </section>

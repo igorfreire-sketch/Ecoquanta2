@@ -62,7 +62,7 @@ const CustomTooltip = ({ active, payload }: any) => {
   return null;
 };
 
-const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos, filtros, contractOptions, osOptions, onFiltroChange }) => {
+const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos }) => {
   const [selectedAtividade, setSelectedAtividade] = useState<AtividadeConsolidada | null>(null);
 
   const { dados, medianaX, medianaY } = useMemo(() => {
@@ -83,47 +83,17 @@ const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos, filtros,
   }, [dadosBrutos]);
 
   const resumo = useMemo(() => ({
-    ganhosRapidos: dados.filter(d => d.impacto >= medianaY && d.esforco < medianaX).length,
+    ganhosRapidos: dados.filter(d => d.impacto >= medianaY && d.esforco <= medianaX).length,
     estruturantes: dados.filter(d => d.impacto >= medianaY && d.esforco >= medianaX).length,
     atividades: dados.length
   }), [dados, medianaX, medianaY]);
 
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 flex flex-col h-full overflow-hidden font-sans relative">
+    <div className="flex flex-col h-full overflow-hidden font-sans relative min-h-[520px]">
       <div className="mb-4 shrink-0">
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
           <div>
             <h3 className="text-[16px] font-black text-[#2D2D2D] uppercase tracking-tight leading-none">Analise de Atuacao Executiva</h3>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-            <select value={filtros.contrato} onChange={(event) => onFiltroChange('contrato', event.target.value)} className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]">
-              <option value="Todos">Todos os contratos</option>
-              {contractOptions.map((contract) => (
-                <option key={contract.codigo} value={contract.codigo}>{contract.codigo} - {contract.nome}</option>
-              ))}
-            </select>
-
-            <select value={filtros.os} onChange={(event) => onFiltroChange('os', event.target.value)} className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]">
-              <option value="Todos">Todas as OS</option>
-              {osOptions.map((os) => (
-                <option key={os.codigo} value={os.codigo}>{os.codigo} - {os.nome}</option>
-              ))}
-            </select>
-
-            <select value={filtros.importancia} onChange={(event) => onFiltroChange('importancia', event.target.value)} className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]">
-              <option value="Todos">Toda importancia</option>
-              <option value="1">Importancia 1</option>
-              <option value="2">Importancia 2</option>
-              <option value="3">Importancia 3</option>
-            </select>
-
-            <select value={filtros.dificuldade} onChange={(event) => onFiltroChange('dificuldade', event.target.value)} className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]">
-              <option value="Todos">Toda dificuldade</option>
-              <option value="1">Dificuldade 1</option>
-              <option value="2">Dificuldade 2</option>
-              <option value="3">Dificuldade 3</option>
-            </select>
           </div>
         </div>
 
@@ -146,8 +116,8 @@ const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos, filtros,
 
       <div className="relative flex-1 flex flex-col items-center justify-center py-4 bg-gray-50/30 rounded-xl border border-gray-50">
         <div className="absolute top-3 left-6 right-6 flex justify-between pointer-events-none z-10">
-          <div className="text-[9px] font-black text-orange-700/60 uppercase tracking-tighter">Alto impacto + dificil</div>
-          <div className="text-[9px] font-black text-emerald-700/60 uppercase tracking-tighter">Alto impacto + facil</div>
+          <div className="text-[9px] font-black text-emerald-700/60 uppercase tracking-tighter">Alto impacto + baixo esforco</div>
+          <div className="text-[9px] font-black text-orange-700/60 uppercase tracking-tighter">Alto impacto + alto esforco</div>
         </div>
 
         <div className="w-full h-full min-h-[330px] p-3">
@@ -188,8 +158,8 @@ const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos, filtros,
           <span className="text-[8px] font-bold text-[#757575] uppercase leading-none">Baixo - Alto</span>
         </div>
         <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-2">
-          <span className="text-[10px] font-black text-[#2D2D2D] uppercase tracking-[3px]">Facilidade</span>
-          <span className="text-[8px] font-bold text-[#757575] uppercase leading-none">Dificil - Facil</span>
+          <span className="text-[10px] font-black text-[#2D2D2D] uppercase tracking-[3px]">Custo de Esforco</span>
+          <span className="text-[8px] font-bold text-[#757575] uppercase leading-none">Baixo - Alto</span>
         </div>
       </div>
 

@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { ClipboardList, Pencil, Plus, Trash2 } from 'lucide-react';
-
-const PLANNING_TODOS_STORAGE_KEY = 'quanta_planejamento_tecnico_itens';
+import { deleteFirebaseDocument, isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
 
 type PlanejamentoTecnicoProps = {
   preloadedData?: {
     registro?: any;
     admin?: any;
+    planningTodos?: PlannedItem[];
   };
 };
 
@@ -16,25 +16,13 @@ type PlannedItem = {
   contratoNome: string;
   osCodigo: string;
   osNome: string;
+  atividadeCodigo: string;
+  atividadeNome: string;
   disciplina: string;
   titulo: string;
   descricao: string;
   createdAt: string;
 };
-
-function readPlannedItems(): PlannedItem[] {
-  try {
-    const raw = localStorage.getItem(PLANNING_TODOS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writePlannedItems(items: PlannedItem[]) {
-  localStorage.setItem(PLANNING_TODOS_STORAGE_KEY, JSON.stringify(items));
-}
 
 function createLocalId() {
   try {
@@ -46,12 +34,13 @@ function createLocalId() {
 export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecnicoProps) {
   const contracts = Array.isArray(preloadedData?.registro?.contracts) ? preloadedData!.registro!.contracts : [];
   const osOptions = Array.isArray(preloadedData?.registro?.osOptions) ? preloadedData!.registro!.osOptions : [];
+  const itemOptions = Array.isArray(preloadedData?.registro?.itemOptions) ? preloadedData!.registro!.itemOptions : [];
   const disciplinas = Array.isArray(preloadedData?.admin?.disciplinas) ? preloadedData!.admin!.disciplinas : [];
-
-  const [items, setItems] = useState<PlannedItem[]>(() => readPlannedItems());
+  const items = Array.isArray(preloadedData?.planningTodos) ? preloadedData.planningTodos : [];
   const [formData, setFormData] = useState({
     contratoCodigo: '',
     osCodigo: '',
+    atividadeCodigo: '',
     disciplina: '',
     descricao: '',
   });
@@ -69,35 +58,39 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
     () => filteredOs.find((item: any) => String(item?.codigo || '') === formData.osCodigo),
     [filteredOs, formData.osCodigo]
   );
+  const filteredItems = useMemo(
+    () => itemOptions.filter((item: any) => String(item?.osCodigo || item?.osCode || '') === formData.osCodigo),
+    [formData.osCodigo, itemOptions]
+  );
+  const selectedItem = useMemo(
+    () => filteredItems.find((item: any) => String(item?.codigo || item?.code || item?.id || '') === formData.atividadeCodigo),
+    [filteredItems, formData.atividadeCodigo]
+  );
 
-  const saveItems = (nextItems: PlannedItem[]) => {
-    setItems(nextItems);
-    writePlannedItems(nextItems);
-  };
-
-  const saveItem = () => {
-    if (!formData.contratoCodigo || !formData.osCodigo || !formData.disciplina || !formData.descricao.trim()) return;
+  const saveItem = async () => {
+    if (!formData.contratoCodigo || !formData.osCodigo || !formData.atividadeCodigo || !formData.disciplina || !formData.descricao.trim()) return;
+    if (!isFirebaseConfigured()) return;
     const nextItem: PlannedItem = {
       id: editingId || createLocalId(),
       contratoCodigo: formData.contratoCodigo,
       contratoNome: String(selectedContract?.nome || selectedContract?.codigo || ''),
       osCodigo: formData.osCodigo,
       osNome: String(selectedOs?.nome || selectedOs?.codigo || ''),
+      atividadeCodigo: formData.atividadeCodigo,
+      atividadeNome: String(selectedItem?.nome || selectedItem?.name || selectedItem?.codigo || ''),
       disciplina: formData.disciplina,
-      titulo: `Detalhes da disciplina - ${formData.disciplina}`,
+      titulo: String(selectedItem?.nome || selectedItem?.name || 'Atividade planejada'),
       descricao: formData.descricao.trim(),
       createdAt: items.find((item) => item.id === editingId)?.createdAt || new Date().toISOString(),
     };
-    const nextItems = editingId
-      ? items.map((item) => (item.id === editingId ? nextItem : item))
-      : [nextItem, ...items];
-    saveItems(nextItems);
+    await setFirebaseDocument('planningTodos', nextItem.id, nextItem);
     setEditingId('');
-    setFormData((prev) => ({ ...prev, descricao: '' }));
+    setFormData((prev) => ({ ...prev, atividadeCodigo: '', descricao: '' }));
   };
 
-  const removeItem = (id: string) => {
-    saveItems(items.filter((item) => item.id !== id));
+  const removeItem = async (id: string) => {
+    if (!isFirebaseConfigured()) return;
+    await deleteFirebaseDocument('planningTodos', id);
   };
 
   const editItem = (item: PlannedItem) => {
@@ -105,6 +98,7 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
     setFormData({
       contratoCodigo: item.contratoCodigo,
       osCodigo: item.osCodigo,
+      atividadeCodigo: item.atividadeCodigo || '',
       disciplina: item.disciplina,
       descricao: item.descricao,
     });
@@ -119,9 +113,9 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
               <ClipboardList size={14} />
               Planejamento Técnico
             </div>
-            <h2 className="mt-3 text-[22px] font-black text-[#111827]">Itens planejados por disciplina</h2>
+            <h2 className="mt-3 text-[22px] font-black text-[#111827]">Itens planejados por atividade</h2>
             <p className="mt-1 text-[13px] text-[#64748B]">
-              Selecione contrato, OS e disciplina para orientar o que cada equipe deve executar no Registro de Atividades.
+              Selecione contrato, OS, atividade e disciplina para orientar o que cada equipe deve executar no Registro de Atividades.
             </p>
           </div>
         </div>
@@ -132,7 +126,7 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
             <select
               className="mt-1 h-11 w-full rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] px-3 text-[13px] outline-none focus:border-[#10B981]"
               value={formData.contratoCodigo}
-              onChange={(event) => setFormData((prev) => ({ ...prev, contratoCodigo: event.target.value, osCodigo: '' }))}
+              onChange={(event) => setFormData((prev) => ({ ...prev, contratoCodigo: event.target.value, osCodigo: '', atividadeCodigo: '' }))}
             >
               <option value="">Selecione...</option>
               {contracts.map((item: any) => (
@@ -146,12 +140,28 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
             <select
               className="mt-1 h-11 w-full rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] px-3 text-[13px] outline-none focus:border-[#10B981]"
               value={formData.osCodigo}
-              onChange={(event) => setFormData((prev) => ({ ...prev, osCodigo: event.target.value }))}
+              onChange={(event) => setFormData((prev) => ({ ...prev, osCodigo: event.target.value, atividadeCodigo: '' }))}
             >
               <option value="">{formData.contratoCodigo ? 'Selecione...' : 'Aguardando contrato...'}</option>
               {filteredOs.map((item: any) => (
                 <option key={item.codigo} value={item.codigo}>{item.nome || item.codigo}</option>
               ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-black uppercase tracking-[1px] text-[#64748B]">Atividade</label>
+            <select
+              className="mt-1 h-11 w-full rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] px-3 text-[13px] outline-none focus:border-[#10B981]"
+              value={formData.atividadeCodigo}
+              onChange={(event) => setFormData((prev) => ({ ...prev, atividadeCodigo: event.target.value }))}
+            >
+              <option value="">{formData.osCodigo ? 'Selecione o Item 4...' : 'Aguardando OS...'}</option>
+              {filteredItems.map((item: any) => {
+                const code = String(item?.codigo || item?.code || item?.id || '');
+                const nome = String(item?.nome || item?.name || code);
+                return <option key={code} value={code}>{code} - {nome}</option>;
+              })}
             </select>
           </div>
 
@@ -168,7 +178,6 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
               ))}
             </select>
           </div>
-
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto]">
@@ -180,8 +189,8 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
           />
           <button
             type="button"
-            onClick={saveItem}
-            disabled={!formData.contratoCodigo || !formData.osCodigo || !formData.disciplina || !formData.descricao.trim()}
+            onClick={() => void saveItem()}
+            disabled={!formData.contratoCodigo || !formData.osCodigo || !formData.atividadeCodigo || !formData.disciplina || !formData.descricao.trim()}
             className="inline-flex h-12 items-center justify-center gap-2 self-end rounded-xl bg-[#10B981] px-5 text-[13px] font-black text-white transition hover:bg-[#059669] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus size={16} />
@@ -202,9 +211,10 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
             <div key={item.id} className="rounded-2xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-[13px] font-black text-[#047857]">{item.disciplina}</div>
-                  <div className="mt-1 text-[15px] font-black text-[#111827]">{item.titulo}</div>
-                  <div className="mt-1 text-[12px] font-semibold text-[#64748B]">{item.contratoCodigo} - {item.osNome || item.osCodigo}</div>
+                  <div className="text-[12px] font-semibold text-[#64748B]">{item.disciplina}</div>
+                  <div className="mt-1 text-[15px] font-black text-[#111827]">{item.osNome || item.osCodigo}</div>
+                  <div className="mt-1 text-[14px] font-semibold text-[#047857]">{item.atividadeNome || item.titulo}</div>
+                  <div className="mt-1 text-[12px] font-semibold text-[#64748B]">{item.contratoCodigo}</div>
                   {item.descricao && <p className="mt-2 text-[13px] leading-relaxed text-[#475569]">{item.descricao}</p>}
                 </div>
                 <div className="flex gap-2">
@@ -218,7 +228,7 @@ export default function PlanejamentoTecnico({ preloadedData }: PlanejamentoTecni
                   </button>
                   <button
                     type="button"
-                    onClick={() => removeItem(item.id)}
+                    onClick={() => void removeItem(item.id)}
                     className="rounded-xl border border-[#FECACA] bg-white p-2 text-[#DC2626] transition hover:bg-[#FEF2F2]"
                     aria-label="Excluir item planejado"
                   >

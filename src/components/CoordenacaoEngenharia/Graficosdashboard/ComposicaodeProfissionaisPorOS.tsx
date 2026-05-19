@@ -17,8 +17,11 @@ type Filtros = {
 
 type DadoOS = {
   os: string;
+  osCodigo?: string;
   nomeCompleto?: string;
   contrato?: string;
+  contratoCodigo?: string;
+  contratoNome?: string;
   [key: string]: any;
 };
 
@@ -32,9 +35,6 @@ interface ComposicaoDeProfissionaisPorOSProps {
   dados: DadoOS[];
   disciplinas?: string[];
   filtros?: Filtros;
-  contractOptions?: Array<{ codigo: string; nome: string }>;
-  osOptions?: Array<{ codigo: string; nome: string }>;
-  onFiltroChange?: (key: 'contrato' | 'os' | 'importancia' | 'dificuldade', value: string) => void;
 }
 
 const COLORS = ['#F05D28', '#1E40AF', '#10B981', '#F59E0B', '#8B5CF6', '#3B82F6', '#71717A', '#EF4444', '#14B8A6', '#A855F7'];
@@ -54,6 +54,18 @@ function isAllValue(value?: string) {
 
 function getOsLabel(item: DadoOS) {
   return String(item.nomeCompleto || item.os || '').trim();
+}
+
+function matchesContract(item: DadoOS, filtro?: string) {
+  if (!filtro || isAllValue(filtro)) return true;
+  const target = normalizeText(filtro);
+  return [item.contratoCodigo, item.contrato, item.contratoNome].some((value) => normalizeText(String(value || '')) === target);
+}
+
+function matchesOs(item: DadoOS, filtro?: string) {
+  if (!filtro || isAllValue(filtro)) return true;
+  const target = normalizeText(filtro);
+  return [item.osCodigo, item.os, getOsLabel(item)].some((value) => normalizeText(String(value || '')) === target);
 }
 
 function buildDisciplinaMetas(disciplinas: string[] | undefined, dados: DadoOS[]): DisciplinaMeta[] {
@@ -80,7 +92,7 @@ function buildDisciplinaMetas(disciplinas: string[] | undefined, dados: DadoOS[]
   }));
 }
 
-export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, filtros, contractOptions = [], osOptions = [], onFiltroChange }: ComposicaoDeProfissionaisPorOSProps) {
+export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, filtros }: ComposicaoDeProfissionaisPorOSProps) {
   const disciplinaMetas = useMemo(() => buildDisciplinaMetas(disciplinas, dados || []), [disciplinas, dados]);
 
   const disciplinaMeta = useMemo(() => {
@@ -92,18 +104,8 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
   const dadosFiltrados = useMemo(() => {
     let resultado = [...(dados || [])];
 
-    if (filtros?.contrato && !isAllValue(filtros.contrato)) {
-      const contratoFiltro = normalizeText(filtros.contrato);
-      resultado = resultado.filter((item) => normalizeText(item.contrato) === contratoFiltro);
-    }
-
-    if (filtros?.os && !isAllValue(filtros.os)) {
-      const osFiltro = normalizeText(filtros.os);
-      resultado = resultado.filter((item) =>
-        normalizeText(item.os) === osFiltro ||
-        normalizeText(getOsLabel(item)) === osFiltro
-      );
-    }
+    resultado = resultado.filter((item) => matchesContract(item, filtros?.contrato));
+    resultado = resultado.filter((item) => matchesOs(item, filtros?.os));
     return resultado;
   }, [dados, filtros?.contrato, filtros?.os]);
 
@@ -153,8 +155,8 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
     });
   }, [dadosProcessados, modoDisciplina, disciplinaMeta, totalDisciplinaRecorte]);
 
-  const minWidthChart = Math.max(800, chartData.length * (modoDisciplina ? 100 : Math.max(180, disciplinaMetas.length * 42)));
-  const chartHeight = 380;
+  const minWidthChart = Math.max(760, chartData.length * (modoDisciplina ? 92 : Math.max(152, disciplinaMetas.length * 36)));
+  const chartHeight = 320;
 
   if (!chartData.length || !disciplinaMetas.length) {
     return (
@@ -183,42 +185,16 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
   );
 
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8 flex flex-col min-h-[460px] h-full">
-      <div className="mb-6 border-b-0">
-        <div className="flex flex-col gap-4">
+    <div className="flex flex-col min-h-[360px] h-full">
+      <div className="mb-4 border-b-0">
+        <div className="flex flex-col gap-3">
           <div>
             <h3 className="text-base font-bold text-[#2D2D2D] uppercase tracking-tight mb-1">
               COMPOSICAO DE PROFISSIONAIS POR OS
             </h3>
           </div>
 
-          <div className="flex flex-col items-stretch gap-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
-              <select
-                value={filtros?.contrato || 'Todos'}
-                onChange={(event) => onFiltroChange?.('contrato', event.target.value)}
-                className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]"
-              >
-                <option value="Todos">Todos os contratos</option>
-                {contractOptions.map((contract) => (
-                  <option key={contract.codigo} value={contract.codigo}>{contract.codigo} - {contract.nome}</option>
-                ))}
-              </select>
-
-              <select
-                value={filtros?.os || 'Todos'}
-                onChange={(event) => onFiltroChange?.('os', event.target.value)}
-                className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]"
-              >
-                <option value="Todos">Todas as OS</option>
-                {osOptions.map((os) => (
-                  <option key={os.codigo} value={os.codigo}>{os.codigo} - {os.nome}</option>
-                ))}
-              </select>
-            </div>
-
-            {!modoDisciplina && <FixedCustomLegend />}
-          </div>
+          {!modoDisciplina && <FixedCustomLegend />}
         </div>
       </div>
 

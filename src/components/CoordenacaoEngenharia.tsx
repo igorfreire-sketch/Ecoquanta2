@@ -78,7 +78,7 @@ function getLatestEapDisplayDate(eap?: any) {
 
 export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
   const tabs = [
-    { id: 'profissionais', label: 'Profissionais' },
+    { id: 'profissionais', label: 'Dashboard' },
     { id: 'curva-s', label: 'Curva S' },
     { id: 'planejamento', label: 'Planejamento' },
     { id: 'alertas', label: 'Alertas' },

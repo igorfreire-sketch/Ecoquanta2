@@ -1,17 +1,17 @@
 import React from 'react';
 import { AlertTriangle, Check, ChevronDown, ChevronUp, ClipboardList, FileWarning, TimerReset } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
-import { isFirebaseConfigured, updateFirebaseRegistroActivity } from '../../lib/firebaseDb';
-
-const CONTRACT_PRIORITY_STORAGE_KEY = 'quanta_contract_priorities';
-const CONTRACT_INTERFERENCES_STORAGE_KEY = 'quanta_contract_interferences';
-const PLANNING_TODOS_STORAGE_KEY = 'quanta_planejamento_tecnico_itens';
+import { isFirebaseConfigured, setFirebaseDocument, updateFirebaseRegistroActivity } from '../../lib/firebaseDb';
 
 type AlertasProps = {
   currentUser: AuthUser;
   preloadedData?: {
     registro?: any;
     admin?: any;
+    planningTodos?: PlannedItem[];
+    contractPriorities?: Array<{ id: string; activityId: string; monthlyCycle?: string; licitatoria?: boolean }>;
+    contractInterferences?: StoredInterference[];
+    resolvedAlerts?: Array<{ id: string; activityId: string; signature: string }>;
   };
   activeContractCode?: string;
 };
@@ -64,37 +64,27 @@ function isAllContract(value?: string) {
   return !normalized || normalized === 'todos' || normalized === 'todos os contratos';
 }
 
-function readStoredPriorities() {
-  try {
-    const raw = localStorage.getItem(CONTRACT_PRIORITY_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return {
-      values: parsed?.values && typeof parsed.values === 'object' ? parsed.values as Record<string, string> : {},
-      confirmed: parsed?.confirmed && typeof parsed.confirmed === 'object' ? parsed.confirmed as Record<string, boolean> : {},
-    };
-  } catch {
-    return { values: {}, confirmed: {} };
-  }
+function readStoredPriorities(records?: AlertasProps['preloadedData']['contractPriorities']) {
+  const values: Record<string, string> = {};
+  const confirmed: Record<string, boolean> = {};
+
+  (Array.isArray(records) ? records : []).forEach((record) => {
+    const id = String(record?.activityId || record?.id || '').trim();
+    if (!id) return;
+    if (record?.licitatoria) values[id] = '3';
+    else if (record?.monthlyCycle) values[id] = '2';
+    confirmed[id] = Boolean(record?.licitatoria || record?.monthlyCycle);
+  });
+
+  return { values, confirmed };
 }
 
-function readStoredInterferencias() {
-  try {
-    const raw = localStorage.getItem(CONTRACT_INTERFERENCES_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed as StoredInterference[] : [];
-  } catch {
-    return [];
-  }
+function readStoredInterferencias(items?: StoredInterference[]) {
+  return Array.isArray(items) ? items : [];
 }
 
-function readPlannedItems() {
-  try {
-    const raw = localStorage.getItem(PLANNING_TODOS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed as PlannedItem[] : [];
-  } catch {
-    return [];
-  }
+function readPlannedItems(items?: PlannedItem[]) {
+  return Array.isArray(items) ? items : [];
 }
 
 function getSourceActivities(registro: any) {
@@ -142,7 +132,10 @@ function buildActivities(registro: any): AlertActivity[] {
 function filterByContract<T extends { contratoCodigo?: string }>(list: T[], contractCode?: string) {
   if (isAllContract(contractCode)) return list;
   const target = normalizeText(contractCode);
-  return list.filter((item) => normalizeText(item.contratoCodigo) === target);
+  return list.filter((item: any) => (
+    normalizeText(item.contratoCodigo) === target
+    || normalizeText(item.contratoNome) === target
+  ));
 }
 
 function buildActivityAlertSignature(activity: Pick<AlertActivity, 'id' | 'avaliacao' | 'ultimaAtualizacao'>) {
@@ -201,7 +194,9 @@ function EmptyState({ text }: { text: string }) {
 
 export default function Alertas({ currentUser: _currentUser, preloadedData, activeContractCode }: AlertasProps) {
   const [resolvingActivityIds, setResolvingActivityIds] = React.useState<string[]>([]);
-  const [resolvedAlertSignatures, setResolvedAlertSignatures] = React.useState<string[]>([]);
+  const [resolvedAlertSignatures, setResolvedAlertSignatures] = React.useState<string[]>(
+    () => (Array.isArray(preloadedData?.resolvedAlerts) ? preloadedData.resolvedAlerts : []).map((item) => String(item.signature || '').trim()).filter(Boolean)
+  );
 
   const activities = React.useMemo(() => buildActivities(preloadedData?.registro), [preloadedData?.registro]);
 
@@ -227,7 +222,15 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
     [criticalActivitiesBase, resolvedAlertSignatures]
   );
 
-  const storedPriorities = React.useMemo(() => readStoredPriorities(), []);
+  React.useEffect(() => {
+    setResolvedAlertSignatures(
+      (Array.isArray(preloadedData?.resolvedAlerts) ? preloadedData.resolvedAlerts : [])
+        .map((item) => String(item.signature || '').trim())
+        .filter(Boolean)
+    );
+  }, [preloadedData?.resolvedAlerts]);
+
+  const storedPriorities = React.useMemo(() => readStoredPriorities(preloadedData?.contractPriorities), [preloadedData?.contractPriorities]);
   const priorityActivities = React.useMemo(() => {
     const confirmedIds = new Set(
       Object.entries(storedPriorities.confirmed)
@@ -244,11 +247,11 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
   }, [activities, activeContractCode, storedPriorities]);
 
   const interferencias = React.useMemo(
-    () => filterByContract(readStoredInterferencias(), activeContractCode).sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))),
-    [activeContractCode]
+    () => filterByContract(readStoredInterferencias(preloadedData?.contractInterferences), activeContractCode).sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))),
+    [activeContractCode, preloadedData?.contractInterferences]
   );
 
-  const planningTodos = React.useMemo(() => filterByContract(readPlannedItems(), activeContractCode), [activeContractCode]);
+  const planningTodos = React.useMemo(() => filterByContract(readPlannedItems(preloadedData?.planningTodos), activeContractCode), [activeContractCode, preloadedData?.planningTodos]);
   const pendingPlanningItems = React.useMemo(() => {
     return planningTodos.filter((todo) => {
       return !activities.some((activity) => (
@@ -272,6 +275,12 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
       await updateFirebaseRegistroActivity(activity.id, {
         avaliacaoAtual: 'Dentro do esperado',
         ultimaAtualizacao: nowPtBr(),
+      });
+      await setFirebaseDocument('resolvedAlerts', signature, {
+        id: signature,
+        activityId: activity.id,
+        signature,
+        updatedAt: new Date().toISOString(),
       });
     } catch (error) {
       setResolvedAlertSignatures((prev) => prev.filter((item) => item !== signature));

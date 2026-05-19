@@ -3,8 +3,6 @@ import {
   Search,
   RotateCcw,
   ExternalLink,
-  ChevronDown,
-  ChevronUp,
 } from 'lucide-react';
 
 import Alocacoes from './Alocacoes';
@@ -12,8 +10,6 @@ import ComposicaoDeProfissionaisPorOS from './Graficosdashboard/ComposicaodeProf
 import MatrizDePriorizacao from './Graficosdashboard/MatrizDePriorizacao';
 import SituacaoPorDisciplina from './Graficosdashboard/ImpactoXesforco';
 import NovoGrafico from './Graficosdashboard/hotmap';
-
-const CONTRACT_PRIORITY_STORAGE_KEY = 'quanta_contract_priorities';
 
 type FiltrosEngenharia = {
   contrato: string;
@@ -31,9 +27,6 @@ type FiltrosLocais = {
 type FiltrosConsulta = {
   contrato: string;
   os: string;
-  disciplina: string;
-  profissional: string;
-  avaliacao: string;
 };
 
 type DashboardEngenhariaProps = {
@@ -42,6 +35,7 @@ type DashboardEngenhariaProps = {
     registro?: any;
     cronograma?: any;
     admin?: any;
+    contractPriorities?: Array<{ id: string; activityId: string; monthlyCycle?: string; licitatoria?: boolean }>;
   };
   mode?: 'profissionais' | 'planejamento';
   activeContractCode?: string;
@@ -50,36 +44,26 @@ type DashboardEngenhariaProps = {
 function ExpandableSection({
   title,
   children,
-  defaultOpen = false,
 }: {
   title: string;
   children: React.ReactNode;
-  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = React.useState(defaultOpen);
-
   return (
     <section className="rounded-2xl border border-[#E5E7EB] bg-white shadow-sm">
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-[#F8F9FA]"
-      >
+      <div className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left">
         <span className="text-[14px] font-black uppercase tracking-wide text-[#2D2D2D]">{title}</span>
-        {open ? <ChevronUp size={18} className="text-[#F05D28]" /> : <ChevronDown size={18} className="text-[#757575]" />}
-      </button>
+      </div>
 
-      {open && (
-        <div className="border-t border-[#E5E7EB] p-4 sm:p-5">
-          {children}
-        </div>
-      )}
+      <div className="border-t border-[#E5E7EB] p-4 sm:p-5">
+        {children}
+      </div>
     </section>
   );
 }
 
 type ConsultaAtividade = {
   id: string;
+  activityId: string;
   profissional: string;
   profissionalEmail: string;
   descricao: string;
@@ -98,6 +82,8 @@ type ConsultaAtividade = {
   termino: string;
   prazo: string;
   avaliacao: string;
+  equipeTamanho: number;
+  participacaoProfissional: number;
 };
 
 type ContractOption = {
@@ -108,6 +94,14 @@ type ContractOption = {
 type BasicFilters = {
   contrato: string;
   os: string;
+};
+
+type GlobalDashboardFilters = {
+  contrato: string;
+  os: string;
+  disciplina: string;
+  avaliacao: string;
+  terceirizada: boolean;
 };
 
 const EMPTY_STATUS = 'A programar';
@@ -287,16 +281,14 @@ function difficultyToNumber(value?: string) {
   return 1;
 }
 
-function readStoredPriorityValues() {
-  try {
-    const raw = localStorage.getItem(CONTRACT_PRIORITY_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return parsed?.values && typeof parsed.values === 'object'
-      ? parsed.values as Record<string, string>
-      : {};
-  } catch (error) {
-    return {};
-  }
+function readStoredPriorityValues(records?: Array<{ id: string; activityId: string; monthlyCycle?: string; licitatoria?: boolean }>) {
+  const values: Record<string, string> = {};
+  (Array.isArray(records) ? records : []).forEach((record) => {
+    const id = String(record?.activityId || record?.id || '').trim();
+    if (!id) return;
+    values[id] = record?.licitatoria ? '3' : record?.monthlyCycle ? '2' : '1';
+  });
+  return values;
 }
 
 function getActivityList(registro: any) {
@@ -370,7 +362,7 @@ function buildCronogramaMap(cronograma: any) {
   return map;
 }
 
-function buildConsultaData(registro: any, cronograma: any, admin?: any): ConsultaAtividade[] {
+function buildConsultaData(registro: any, cronograma: any, admin?: any, contractPriorities?: Array<{ id: string; activityId: string; monthlyCycle?: string; licitatoria?: boolean }>): ConsultaAtividade[] {
   const activities = getActivityList(registro);
   const { byEmail: disciplinaByEmail, byName: disciplinaByName } = buildProfessionalDisciplineMaps(registro, admin);
   const cronogramaByCode = buildCronogramaMap(cronograma);
@@ -380,7 +372,7 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
   const osCodeByName = buildOsCodeByNameMap(registro);
   const osByItemCode = buildItemOsMap(registro);
   const contractByOsCode = buildOsContractMap(registro);
-  const priorityValues = readStoredPriorityValues();
+  const priorityValues = readStoredPriorityValues(contractPriorities);
 
   return activities.flatMap((activity: any) => {
     const emails = Array.isArray(activity?.profissionaisEmails)
@@ -422,9 +414,11 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
         || 'Sem disciplina';
       const baseId = String(activity?.activityId || activity?.id || activity?.itemCodigo || index);
       const importanceValue = Math.max(1, Math.min(3, Number(priorityValues[baseId] || activity?.importancia || 1)));
+      const equipeTamanho = Math.max(participantes.length, 1);
 
       return {
         id: `${baseId}-${email || nome}-${index}`,
+        activityId: baseId,
         profissional: nome,
         profissionalEmail: email,
         descricao: rawItemNome,
@@ -443,6 +437,8 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any): Consult
         termino: prazo,
         prazo,
         avaliacao: String(activity?.avaliacaoAtual || '').trim() || EMPTY_STATUS,
+        equipeTamanho,
+        participacaoProfissional: Number((100 / equipeTamanho).toFixed(2)),
       };
     });
   });
@@ -468,6 +464,7 @@ function getAvaliacaoBadgeClass(value: string) {
 function buildComposicaoData(tableData: ConsultaAtividade[], disciplinas: string[]) {
   const grouped: Record<string, any> = {};
   const disciplinasBase = disciplinas.length ? disciplinas : Array.from(new Set(tableData.map((item) => item.disciplina).filter(Boolean)));
+  const seenByOs = new Set<string>();
 
   tableData.forEach((item) => {
     const osCodigo = item.osCodigo || item.os || 'Sem OS';
@@ -476,14 +473,22 @@ function buildComposicaoData(tableData: ConsultaAtividade[], disciplinas: string
     if (!grouped[osCodigo]) {
       const base: Record<string, any> = {
         os: osCodigo,
+        osCodigo,
         nomeCompleto: osLabel,
-        contrato: item.contrato
+        contrato: item.contrato,
+        contratoCodigo: item.contratoCodigo,
+        contratoNome: item.contratoNome || item.contrato,
       };
       disciplinasBase.forEach((disciplina) => {
         base[disciplinaKey(disciplina)] = 0;
       });
       grouped[osCodigo] = base;
     }
+
+    const personKey = normalizeText(item.profissionalEmail) || normalizeText(item.profissional);
+    const uniqueKey = `${osCodigo}|${normalizeText(item.disciplina)}|${personKey}`;
+    if (seenByOs.has(uniqueKey)) return;
+    seenByOs.add(uniqueKey);
 
     const key = disciplinaKey(item.disciplina);
     grouped[osCodigo][key] = Number(grouped[osCodigo][key] || 0) + 1;
@@ -498,12 +503,8 @@ function filterByContractOsAndDiscipline(
   filtroDisciplina: string
 ) {
   return tableData.filter((item) => {
-    const matchContrato = isAllValue(filtros.contrato)
-      || normalizeText(item.contratoCodigo) === normalizeText(filtros.contrato)
-      || normalizeText(item.contrato) === normalizeText(filtros.contrato);
-    const matchOS = isAllValue(filtros.os)
-      || normalizeText(item.osCodigo) === normalizeText(filtros.os)
-      || normalizeText(item.os) === normalizeText(filtros.os);
+    const matchContrato = matchesContractFilter(item, filtros.contrato);
+    const matchOS = matchesOsFilter(item, filtros.os);
     const matchDisciplina = isAllValue(filtroDisciplina) || normalizeText(item.disciplina) === normalizeText(filtroDisciplina);
     return matchContrato && matchOS && matchDisciplina;
   });
@@ -552,7 +553,7 @@ function getOsOptions(registro: any, tableData: ConsultaAtividade[], contrato: s
 
   if (map.size === 0) {
     tableData
-      .filter((row) => isAllValue(contrato) || normalizeText(row.contratoCodigo) === target)
+      .filter((row) => matchesContractFilter(row, contrato))
       .forEach((row) => {
         const os = String(row.osCodigo || row.os || '').trim();
         const nome = String(row.osNome || row.os || os).trim();
@@ -615,14 +616,63 @@ function getEvaluationOptions(tableData: ConsultaAtividade[]) {
   });
 }
 
+function filterByEvaluation(tableData: ConsultaAtividade[], avaliacao: string) {
+  if (normalizeText(avaliacao) === 'todas') return tableData;
+  return tableData.filter((item) => normalizeText(item.avaliacao) === normalizeText(avaliacao));
+}
+
+function matchesContractFilter(item: Pick<ConsultaAtividade, 'contratoCodigo' | 'contrato' | 'contratoNome'>, filtro: string) {
+  if (isAllValue(filtro)) return true;
+  const target = normalizeText(filtro);
+  return [item.contratoCodigo, item.contrato, item.contratoNome].some((value) => normalizeText(String(value || '')) === target);
+}
+
+function matchesOsFilter(item: Pick<ConsultaAtividade, 'osCodigo' | 'os' | 'osNome'>, filtro: string) {
+  if (isAllValue(filtro)) return true;
+  const target = normalizeText(filtro);
+  return [item.osCodigo, item.os, item.osNome].some((value) => normalizeText(String(value || '')) === target);
+}
+
+function filterByThirdParty(tableData: ConsultaAtividade[], terceirizada: boolean) {
+  return tableData.filter((item) => {
+    const isThirdParty = String(item.profissionalEmail || '').trim().toLowerCase().startsWith('terceirizada:');
+    return terceirizada ? isThirdParty : !isThirdParty;
+  });
+}
+
+function FilterField({
+  label,
+  value,
+  onChange,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">{label}</label>
+      <select
+        className="w-full h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[12px] font-semibold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {children}
+      </select>
+    </div>
+  );
+}
+
 export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode = 'profissionais', activeContractCode }: DashboardEngenhariaProps) {
   const filtroContratoGlobal = filtrosAtivos?.contrato || 'Todos';
   const filtroOSGlobal = filtrosAtivos?.os || 'Todos';
   const filtroDisciplina = filtrosAtivos?.disciplina || 'Todos';
 
   const tableData = React.useMemo(
-    () => buildConsultaData(preloadedData?.registro, preloadedData?.cronograma, preloadedData?.admin),
-    [preloadedData?.registro, preloadedData?.cronograma, preloadedData?.admin]
+    () => buildConsultaData(preloadedData?.registro, preloadedData?.cronograma, preloadedData?.admin, preloadedData?.contractPriorities),
+    [preloadedData?.registro, preloadedData?.cronograma, preloadedData?.admin, preloadedData?.contractPriorities]
   );
 
   const disciplinasCadastradas = React.useMemo(() => {
@@ -658,96 +708,76 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
     return new Set(disciplinasGraficos.map((item) => normalizeText(item)).filter(Boolean));
   }, [disciplinasGraficos]);
 
-  const [filtrosComposicao, setFiltrosComposicao] = React.useState<FiltrosLocais>({
+  const [filtrosGlobais, setFiltrosGlobais] = React.useState<GlobalDashboardFilters>({
     contrato: filtroContratoGlobal,
     os: filtroOSGlobal,
-    importancia: 'Todos',
-    dificuldade: 'Todos',
+    disciplina: filtroDisciplina,
+    avaliacao: 'Todas',
+    terceirizada: false,
   });
   const [filtrosMatriz, setFiltrosMatriz] = React.useState<FiltrosLocais>({
-    contrato: filtroContratoGlobal,
-    os: filtroOSGlobal,
+    contrato: 'Todos',
+    os: 'Todos',
     importancia: 'Todos',
     dificuldade: 'Todos',
   });
   const [filtrosAnalise, setFiltrosAnalise] = React.useState<FiltrosLocais>({
-    contrato: filtroContratoGlobal,
-    os: filtroOSGlobal,
+    contrato: 'Todos',
+    os: 'Todos',
     importancia: 'Todos',
     dificuldade: 'Todos',
   });
   const [filtrosConsulta, setFiltrosConsulta] = React.useState<FiltrosConsulta>({
-    contrato: filtroContratoGlobal,
-    os: filtroOSGlobal,
-    disciplina: filtroDisciplina,
-    profissional: 'Todos',
-    avaliacao: 'Todas',
+    contrato: 'Todos',
+    os: 'Todos',
   });
   const [consultaSearch, setConsultaSearch] = React.useState('');
 
   React.useEffect(() => {
-    setFiltrosComposicao((prev) => ({
-      ...prev,
-      contrato: filtroContratoGlobal,
-      os: filtroOSGlobal,
-    }));
-    setFiltrosMatriz((prev) => ({
-      ...prev,
-      contrato: filtroContratoGlobal,
-      os: filtroOSGlobal,
-    }));
-    setFiltrosAnalise((prev) => ({
-      ...prev,
-      contrato: filtroContratoGlobal,
-      os: filtroOSGlobal,
-    }));
-    setFiltrosConsulta((prev) => ({
-      ...prev,
+    setFiltrosGlobais({
       contrato: filtroContratoGlobal,
       os: filtroOSGlobal,
       disciplina: filtroDisciplina,
-    }));
+      avaliacao: 'Todas',
+      terceirizada: false,
+    });
   }, [filtroContratoGlobal, filtroOSGlobal, filtroDisciplina]);
 
-  const contractOptionsComposicao = React.useMemo(
+  const contractOptions = React.useMemo(
     () => getContractOptions(preloadedData?.registro, tableData),
     [preloadedData?.registro, tableData]
   );
-  const osOptionsComposicao = React.useMemo(
-    () => getOsOptions(preloadedData?.registro, tableData, filtrosComposicao.contrato),
-    [preloadedData?.registro, tableData, filtrosComposicao.contrato]
+  const osOptionsGlobais = React.useMemo(
+    () => getOsOptions(preloadedData?.registro, tableData, filtrosGlobais.contrato),
+    [preloadedData?.registro, tableData, filtrosGlobais.contrato]
   );
-  const contractOptionsMatriz = React.useMemo(
-    () => getContractOptions(preloadedData?.registro, tableData),
-    [preloadedData?.registro, tableData]
-  );
-  const osOptionsMatriz = React.useMemo(
-    () => getOsOptions(preloadedData?.registro, tableData, filtrosMatriz.contrato),
-    [preloadedData?.registro, tableData, filtrosMatriz.contrato]
-  );
-  const contractOptionsAnalise = React.useMemo(
-    () => getContractOptions(preloadedData?.registro, tableData),
-    [preloadedData?.registro, tableData]
-  );
-  const osOptionsAnalise = React.useMemo(
-    () => getOsOptions(preloadedData?.registro, tableData, filtrosAnalise.contrato),
-    [preloadedData?.registro, tableData, filtrosAnalise.contrato]
-  );
-  const contractOptionsConsulta = React.useMemo(
-    () => getContractOptions(preloadedData?.registro, tableData),
-    [preloadedData?.registro, tableData]
-  );
-  const osOptionsConsulta = React.useMemo(
-    () => getOsOptions(preloadedData?.registro, tableData, filtrosConsulta.contrato),
-    [preloadedData?.registro, tableData, filtrosConsulta.contrato]
-  );
-  const disciplineOptionsConsulta = React.useMemo(
-    () => disciplinasCadastradas.filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR')),
+  const disciplineOptions = React.useMemo(
+    () => ['Todos', ...disciplinasCadastradas.filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'))],
     [disciplinasCadastradas]
   );
-  const professionalOptionsConsulta = React.useMemo(
-    () => getProfessionalOptions(preloadedData?.registro, tableData, filtrosConsulta.disciplina),
-    [preloadedData?.registro, tableData, filtrosConsulta.disciplina]
+  const contractOptionsMatriz = React.useMemo(
+    () => contractOptions,
+    [contractOptions]
+  );
+  const osOptionsMatriz = React.useMemo(
+    () => osOptionsGlobais,
+    [osOptionsGlobais]
+  );
+  const contractOptionsAnalise = React.useMemo(
+    () => contractOptions,
+    [contractOptions]
+  );
+  const osOptionsAnalise = React.useMemo(
+    () => osOptionsGlobais,
+    [osOptionsGlobais]
+  );
+  const contractOptionsConsulta = React.useMemo(
+    () => contractOptions,
+    [contractOptions]
+  );
+  const osOptionsConsulta = React.useMemo(
+    () => osOptionsGlobais,
+    [osOptionsGlobais]
   );
   const evaluationOptionsConsulta = React.useMemo(
     () => getEvaluationOptions(tableData),
@@ -755,50 +785,54 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   );
 
   React.useEffect(() => {
-    if (isAllValue(filtrosComposicao.os)) return;
-    const exists = osOptionsComposicao.some((item) => normalizeText(item.codigo) === normalizeText(filtrosComposicao.os));
-    if (!exists) setFiltrosComposicao((prev) => ({ ...prev, os: 'Todos' }));
-  }, [osOptionsComposicao, filtrosComposicao.os]);
-
-  React.useEffect(() => {
-    if (isAllValue(filtrosMatriz.os)) return;
-    const exists = osOptionsMatriz.some((item) => normalizeText(item.codigo) === normalizeText(filtrosMatriz.os));
-    if (!exists) setFiltrosMatriz((prev) => ({ ...prev, os: 'Todos' }));
-  }, [osOptionsMatriz, filtrosMatriz.os]);
-
-  React.useEffect(() => {
-    if (isAllValue(filtrosAnalise.os)) return;
-    const exists = osOptionsAnalise.some((item) => normalizeText(item.codigo) === normalizeText(filtrosAnalise.os));
-    if (!exists) setFiltrosAnalise((prev) => ({ ...prev, os: 'Todos' }));
-  }, [osOptionsAnalise, filtrosAnalise.os]);
-
-  React.useEffect(() => {
-    if (isAllValue(filtrosConsulta.os)) return;
-    const exists = osOptionsConsulta.some((item) => normalizeText(item.codigo) === normalizeText(filtrosConsulta.os));
+    if (isAllValue(filtrosGlobais.os)) return;
+    const exists = osOptionsGlobais.some((item) => normalizeText(item.codigo) === normalizeText(filtrosGlobais.os));
     if (!exists) {
-      setFiltrosConsulta((prev) => ({ ...prev, os: 'Todos' }));
+      setFiltrosGlobais((prev) => ({ ...prev, os: 'Todos' }));
     }
-  }, [osOptionsConsulta, filtrosConsulta.os]);
+  }, [osOptionsGlobais, filtrosGlobais.os]);
 
   React.useEffect(() => {
-    if (normalizeText(filtrosConsulta.profissional) === 'todos') return;
-    const exists = professionalOptionsConsulta.some((item) => normalizeText(item.nome) === normalizeText(filtrosConsulta.profissional));
-    if (!exists) {
-      setFiltrosConsulta((prev) => ({ ...prev, profissional: 'Todos' }));
-    }
-  }, [professionalOptionsConsulta, filtrosConsulta.profissional]);
+    setFiltrosMatriz((prev) => ({
+      ...prev,
+      contrato: filtrosGlobais.contrato,
+      os: filtrosGlobais.os,
+    }));
+    setFiltrosAnalise((prev) => ({
+      ...prev,
+      contrato: filtrosGlobais.contrato,
+      os: filtrosGlobais.os,
+    }));
+    setFiltrosConsulta((prev) => ({
+      ...prev,
+      contrato: filtrosGlobais.contrato,
+      os: filtrosGlobais.os,
+    }));
+  }, [filtrosGlobais]);
 
   const tableComposicaoFiltrada = React.useMemo(() => {
-    return filterByContractOsAndDiscipline(tableData, filtrosComposicao, filtroDisciplina);
-  }, [tableData, filtrosComposicao, filtroDisciplina]);
+    return filterByThirdParty(
+      filterByEvaluation(
+        filterByContractOsAndDiscipline(tableData, filtrosGlobais, filtrosGlobais.disciplina),
+        filtrosGlobais.avaliacao
+      ),
+      filtrosGlobais.terceirizada
+    );
+  }, [tableData, filtrosGlobais]);
 
   const tableComposicaoGraficos = React.useMemo(() => {
     return tableComposicaoFiltrada.filter((item) => disciplinasGraficosSet.has(normalizeText(item.disciplina)));
   }, [disciplinasGraficosSet, tableComposicaoFiltrada]);
 
   const tableMatrizBase = React.useMemo(() => {
-    return filterByContractOsAndDiscipline(tableData, filtrosMatriz, filtroDisciplina);
-  }, [tableData, filtrosMatriz, filtroDisciplina]);
+    return filterByThirdParty(
+      filterByEvaluation(
+        filterByContractOsAndDiscipline(tableData, filtrosGlobais, filtrosGlobais.disciplina),
+        filtrosGlobais.avaliacao
+      ),
+      filtrosGlobais.terceirizada
+    );
+  }, [tableData, filtrosGlobais]);
 
   const tableMatrizFiltrada = React.useMemo(() => {
     return tableMatrizBase.filter((item) => {
@@ -809,8 +843,14 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   }, [tableMatrizBase, filtrosMatriz.importancia, filtrosMatriz.dificuldade]);
 
   const tableAnaliseBase = React.useMemo(() => {
-    return filterByContractOsAndDiscipline(tableData, filtrosAnalise, filtroDisciplina);
-  }, [tableData, filtrosAnalise, filtroDisciplina]);
+    return filterByThirdParty(
+      filterByEvaluation(
+        filterByContractOsAndDiscipline(tableData, filtrosGlobais, filtrosGlobais.disciplina),
+        filtrosGlobais.avaliacao
+      ),
+      filtrosGlobais.terceirizada
+    );
+  }, [tableData, filtrosGlobais]);
 
   const tableAnaliseFiltrada = React.useMemo(() => {
     return tableAnaliseBase.filter((item) => {
@@ -825,16 +865,18 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   }, [disciplinasGraficosSet, tableAnaliseFiltrada]);
 
   const tableConsultaFiltrada = React.useMemo(() => {
-    const base = filterByContractOsAndDiscipline(
-      tableData,
-      { contrato: filtrosConsulta.contrato, os: filtrosConsulta.os },
-      filtrosConsulta.disciplina
+    const base = filterByThirdParty(
+      filterByEvaluation(
+        filterByContractOsAndDiscipline(
+          tableData,
+          { contrato: filtrosGlobais.contrato, os: filtrosGlobais.os },
+          filtrosGlobais.disciplina
+        ),
+        filtrosGlobais.avaliacao
+      ),
+      filtrosGlobais.terceirizada
     );
     return base.filter((item) => {
-      const matchProfissional = normalizeText(filtrosConsulta.profissional) === 'todos'
-        || normalizeText(item.profissional) === normalizeText(filtrosConsulta.profissional);
-      const matchAvaliacao = normalizeText(filtrosConsulta.avaliacao) === 'todas'
-        || normalizeText(item.avaliacao) === normalizeText(filtrosConsulta.avaliacao);
       const search = normalizeText(consultaSearch);
       const matchSearch = !search || [
         item.profissional,
@@ -846,9 +888,9 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
         item.descricao,
         item.avaliacao,
       ].some((value) => normalizeText(String(value || '')).includes(search));
-      return matchProfissional && matchAvaliacao && matchSearch;
+      return matchSearch;
     });
-  }, [tableData, filtrosConsulta, consultaSearch]);
+  }, [tableData, filtrosGlobais, consultaSearch]);
 
   const tableConsultaGraficos = React.useMemo(() => {
     return tableConsultaFiltrada.filter((item) => disciplinasGraficosSet.has(normalizeText(item.disciplina)));
@@ -864,6 +906,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   const dadosImpactoEsforco = React.useMemo(() => {
     return tableAnaliseGraficos.map(item => ({
       id: item.id,
+      activityId: item.activityId,
       os: item.os,
       osCodigo: item.osCodigo,
       osNome: item.osNome,
@@ -876,14 +919,14 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
       responsavel: item.responsavel,
       percentualConcluido: item.percentualConcluido,
       avaliacao: item.avaliacao as any,
-      alocacao: 100
+      alocacao: item.participacaoProfissional,
     }));
   }, [tableAnaliseGraficos]);
 
   const maxPrazo = React.useMemo(() => Math.max(...tableData.map(t => Math.abs(t.prazoAtual)), 1), [tableData]);
 
-  const updateFiltroComposicao = (key: keyof FiltrosLocais, value: string) => {
-    setFiltrosComposicao((prev) => ({
+  const updateFiltroGlobal = (key: keyof GlobalDashboardFilters, value: string) => {
+    setFiltrosGlobais((prev) => ({
       ...prev,
       [key]: value,
       ...(key === 'contrato' ? { os: 'Todos' } : {}),
@@ -908,18 +951,58 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
 
   const resetConsultaFiltros = () => {
     setFiltrosConsulta({
-      contrato: filtroContratoGlobal,
-      os: filtroOSGlobal,
-      disciplina: filtroDisciplina,
-      profissional: 'Todos',
-      avaliacao: 'Todas',
+      contrato: filtrosGlobais.contrato,
+      os: filtrosGlobais.os,
     });
     setConsultaSearch('');
   };
 
   return (
     <div className="w-full space-y-6 sm:space-y-8 font-['Montserrat'] relative">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8">
+      <section className="rounded-2xl border border-[#E5E7EB] bg-white px-4 py-4 shadow-sm sm:px-5">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <FilterField label="Contrato" value={filtrosGlobais.contrato} onChange={(value) => updateFiltroGlobal('contrato', value)}>
+            <option value="Todos">Todos os contratos</option>
+            {contractOptions.map((item) => (
+              <option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>
+            ))}
+          </FilterField>
+          <FilterField label="OS" value={filtrosGlobais.os} onChange={(value) => updateFiltroGlobal('os', value)}>
+            <option value="Todos">Todas as OS</option>
+            {osOptionsGlobais.map((item) => (
+              <option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>
+            ))}
+          </FilterField>
+          <FilterField label="Disciplina" value={filtrosGlobais.disciplina} onChange={(value) => updateFiltroGlobal('disciplina', value)}>
+            {disciplineOptions.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </FilterField>
+          <FilterField label="Avaliacao" value={filtrosGlobais.avaliacao} onChange={(value) => updateFiltroGlobal('avaliacao', value)}>
+            <option value="Todas">Todas</option>
+            {evaluationOptionsConsulta.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </FilterField>
+        </div>
+        <div className="mt-3 flex items-center">
+          <label className={`inline-flex items-center gap-3 rounded-xl border px-4 py-2.5 text-[12px] font-semibold transition-colors ${
+            filtrosGlobais.terceirizada
+              ? 'border-[#F05D28] bg-[#FFF7ED] text-[#C2410C]'
+              : 'border-[#E5E7EB] bg-white text-[#2D2D2D]'
+          }`}>
+            <input
+              type="checkbox"
+              checked={filtrosGlobais.terceirizada}
+              onChange={(event) => setFiltrosGlobais((prev) => ({ ...prev, terceirizada: event.target.checked }))}
+              className="h-4 w-4 accent-[#F05D28]"
+            />
+            Terceirizada
+          </label>
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6">
         {mode === 'profissionais' && (
           <>
             <div className="lg:col-span-12">
@@ -927,10 +1010,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
                 <ComposicaoDeProfissionaisPorOS
                   dados={dadosComposicaoFiltrados}
                   disciplinas={disciplinasGraficos}
-                  filtros={{ contrato: filtrosComposicao.contrato, os: filtrosComposicao.os }}
-                  contractOptions={contractOptionsComposicao}
-                  osOptions={osOptionsComposicao}
-                  onFiltroChange={updateFiltroComposicao}
+                  filtros={{ contrato: filtrosGlobais.contrato, os: filtrosGlobais.os, disciplina: filtrosGlobais.disciplina }}
                 />
               </ExpandableSection>
             </div>
@@ -943,7 +1023,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
 
             <div className="lg:col-span-12">
               <ExpandableSection title="Profissionais">
-                <Alocacoes preloadedData={preloadedData} activeContractCode={activeContractCode} />
+                <Alocacoes preloadedData={preloadedData} activeContractCode={activeContractCode} dadosTabela={tableConsultaGraficos} />
               </ExpandableSection>
             </div>
           </>
@@ -985,74 +1065,6 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
         <div className="flex items-center gap-3 border-b border-[#E5E7EB] pb-4 mb-6">
           <span className="material-symbols-outlined text-[#F05D28] text-xl">list_alt</span>
           <h2 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Consulta de Atividades</h2>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-          <div className="space-y-1.5 md:col-span-1">
-            <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Contrato</label>
-            <select
-              className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
-              value={filtrosConsulta.contrato}
-              onChange={(e) => setFiltrosConsulta((prev) => ({ ...prev, contrato: e.target.value, os: 'Todos' }))}
-            >
-              <option value="Todos">Todos</option>
-              {contractOptionsConsulta.map((item) => (
-                <option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1.5 md:col-span-1">
-            <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">OS</label>
-            <select
-              className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
-              value={filtrosConsulta.os}
-              onChange={(e) => setFiltrosConsulta((prev) => ({ ...prev, os: e.target.value }))}
-            >
-              <option value="Todos">Todas as OS</option>
-              {osOptionsConsulta.map((item) => (
-                <option key={item.codigo} value={item.codigo}>{item.nome}</option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1.5 md:col-span-1">
-            <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Disciplina</label>
-            <select
-              className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
-              value={filtrosConsulta.disciplina}
-              onChange={(e) => setFiltrosConsulta((prev) => ({ ...prev, disciplina: e.target.value, profissional: 'Todos' }))}
-            >
-              <option value="Todos">Todas</option>
-              {disciplineOptionsConsulta.map((item) => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1.5 md:col-span-1">
-            <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Profissional</label>
-            <select
-              className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
-              value={filtrosConsulta.profissional}
-              onChange={(e) => setFiltrosConsulta((prev) => ({ ...prev, profissional: e.target.value }))}
-            >
-              <option value="Todos">Todos</option>
-              {professionalOptionsConsulta.map((item) => (
-                <option key={item.email || item.nome} value={item.nome}>{item.nome}</option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1.5 md:col-span-1">
-            <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Avaliação</label>
-            <select
-              className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-xs font-bold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
-              value={filtrosConsulta.avaliacao}
-              onChange={(e) => setFiltrosConsulta((prev) => ({ ...prev, avaliacao: e.target.value }))}
-            >
-              <option value="Todas">Todas</option>
-              {evaluationOptionsConsulta.map((item) => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
-          </div>
         </div>
 
         <div className="flex flex-col md:flex-row gap-4 mb-8">

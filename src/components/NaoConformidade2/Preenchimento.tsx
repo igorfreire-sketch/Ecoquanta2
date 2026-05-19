@@ -108,6 +108,9 @@ interface PreenchimentoProps {
       contracts?: RegistroContract[];
       osOptions?: RegistroOs[];
       itemOptions?: RegistroItem[];
+      activitiesList?: any[];
+      activeActivities?: any[];
+      completedActivities?: any[];
     };
   };
   lockedContractCode?: string;
@@ -124,9 +127,10 @@ export default function Preenchimento({
     avaliador: currentUser.nome || '',
     contrato: lockedContractCode || currentUser.contrato || '',
     os: '',
-    disciplina: currentUser.disciplina || '',
     objetoOs: '',
     objetoOsCodigo: '',
+    disciplina: currentUser.disciplina || '',
+    origemAtividade: '' as '' | 'interno' | 'terceirizado',
     observacoes: '',
   });
   const [itens, setItens] = useState<Record<ItemKey, ItemState>>(EMPTY_ITENS);
@@ -138,6 +142,12 @@ export default function Preenchimento({
   const contracts = preloadedData?.registro?.contracts || [];
   const osOptions = preloadedData?.registro?.osOptions || [];
   const itemOptions = preloadedData?.registro?.itemOptions || [];
+  const sourceActivities = Array.isArray(preloadedData?.registro?.activitiesList) && preloadedData.registro.activitiesList.length > 0
+    ? preloadedData.registro.activitiesList
+    : [
+        ...(Array.isArray(preloadedData?.registro?.activeActivities) ? preloadedData.registro.activeActivities : []),
+        ...(Array.isArray(preloadedData?.registro?.completedActivities) ? preloadedData.registro.completedActivities : []),
+      ];
 
   useEffect(() => {
     setFormData((prev) => ({
@@ -166,6 +176,49 @@ export default function Preenchimento({
   const filteredItemOptions = useMemo(() => (
     itemOptions.filter((item) => !formData.os || normalizeText(getItemOsCode(item)) === normalizeText(formData.os))
   ), [formData.os, itemOptions]);
+
+  const matchedActivity = useMemo(() => {
+    if (!formData.contrato || !formData.os || !formData.objetoOsCodigo || !formData.disciplina) return null;
+
+    return sourceActivities.find((activity: any) => {
+      const contratoCodigo = String(activity?.contratoCodigo || '').trim();
+      const osCodigo = String(activity?.osCodigo || '').trim();
+      const itemCodigo = String(activity?.itemCodigo || '').trim();
+      const disciplina = String(activity?.criadoPorDisciplina || activity?.disciplina || '').trim();
+
+      return (
+        normalizeText(contratoCodigo) === normalizeText(formData.contrato) &&
+        normalizeText(osCodigo) === normalizeText(formData.os) &&
+        normalizeText(itemCodigo) === normalizeText(formData.objetoOsCodigo) &&
+        normalizeText(disciplina) === normalizeText(formData.disciplina)
+      );
+    }) || null;
+  }, [formData.contrato, formData.disciplina, formData.objetoOsCodigo, formData.os, sourceActivities]);
+
+  const origemAutomatica = useMemo<'' | 'interno' | 'terceirizado'>(() => {
+    if (!matchedActivity) return '';
+    const emails = Array.isArray(matchedActivity?.profissionaisEmails)
+      ? matchedActivity.profissionaisEmails.map((item: any) => String(item || '').trim())
+      : String(matchedActivity?.profissionaisEmails || '').split(' | ').map((item) => item.trim()).filter(Boolean);
+    return emails.some((email: string) => email.toLowerCase().startsWith('terceirizada:'))
+      ? 'terceirizado'
+      : 'interno';
+  }, [matchedActivity]);
+
+  const canChooseOrigemManual = Boolean(
+    formData.contrato && formData.os && formData.objetoOsCodigo && formData.disciplina && !origemAutomatica
+  );
+
+  useEffect(() => {
+    if (origemAutomatica) {
+      setFormData((prev) => prev.origemAtividade === origemAutomatica ? prev : { ...prev, origemAtividade: origemAutomatica });
+      return;
+    }
+
+    if (!formData.contrato || !formData.os || !formData.objetoOsCodigo || !formData.disciplina) {
+      setFormData((prev) => prev.origemAtividade ? { ...prev, origemAtividade: '' } : prev);
+    }
+  }, [formData.contrato, formData.disciplina, formData.objetoOsCodigo, formData.os, origemAutomatica]);
 
   const checkedItems = ITEM_KEYS.filter((key) => itens[key].checked);
   const totalC = checkedItems.reduce((sum, key) => sum + (parseInt(itens[key].c, 10) || 0), 0);
@@ -202,9 +255,10 @@ export default function Preenchimento({
       avaliador: currentUser.nome || '',
       contrato: lockedContractCode || currentUser.contrato || '',
       os: '',
-      disciplina: currentUser.disciplina || '',
       objetoOs: '',
       objetoOsCodigo: '',
+      disciplina: currentUser.disciplina || '',
+      origemAtividade: '',
       observacoes: '',
     });
     setItens(EMPTY_ITENS);
@@ -243,6 +297,7 @@ export default function Preenchimento({
       objetoOs: formData.objetoOs,
       objetoOsCodigo: formData.objetoOsCodigo || formData.objetoOs,
       disciplina: formData.disciplina,
+      origemAtividade: formData.origemAtividade || undefined,
       avaliador: formData.avaliador,
       avaliadorEmail: currentUser.email || '',
       observacoes: formData.observacoes,
@@ -285,7 +340,7 @@ export default function Preenchimento({
   };
 
   const canRegisterCurrent = Boolean(
-    formData.avaliador && formData.contrato && formData.os && formData.disciplina && formData.objetoOs
+    formData.avaliador && formData.contrato && formData.os && formData.disciplina && formData.objetoOs && formData.origemAtividade
   );
 
   return (
@@ -314,7 +369,7 @@ export default function Preenchimento({
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Contrato *</label>
               <select
                 value={formData.contrato}
-                onChange={(e) => setFormData({ ...formData, contrato: e.target.value, os: '', objetoOs: '', objetoOsCodigo: '' })}
+                onChange={(e) => setFormData({ ...formData, contrato: e.target.value, os: '', objetoOs: '', objetoOsCodigo: '', origemAtividade: '' })}
                 disabled={Boolean(lockedContractCode)}
                 className="w-full h-11 px-3 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer"
                 style={selectStyle}
@@ -335,7 +390,7 @@ export default function Preenchimento({
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">OS *</label>
               <select
                 value={formData.os}
-                onChange={(e) => setFormData({ ...formData, os: e.target.value, objetoOs: '', objetoOsCodigo: '' })}
+                onChange={(e) => setFormData({ ...formData, os: e.target.value, objetoOs: '', objetoOsCodigo: '', origemAtividade: '' })}
                 className={`w-full h-11 px-3 bg-[#F9FAFB] border ${formData.os ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'} rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer`}
                 style={selectStyle}
               >
@@ -351,11 +406,39 @@ export default function Preenchimento({
               </select>
             </div>
 
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Atividade *</label>
+              <select
+                value={formData.objetoOsCodigo}
+                onChange={(e) => {
+                  const selected = filteredItemOptions.find((item) => normalizeText(getItemCode(item)) === normalizeText(e.target.value));
+                  setFormData({
+                    ...formData,
+                    objetoOsCodigo: e.target.value,
+                    objetoOs: selected ? getItemName(selected) : '',
+                    origemAtividade: '',
+                  });
+                }}
+                className={`w-full h-11 px-3 bg-[#F9FAFB] border ${formData.objetoOs ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'} rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer`}
+                style={selectStyle}
+              >
+                <option value="">Selecione...</option>
+                {filteredItemOptions.map((item) => {
+                  const code = getItemCode(item);
+                  return (
+                    <option key={code} value={code}>
+                      {code} - {getItemName(item)}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
             <div className="space-y-2">
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Disciplina *</label>
               <select
                 value={formData.disciplina}
-                onChange={(e) => setFormData({ ...formData, disciplina: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, disciplina: e.target.value, origemAtividade: '' })}
                 className="w-full h-11 px-3 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer"
                 style={selectStyle}
               >
@@ -367,32 +450,58 @@ export default function Preenchimento({
                 ))}
               </select>
             </div>
+          </div>
 
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Objeto da OS *</label>
-              <select
-                value={formData.objetoOsCodigo}
-                onChange={(e) => {
-                  const selected = filteredItemOptions.find((item) => normalizeText(getItemCode(item)) === normalizeText(e.target.value));
-                  setFormData({
-                    ...formData,
-                    objetoOsCodigo: e.target.value,
-                    objetoOs: selected ? getItemName(selected) : '',
-                  });
-                }}
-                className={`w-full h-11 px-3 bg-[#F9FAFB] border ${formData.objetoOs ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'} rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer`}
-                style={selectStyle}
-              >
-                <option value="">Selecione a atividade item 4...</option>
-                {filteredItemOptions.map((item) => {
-                  const code = getItemCode(item);
-                  return (
-                    <option key={code} value={code}>
-                      {code} - {getItemName(item)}
-                    </option>
-                  );
-                })}
-              </select>
+          <div className="mb-8 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+            <div className="flex flex-col gap-3">
+              <div>
+                <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Classificacao da atividade</label>
+                <p className="mt-1 text-[12px] text-[#64748B]">
+                  A classificacao fica automatica quando a atividade ja existe na Area Tecnica. Se ainda nao existir, escolha manualmente.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <label className={`inline-flex items-center gap-3 rounded-xl border px-4 py-3 text-[13px] font-semibold transition-colors ${
+                  formData.origemAtividade === 'interno'
+                    ? 'border-[#1D4ED8] bg-[#EFF6FF] text-[#1D4ED8]'
+                    : canChooseOrigemManual
+                      ? 'border-[#E5E7EB] bg-white text-[#2D2D2D]'
+                      : 'border-[#E5E7EB] bg-[#F3F4F6] text-[#9CA3AF]'
+                }`}>
+                  <input
+                    type="checkbox"
+                    checked={formData.origemAtividade === 'interno'}
+                    disabled={!canChooseOrigemManual || Boolean(origemAutomatica)}
+                    onChange={() => setFormData((prev) => ({ ...prev, origemAtividade: prev.origemAtividade === 'interno' ? '' : 'interno' }))}
+                    className="h-4 w-4 accent-[#1D4ED8]"
+                  />
+                  Interno
+                </label>
+
+                <label className={`inline-flex items-center gap-3 rounded-xl border px-4 py-3 text-[13px] font-semibold transition-colors ${
+                  formData.origemAtividade === 'terceirizado'
+                    ? 'border-[#F05D28] bg-[#FFF7ED] text-[#C2410C]'
+                    : canChooseOrigemManual
+                      ? 'border-[#E5E7EB] bg-white text-[#2D2D2D]'
+                      : 'border-[#E5E7EB] bg-[#F3F4F6] text-[#9CA3AF]'
+                }`}>
+                  <input
+                    type="checkbox"
+                    checked={formData.origemAtividade === 'terceirizado'}
+                    disabled={!canChooseOrigemManual || Boolean(origemAutomatica)}
+                    onChange={() => setFormData((prev) => ({ ...prev, origemAtividade: prev.origemAtividade === 'terceirizado' ? '' : 'terceirizado' }))}
+                    className="h-4 w-4 accent-[#F05D28]"
+                  />
+                  Terceirizado
+                </label>
+              </div>
+
+              {origemAutomatica && (
+                <div className="text-[12px] font-medium text-[#64748B]">
+                  Classificacao automatica pela Area Tecnica: <span className="font-bold text-[#2D2D2D]">{origemAutomatica === 'terceirizado' ? 'Terceirizado' : 'Interno'}</span>
+                </div>
+              )}
             </div>
           </div>
 

@@ -71,12 +71,23 @@ function montarMatriz(atividades: AtividadeComPeso[]) {
   return matriz;
 }
 
-function getCorCelula(peso: number, quantidade: number) {
+function getCriticidade(imp: number, dif: number) {
+  if (imp === 3 && dif === 3) return 'critica';
+  if (imp === 3 && dif === 2) return 'alta';
+  if (imp === 2 && dif === 3) return 'alta';
+  if (imp === 3) return 'prioritaria';
+  if (imp === 2 && dif === 2) return 'atencao';
+  return 'rotina';
+}
+
+function getCorCelula(peso: number, quantidade: number, imp: number, dif: number) {
   if (quantidade === 0) return 'bg-gray-50 border border-dashed border-gray-200';
-  if (peso <= 2) return 'bg-[#10B981]';
-  if (peso <= 4) return 'bg-[#FACC15]';
-  if (peso <= 6) return 'bg-[#F59E0B]';
-  return 'bg-[#EF4444]';
+  const criticidade = getCriticidade(imp, dif);
+  if (criticidade === 'critica') return 'bg-[#B91C1C]';
+  if (criticidade === 'alta') return 'bg-[#EF4444]';
+  if (criticidade === 'prioritaria') return 'bg-[#F59E0B]';
+  if (criticidade === 'atencao') return 'bg-[#FACC15]';
+  return peso >= 3 ? 'bg-[#60A5FA]' : 'bg-[#10B981]';
 }
 
 const ChipResumo = ({ label, valor, color }: { label: string; valor: any; color: string }) => (
@@ -92,7 +103,7 @@ export default function MatrizDePriorizacao({ tableFiltrada, filtros, contractOp
   const matriz = useMemo(() => montarMatriz(atividades), [atividades]);
 
   const resumo = useMemo(() => ({
-    criticas: atividades.filter((item) => item.peso >= 6).length,
+    criticas: atividades.filter((item) => Number(item.importancia) === 3 && Number(item.dificuldade) >= 2).length,
     maior: Math.max(...atividades.map((item) => item.peso), 0),
     sensivel: (Object.entries(atividades.reduce((acc, item) => {
       acc[item.disciplina] = (acc[item.disciplina] || 0) + item.peso;
@@ -101,41 +112,11 @@ export default function MatrizDePriorizacao({ tableFiltrada, filtros, contractOp
   }), [atividades]);
 
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 flex flex-col min-h-[680px] h-full overflow-hidden font-sans">
-      <div className="mb-5 shrink-0">
-        <div className="flex flex-col gap-4">
+    <div className="flex flex-col min-h-[520px] h-full overflow-hidden font-sans">
+      <div className="mb-4 shrink-0">
+        <div className="flex flex-col gap-3">
           <div>
             <h3 className="text-[16px] font-black text-[#2D2D2D] uppercase tracking-tight leading-none">Matriz de Priorizacao</h3>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-            <select value={filtros.contrato} onChange={(event) => onFiltroChange('contrato', event.target.value)} className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]">
-              <option value="Todos">Todos os contratos</option>
-              {contractOptions.map((contract) => (
-                <option key={contract.codigo} value={contract.codigo}>{contract.codigo} - {contract.nome}</option>
-              ))}
-            </select>
-
-            <select value={filtros.os} onChange={(event) => onFiltroChange('os', event.target.value)} className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]">
-              <option value="Todos">Todas as OS</option>
-              {osOptions.map((os) => (
-                <option key={os.codigo} value={os.codigo}>{os.codigo} - {os.nome}</option>
-              ))}
-            </select>
-
-            <select value={filtros.importancia} onChange={(event) => onFiltroChange('importancia', event.target.value)} className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]">
-              <option value="Todos">Toda importancia</option>
-              <option value="1">Importancia 1</option>
-              <option value="2">Importancia 2</option>
-              <option value="3">Importancia 3</option>
-            </select>
-
-            <select value={filtros.dificuldade} onChange={(event) => onFiltroChange('dificuldade', event.target.value)} className="h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[11px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]">
-              <option value="Todos">Toda dificuldade</option>
-              <option value="1">Dificuldade 1</option>
-              <option value="2">Dificuldade 2</option>
-              <option value="3">Dificuldade 3</option>
-            </select>
           </div>
         </div>
 
@@ -146,7 +127,7 @@ export default function MatrizDePriorizacao({ tableFiltrada, filtros, contractOp
         </div>
       </div>
 
-      <div className="relative flex-1 flex flex-col items-center justify-center px-4 py-6 bg-gray-50/30 rounded-xl border border-gray-50 min-h-[520px]">
+      <div className="relative flex-1 flex flex-col items-center justify-center px-3 py-4 bg-gray-50/30 rounded-xl border border-gray-50 min-h-[420px]">
         <div className="flex items-stretch">
           <div className="flex items-center pr-3">
             <div className="text-[10px] font-black text-[#2D2D2D] uppercase tracking-[2px] -rotate-90 whitespace-nowrap">
@@ -165,7 +146,7 @@ export default function MatrizDePriorizacao({ tableFiltrada, filtros, contractOp
                 <button
                   key={`${imp}-${dif}`}
                   onClick={() => isAtiva && setSelectedKey(selectedKey === cell?.key ? null : cell!.key)}
-                  className={`relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl flex items-center justify-center transition-all outline-none ${getCorCelula(cell?.pesoMaximo || 0, cell?.quantidade || 0)} ${isAtiva ? 'hover:scale-105 shadow-md active:scale-95' : 'cursor-default'} ${selectedKey === cell?.key ? 'ring-2 ring-black ring-offset-2' : ''}`}
+                  className={`relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl flex items-center justify-center transition-all outline-none ${getCorCelula(cell?.pesoMaximo || 0, cell?.quantidade || 0, imp, dif)} ${isAtiva ? 'hover:scale-105 shadow-md active:scale-95' : 'cursor-default'} ${selectedKey === cell?.key ? 'ring-2 ring-black ring-offset-2' : ''}`}
                 >
                   {isAtiva && <span className="text-white text-[22px] font-black drop-shadow-md">{cell!.quantidade}</span>}
                 </button>
@@ -193,7 +174,7 @@ export default function MatrizDePriorizacao({ tableFiltrada, filtros, contractOp
               {matriz.get(selectedKey)?.atividades.map((atividade) => (
                 <div key={atividade.id} className="bg-gray-50 p-3 rounded-lg border-l-4 border-brand shadow-sm">
                   <p className="text-[11px] font-black text-[#2D2D2D] leading-snug">{atividade.descricao}</p>
-                  <p className="text-[9px] font-bold text-gray-500 uppercase mt-1.5">{atividade.disciplina} - peso {atividade.peso}</p>
+                  <p className="text-[9px] font-bold text-gray-500 uppercase mt-1.5">{atividade.disciplina} - importancia {atividade.importancia} - dificuldade {atividade.dificuldade} - peso {atividade.peso}</p>
                 </div>
               ))}
             </div>

@@ -33,6 +33,14 @@ interface AlocacoesProps {
     admin?: any;
   };
   activeContractCode?: string;
+  dadosTabela?: Array<{
+    activityId: string;
+    profissional: string;
+    profissionalEmail: string;
+    disciplina: string;
+    contratoCodigo: string;
+    participacaoProfissional: number;
+  }>;
 }
 
 type Assignment = {
@@ -41,6 +49,8 @@ type Assignment = {
   email: string;
   disciplina: string;
   contrato: string;
+  atividadeId: string;
+  peso: number;
 };
 
 function formatPercent(value: number) {
@@ -52,7 +62,10 @@ function getVisibleActivities(preloadedData?: AlocacoesProps['preloadedData'], a
   if (isAllContract(activeContractCode)) return activities;
 
   const target = normalizeText(activeContractCode);
-  return activities.filter((activity: any) => normalizeText(activity?.contratoCodigo) === target);
+  return activities.filter((activity: any) => (
+    normalizeText(activity?.contratoCodigo) === target
+    || normalizeText(activity?.contratoNome) === target
+  ));
 }
 
 const DisciplineCard: React.FC<DisciplineCardProps> = ({ title, professionals, contratos }) => {
@@ -118,19 +131,35 @@ const DisciplineCard: React.FC<DisciplineCardProps> = ({ title, professionals, c
   );
 };
 
-function buildAssignments(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string): Assignment[] {
+function buildAssignments(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string, dadosTabela?: AlocacoesProps['dadosTabela']): Assignment[] {
+  if (Array.isArray(dadosTabela) && dadosTabela.length > 0) {
+    return dadosTabela.map((item, index) => ({
+      key: `${item.activityId}-${item.profissionalEmail || item.profissional}-${index}`,
+      nome: item.profissional,
+      email: item.profissionalEmail,
+      disciplina: item.disciplina,
+      contrato: item.contratoCodigo,
+      atividadeId: item.activityId,
+      peso: item.participacaoProfissional || 0,
+    }));
+  }
+
   const maps = buildProfessionalDisciplineMaps(preloadedData?.registro, preloadedData?.admin);
   const activities = getVisibleActivities(preloadedData, activeContractCode);
 
   return activities.flatMap((activity: any, index: number) => {
     if (String(activity?.status || '').trim().toLowerCase() === 'concluida') return [];
     const contrato = String(activity?.contratoCodigo || '').trim();
-    return extractParticipantAssignments(activity, maps).map((participant, participantIndex) => ({
+    const participants = extractParticipantAssignments(activity, maps);
+    const peso = participants.length > 0 ? 100 / participants.length : 100;
+    return participants.map((participant, participantIndex) => ({
       key: `${String(activity?.activityId || activity?.id || activity?.itemCodigo || index)}-${participant.email || participant.nome}-${participantIndex}`,
       nome: participant.nome,
       email: participant.email,
       disciplina: participant.disciplina,
       contrato,
+      atividadeId: String(activity?.activityId || activity?.id || activity?.itemCodigo || index),
+      peso,
     }));
   });
 }
@@ -190,21 +219,24 @@ function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contrat
   const assignments = buildAssignments(preloadedData, activeContractCode);
   const disciplinas = getDisciplinas(preloadedData, assignments);
   const professionalsByDisciplina = getProfessionalsByDisciplina(preloadedData, assignments);
-  const countByPerson: Record<string, number> = {};
-  const countByContractAndPerson: Record<string, Record<string, number>> = {};
+  const effortByPerson: Record<string, number> = {};
+  const effortByContractAndPerson: Record<string, Record<string, number>> = {};
+  const totalByDisciplina: Record<string, number> = {};
 
   assignments.forEach((assignment) => {
     const personKey = normalizeText(assignment.email) || normalizeText(assignment.nome);
     if (!personKey) return;
-    countByPerson[personKey] = (countByPerson[personKey] || 0) + 1;
-    if (!countByContractAndPerson[personKey]) countByContractAndPerson[personKey] = {};
-    countByContractAndPerson[personKey][assignment.contrato] = (countByContractAndPerson[personKey][assignment.contrato] || 0) + 1;
+    const disciplinaKey = normalizeText(assignment.disciplina);
+    effortByPerson[`${disciplinaKey}|${personKey}`] = (effortByPerson[`${disciplinaKey}|${personKey}`] || 0) + assignment.peso;
+    if (!effortByContractAndPerson[`${disciplinaKey}|${personKey}`]) effortByContractAndPerson[`${disciplinaKey}|${personKey}`] = {};
+    effortByContractAndPerson[`${disciplinaKey}|${personKey}`][assignment.contrato] = (effortByContractAndPerson[`${disciplinaKey}|${personKey}`][assignment.contrato] || 0) + assignment.peso;
+    totalByDisciplina[disciplinaKey] = (totalByDisciplina[disciplinaKey] || 0) + assignment.peso;
   });
-
-  const maxCount = Math.max(...Object.values(countByPerson), 1);
 
   return disciplinas.map((disciplina) => {
     const profissionais = professionalsByDisciplina[normalizeText(disciplina)] || [];
+    const disciplinaKey = normalizeText(disciplina);
+    const totalDisciplina = Math.max(totalByDisciplina[disciplinaKey] || 0, 1);
 
     return {
       id: disciplina,
@@ -212,11 +244,12 @@ function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contrat
       tituloCard: disciplina,
       profissionais: profissionais.map((prof) => {
         const personKey = normalizeText(prof.email) || normalizeText(prof.nome);
-        const count = countByPerson[personKey] || 0;
-        const total = count > 0 ? Math.min(100, (count / maxCount) * 100) : 0;
-        const contractCounts = countByContractAndPerson[personKey] || {};
+        const registryKey = `${disciplinaKey}|${personKey}`;
+        const count = effortByPerson[registryKey] || 0;
+        const total = count > 0 ? Math.min(100, (count / totalDisciplina) * 100) : 0;
+        const contractCounts = effortByContractAndPerson[registryKey] || {};
         const contratosPercentuais = contratos.reduce((acc, contrato) => {
-          acc[contrato] = count > 0 ? formatPercent(((contractCounts[contrato] || 0) / count) * 100) : '0,0%';
+          acc[contrato] = totalDisciplina > 0 ? formatPercent(((contractCounts[contrato] || 0) / totalDisciplina) * 100) : '0,0%';
           return acc;
         }, {} as Record<string, string>);
 
@@ -230,9 +263,9 @@ function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contrat
   });
 }
 
-const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode }) => {
+const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode, dadosTabela }) => {
   const [filtroAtivo, setFiltroAtivo] = useState<string | null>(null);
-  const assignments = useMemo(() => buildAssignments(preloadedData, activeContractCode), [preloadedData, activeContractCode]);
+  const assignments = useMemo(() => buildAssignments(preloadedData, activeContractCode, dadosTabela), [preloadedData, activeContractCode, dadosTabela]);
   const contratos = useMemo(() => getContratosAtivos(assignments), [assignments]);
   const dadosAlocacoes = useMemo(() => buildAlocacoes(preloadedData, contratos, activeContractCode), [preloadedData, contratos, activeContractCode]);
   const disciplinasLista = dadosAlocacoes.map((item) => item.disciplina);

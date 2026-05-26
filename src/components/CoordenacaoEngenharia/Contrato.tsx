@@ -839,7 +839,7 @@ export default function Contrato({
           <div className="px-6 py-5 border-b border-[#E5E7EB] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-center gap-3">
               <FileWarning size={18} className="text-[#F05D28]" />
-              <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Interferencias</h3>
+              <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Interferências</h3>
             </div>
             <button
               type="button"
@@ -847,14 +847,14 @@ export default function Contrato({
               className="h-10 px-4 rounded-xl border border-[#F05D28] text-[#F05D28] text-[12px] font-bold inline-flex items-center justify-center gap-2 hover:bg-[#FFF7ED]"
             >
               <Plus size={15} />
-              Nova interferencia
+              Nova interferência
             </button>
           </div>
 
           <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
             {interferencias.length === 0 && (
               <div className="lg:col-span-2 py-8 text-center text-[13px] font-medium text-[#757575]">
-                Nenhuma interferencia registrada nesta sessao.
+                Nenhuma interferência registrada nesta sessão.
               </div>
             )}
 
@@ -887,7 +887,7 @@ export default function Contrato({
             <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <PencilLine size={18} className="text-[#F05D28]" />
-                <h3 className="text-[15px] font-bold text-[#2D2D2D] uppercase tracking-widest">Interferencia</h3>
+                <h3 className="text-[15px] font-bold text-[#2D2D2D] uppercase tracking-widest">Interferência</h3>
               </div>
               <button type="button" onClick={() => setShowInterferenciaForm(false)} className="p-2 rounded-lg text-[#757575] hover:bg-[#F3F4F6]">
                 <X size={18} />
@@ -897,7 +897,7 @@ export default function Contrato({
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Nome da interferencia</label>
+                  <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Nome da interferência</label>
                   <input
                     value={interferenciaDraft.nome}
                     onChange={(event) => setInterferenciaDraft((prev) => ({ ...prev, nome: event.target.value }))}
@@ -937,7 +937,7 @@ export default function Contrato({
                   value={interferenciaDraft.observacao}
                   onChange={(event) => setInterferenciaDraft((prev) => ({ ...prev, observacao: event.target.value }))}
                   className="mt-1 w-full min-h-[130px] resize-none rounded-xl border border-[#E5E7EB] p-3 text-[13px] font-medium outline-none focus:border-[#F05D28]"
-                  placeholder="Descreva a interferencia com pelo menos 35 caracteres"
+                  placeholder="Descreva a interferência com pelo menos 35 caracteres"
                 />
                 <p className={`mt-1 text-[11px] font-semibold ${interferenciaDraft.observacao.trim().length >= observationMinLength ? 'text-[#10B981]' : 'text-[#B45309]'}`}>
                   {interferenciaDraft.observacao.trim().length}/{observationMinLength} caracteres minimos

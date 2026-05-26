@@ -3,7 +3,7 @@ import {
   ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList
 } from 'recharts';
 import { 
-  TrendingUp, RefreshCw, Download, CheckSquare, Square, Edit3, Save, Calendar as CalendarIcon, X 
+  TrendingUp, RefreshCw, Download, CheckSquare, Square, Edit3, Save, Calendar as CalendarIcon, X, ChevronDown
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 
@@ -67,12 +67,24 @@ function formatDateBR(dateObj: Date | null): string {
   if (!dateObj || Number.isNaN(dateObj.getTime())) return '-';
   return `${String(dateObj.getDate()).padStart(2, '0')}/${String(dateObj.getMonth() + 1).padStart(2, '0')}/${dateObj.getFullYear()}`;
 }
+function formatDateShortBR(dateObj: Date | null): string {
+  if (!dateObj || Number.isNaN(dateObj.getTime())) return '-';
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const y = String(dateObj.getFullYear()).slice(-2);
+  return `${d}/${m}/${y}`;
+}
 function formatLabel(dateObj: Date | null, viewMode: string): string {
   if (!dateObj || Number.isNaN(dateObj.getTime())) return '-';
   const d = String(dateObj.getDate()).padStart(2, '0');
   const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const y = String(dateObj.getFullYear());
-  return `${d}/${m}/${y}`;
+  const y = String(dateObj.getFullYear()).slice(-2);
+  return viewMode === 'mensal' ? `${m}/${y}` : `${d}/${m}/${y}`;
+}
+
+function formatTickDate(value: any) {
+  const dateObj = parseFlexibleDate(value);
+  return formatDateShortBR(dateObj);
 }
 
 function normalizeKey(value: any) {
@@ -180,6 +192,7 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
   const fullPanelRef = useRef<HTMLDivElement>(null);
   const [editMode, setEditMode] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [panelExpanded, setPanelExpanded] = useState(false);
   const [liveSeries, setLiveSeries] = useState(data.series);
 
   useEffect(() => { setLiveSeries(data.series); }, [data.series]);
@@ -198,7 +211,13 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
       const ritmoReal = Math.max(0, s.realAcumulado - prevReal);
       const ritmoIdeal = Math.max(0, s.idealAcumulado - prevIdeal);
       prevReal = s.realAcumulado; prevIdeal = s.idealAcumulado;
-      return { ...s, displayName: formatLabel(s.dateObj, globalConfig.viewMode), ritmoReal: round2(ritmoReal), ritmoIdeal: round2(ritmoIdeal) };
+      return {
+        ...s,
+        dateTs: s.dateObj ? s.dateObj.getTime() : 0,
+        displayName: formatLabel(s.dateObj, globalConfig.viewMode),
+        ritmoReal: round2(ritmoReal),
+        ritmoIdeal: round2(ritmoIdeal)
+      };
     });
   }, [liveSeries, globalConfig]);
 
@@ -231,6 +250,14 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
 
   return (
     <div ref={fullPanelRef} className="pt-8 border-b-2 border-dashed border-gray-200 pb-12 mb-8 relative bg-white px-2">
+      <button
+        type="button"
+        onClick={() => setPanelExpanded((value) => !value)}
+        className="absolute right-3 top-3 z-10 h-8 w-8 rounded-full border border-gray-200 bg-white shadow-sm flex items-center justify-center text-gray-500 hover:text-[#3B82F6] hover:border-[#3B82F6] transition-colors"
+        aria-label={panelExpanded ? 'Recolher card' : 'Expandir card'}
+      >
+        <ChevronDown size={16} className={`transition-transform ${panelExpanded ? 'rotate-180' : ''}`} />
+      </button>
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
         <h3 className="text-xl font-semibold text-gray-800 flex items-center gap-3 border-l-4 border-[#3B82F6] pl-4">
           <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-md text-sm">OS {data.osCode}</span> {data.osName}
@@ -256,13 +283,28 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
         <InfoCard label="Início Real" value={data.summary.inicioReal} textColorClass={data.summary.inicioReal === 'Não Iniciado' ? 'text-[#F97316]' : 'text-[#3B82F6]'} />
         <InfoCard label="Fim Real" value={data.summary.fimReal} textColorClass={data.summary.fimReal === 'Não Finalizado' ? 'text-[#F97316]' : 'text-[#2D2D2D]'} />
       </div>
-      <div className="flex flex-col xl:flex-row gap-6">
-        <div ref={chartOnlyRef} className={`bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex-1 transition-all ${editMode ? 'xl:w-2/3' : 'w-full'}`}>
-          <div className="h-[450px] w-full">
+      <div className={`flex flex-col ${panelExpanded ? 'xl:flex-row' : ''} gap-6`}>
+        <div ref={chartOnlyRef} className={`bg-white p-3 rounded-2xl border border-gray-100 shadow-sm flex-1 transition-all ${panelExpanded && editMode ? 'xl:w-2/3' : 'w-full'}`}>
+          <div className="h-[450px] w-full transition-all">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartDataFinal} margin={{ top: 30, right: 20, left: -20, bottom: 20 }}>
+              <ComposedChart data={chartDataFinal} margin={{ top: 24, right: 12, left: -10, bottom: 78 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6"/>
-                <XAxis dataKey="displayName" tick={{ fontSize: 12, fill: '#6B7280' }} axisLine={false} tickLine={false} dy={10} />
+                <XAxis
+                  dataKey="dateTs"
+                  type="number"
+                  scale="time"
+                  domain={['dataMin', 'dataMax']}
+                  tickFormatter={formatTickDate}
+                  tick={{ fontSize: 11, fill: '#6B7280' }}
+                  axisLine={false}
+                  tickLine={false}
+                  angle={45}
+                  textAnchor="end"
+                  height={88}
+                  tickMargin={30}
+                  dy={12}
+                  minTickGap={10}
+                />
                 <YAxis tick={{ fontSize: 12, fill: '#6B7280' }} tickFormatter={(v) => `${v}%`} axisLine={false} tickLine={false} />
                 <Tooltip cursor={{ fill: '#F9FAFB' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
                 <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: '20px', fontSize: '12px', fontWeight: 600 }} iconType="circle"/>
@@ -278,8 +320,8 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
             </ResponsiveContainer>
           </div>
         </div>
-        {editMode && (
-          <div className="xl:w-1/3 bg-gray-50 border border-gray-200 rounded-2xl p-5 flex flex-col h-[482px] shadow-inner">
+        {panelExpanded && editMode && (
+          <div className="xl:w-1/3 bg-gray-50 border border-gray-200 rounded-2xl p-4 flex flex-col h-[400px] shadow-inner">
             <h4 className="font-bold text-gray-800 mb-1 flex items-center gap-2"><Edit3 size={18} className="text-[#3B82F6]"/> Ajuste em Tempo Real</h4>
             <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
               {liveSeries.map((pt: any, idx: number) => (
@@ -318,6 +360,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
 
   const [selectedContract, setSelectedContract] = useState('TODOS');
   const [selectedOsList, setSelectedOsList] = useState<string[]>([]);
+  const [osExpanded, setOsExpanded] = useState(false);
   const [viewMode, setViewMode] = useState('mensal');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -562,20 +605,50 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Ordem de Serviço</label>
-            <div className="border rounded-xl p-2 h-24 overflow-y-auto bg-gray-50 custom-scrollbar">
+            <button
+              type="button"
+              onClick={() => setOsExpanded((value) => !value)}
+              className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px] flex items-center justify-between gap-3 text-left"
+              aria-label={osExpanded ? 'Recolher lista de OS' : 'Expandir lista de OS'}
+            >
+              <span className={`${selectedOsList.length === 0 ? 'text-gray-400' : 'text-gray-700'} truncate`}>
+                {selectedOsList.length === 0
+                  ? 'Selecione...'
+                  : selectedOsList.length === activeOsOptions.length
+                    ? 'Todas as OS selecionadas'
+                    : `${selectedOsList.length} OS selecionada(s)`}
+              </span>
+              <ChevronDown size={16} className={`shrink-0 text-gray-500 transition-transform ${osExpanded ? 'rotate-180' : ''}`} />
+            </button>
+            {osExpanded && (
+              <div className="border rounded-xl p-2 bg-gray-50 custom-scrollbar max-h-[360px] overflow-y-auto transition-all duration-300">
               {activeOsOptions.length === 0 ? <p className="text-[12px] text-gray-400 p-2 text-center">Aguardando contrato...</p> : (
                 <>
-                  <button onClick={() => setSelectedOsList(selectedOsList.length === activeOsOptions.length ? [] : activeOsOptions.map(o => o.code))} className="flex items-center gap-2 text-[12px] font-bold text-[#3B82F6] p-2 hover:bg-blue-100 w-full rounded">
+                  <button
+                    onClick={() => {
+                      setSelectedOsList(selectedOsList.length === activeOsOptions.length ? [] : activeOsOptions.map(o => o.code));
+                      setOsExpanded(false);
+                    }}
+                    className="flex items-center gap-2 text-[12px] font-bold text-[#3B82F6] p-2 hover:bg-blue-100 w-full rounded"
+                  >
                     {selectedOsList.length === activeOsOptions.length ? <CheckSquare size={16}/> : <Square size={16}/>} TODAS
                   </button>
                   {activeOsOptions.map(os => (
-                    <button key={os.code} onClick={() => setSelectedOsList(p => p.includes(os.code) ? p.filter(c => c !== os.code) : [...p, os.code])} className="flex items-center gap-2 text-[12px] text-gray-700 p-2 hover:bg-gray-200 w-full rounded text-left">
+                    <button
+                      key={os.code}
+                      onClick={() => {
+                        setSelectedOsList((p) => p.includes(os.code) ? p.filter(c => c !== os.code) : [...p, os.code]);
+                        setOsExpanded(false);
+                      }}
+                      className="flex items-center gap-2 text-[12px] text-gray-700 p-2 hover:bg-gray-200 w-full rounded text-left"
+                    >
                       {selectedOsList.includes(os.code) ? <CheckSquare size={16} className="text-[#3B82F6]"/> : <Square size={16} className="text-gray-400"/>} {os.name}
                     </button>
                   ))}
                 </>
               )}
             </div>
+            )}
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Eixo X</label>

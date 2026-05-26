@@ -8,16 +8,15 @@ import {
   Save,
   Send,
   ChevronUp,
-  ClipboardList,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import type { AuthUser } from './LoginScreen';
+import type { AuthUser } from '../LoginScreen';
 import {
   fetchRegistroDataFromFirebase,
   isFirebaseConfigured,
   registerActivitiesInFirebase,
   updateActivitiesInFirebase,
-} from '../lib/firebaseDb';
+} from '../../lib/firebaseDb';
 const PLANNING_TODOS_STORAGE_KEY = 'quanta_planejamento_tecnico_itens';
 
 type DifficultyLevel = 'Facil' | 'Moderada' | 'Dificil';
@@ -234,8 +233,16 @@ function getPlanningTodoSources(preloadedData: any): any[] {
 
   const registro = preloadedData?.registro || preloadedData || {};
   const planejamento = preloadedData?.planejamento || {};
+  const planningTodos = Array.isArray(preloadedData?.planningTodos)
+    ? preloadedData.planningTodos.filter((item: any) => {
+        const recordType = String(item?.recordType || '').trim().toLowerCase();
+        const origin = String(item?.origin || '').trim().toLowerCase();
+        const isPlanningReview = recordType === 'planning-review' || origin === 'planning-review';
+        return isPlanningReview && Boolean(item?.plannerApproved || item?.approvedByPlanner || item?.okPlanejamento);
+      })
+    : [];
   const candidates = [
-    preloadedData?.planningTodos,
+    planningTodos,
     registro.itensAFazer,
     registro.itensAFazerOptions,
     registro.planejamentoItens,
@@ -701,9 +708,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   const [professionals, setProfessionals] = useState<ProfessionalOption[]>(initialRegistroData.professionals);
   const [activeActivities, setActiveActivities] = useState<RegistroAtividade[]>(initialRegistroData.activeActivities);
   const [completedActivities, setCompletedActivities] = useState<RegistroAtividade[]>(initialRegistroData.completedActivities);
-  const todoOptions = useMemo(() => buildTodoOptions(preloadedData), [preloadedData]);
-  const [showPlannedItems, setShowPlannedItems] = useState(false);
-
   const [sendingBatch, setSendingBatch] = useState(false);
   const [savingChanges, setSavingChanges] = useState(false);
   const [savingAll, setSavingAll] = useState(false);
@@ -840,18 +844,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       contratoCodigo: item.osCodigo.split('.')[0] || '',
     }));
   }, [itemOptions, formData.osCodigo]);
-  const filteredTodos = useMemo(() => {
-    const userDiscipline = normalizeDiscipline(currentUser.disciplina);
-    return todoOptions.filter((item) => {
-      const matchContract = !item.contratoCodigo || item.contratoCodigo === formData.contratoCodigo;
-      const matchOs = !item.osCodigo || item.osCodigo === formData.osCodigo;
-      const matchItem = !item.itemCodigo || item.itemCodigo === formData.itemCodigo;
-      const matchDiscipline = !item.disciplina || normalizeDiscipline(item.disciplina) === userDiscipline;
-      return matchContract && matchOs && matchItem && matchDiscipline;
-    });
-  }, [currentUser.disciplina, formData.contratoCodigo, formData.itemCodigo, formData.osCodigo, todoOptions]);
-  const selectedTodo = useMemo(() => filteredTodos.find((item) => item.id === formData.todoId), [filteredTodos, formData.todoId]);
-
   const filteredActivities = useMemo(() => {
     const term = deferredSearchText.trim().toLowerCase();
     if (!term) return activeActivities;
@@ -863,11 +855,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   const visibleCompletedActivities = useMemo(() => {
     return completedActivities.filter((item) => activityMatchesUserDiscipline(item, currentUser, professionals));
   }, [completedActivities, currentUser, professionals]);
-  const disciplineTodos = useMemo(() => {
-    const userDiscipline = normalizeDiscipline(currentUser.disciplina);
-    return todoOptions.filter((item) => !item.disciplina || normalizeDiscipline(item.disciplina) === userDiscipline);
-  }, [currentUser.disciplina, todoOptions]);
-
   const hasPendingChanges = Object.keys(pendingChanges).length > 0;
   const hasQueuedActivities = draftQueue.length > 0;
   const hasBothPending = hasQueuedActivities && hasPendingChanges;
@@ -1138,19 +1125,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   const showCompletedSection = viewMode === 'registro' || viewMode === 'atividades';
   const registroFormExpanded = viewMode === 'atividades' ? showRegistroAccordion : true;
 
-  const applyPlannedItemToForm = (item: TodoOption) => {
-    setFormData((prev) => ({
-      ...prev,
-      contratoCodigo: item.contratoCodigo || prev.contratoCodigo,
-      osCodigo: item.osCodigo || prev.osCodigo,
-      itemCodigo: item.itemCodigo || '',
-      todoId: item.id,
-      descricao: item.descricao || prev.descricao,
-    }));
-    setShowPlannedItems(false);
-    setBalloonMessage('Item planejado aplicado. Complete os campos restantes e registre a atividade.');
-  };
-
   return (
     <div className="w-full relative">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full">
@@ -1185,11 +1159,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
           >
             <span className="flex items-center gap-3 text-[14px] font-black text-[#2D2D2D]">
               <span>Registro de atividades</span>
-              {disciplineTodos.length > 0 && (
-                <span className="inline-flex min-w-[26px] items-center justify-center rounded-full bg-[#10B981] px-2.5 py-1 text-[11px] font-black text-white shadow-sm">
-                  {disciplineTodos.length}
-                </span>
-              )}
             </span>
             {showRegistroAccordion ? <ChevronUp size={18} className="text-[#F05D28]" /> : <ChevronDown size={18} className="text-[#757575]" />}
           </button>
@@ -1198,42 +1167,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
         {registroFormExpanded && (
         <form className="space-y-10" onSubmit={(e) => e.preventDefault()}>
           <div className="space-y-6">
-            <div className="rounded-2xl border border-[#BBF7D0] bg-[#F0FDF4] p-4">
-              <button
-                type="button"
-                onClick={() => setShowPlannedItems((prev) => !prev)}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#10B981] px-5 text-[13px] font-black text-white shadow-sm transition hover:bg-[#059669]"
-              >
-                <ClipboardList size={16} />
-                Itens Planejamento
-                <span className="rounded-full bg-white/20 px-2 py-0.5 text-[11px]">{disciplineTodos.length}</span>
-              </button>
-
-              {showPlannedItems && (
-                <div className="mt-4 space-y-3">
-                  {disciplineTodos.length === 0 && (
-                    <div className="rounded-xl border border-dashed border-[#86EFAC] bg-white/70 p-4 text-[13px] font-semibold text-[#047857]">
-                      Nenhum item planejado foi cadastrado para sua disciplina ainda.
-                    </div>
-                  )}
-                  {disciplineTodos.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => applyPlannedItemToForm(item)}
-                      className="w-full rounded-xl border border-[#BBF7D0] bg-white p-4 text-left transition hover:border-[#10B981] hover:bg-[#ECFDF5]"
-                    >
-                      <div className="text-[12px] font-black uppercase tracking-[1px] text-[#047857]">{item.disciplina || currentUser.disciplina}</div>
-                      <div className="mt-1 text-[14px] font-black text-[#111827]">{item.titulo}</div>
-                      <div className="mt-1 text-[12px] font-semibold text-[#64748B]">{getVisualLabel(item.osNome, item.osCodigo, 'OS nao informada')}</div>
-                      {item.descricao && <p className="mt-2 text-[13px] leading-relaxed text-[#475569]">{item.descricao}</p>}
-                      <div className="mt-3 text-[11px] font-black uppercase tracking-[1px] text-[#10B981]">Clique para preencher</div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
             <div className="w-full">
               <label className="bentham-label">1. CONTRATO</label>
               <select className="bentham-select" value={formData.contratoCodigo} disabled={Boolean(String(currentUser.contrato || '').trim())} onChange={(e) => setFormData((prev) => ({ ...prev, contratoCodigo: e.target.value, osCodigo: '', itemCodigo: '', todoId: '' }))}>

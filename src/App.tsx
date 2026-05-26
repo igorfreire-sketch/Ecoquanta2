@@ -16,7 +16,8 @@ import {
   ShieldCheck,
   FileText,
   Clipboard,
-  CheckSquare
+  CheckSquare,
+  Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type {
@@ -39,11 +40,10 @@ import {
   upsertFirebaseAppData,
 } from './lib/firebaseDb';
 
-const RegistroDeAtividade = React.lazy(() => import('./components/RegistroDeAtividade'));
+const Atividades = React.lazy(() => import('./components/Atividades'));
 const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEngenharia'));
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
 const Alertas = React.lazy(() => import('./components/CoordenacaoEngenharia/Alertas'));
-const PlanejamentoTecnico = React.lazy(() => import('./components/PlanejamentoTecnico'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
@@ -75,7 +75,7 @@ function shouldLockUserToContract(user?: AuthUser | null) {
 type AppTab = 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'administracao';
 type AreaTecnicaSubTab = 'atividades' | 'cronograma';
 type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma';
-type PlanejamentoSubTab = 'dashboard' | 'tecnico' | 'alertas' | 'cronograma';
+type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'cronograma';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'cronograma';
 type ContratoSubTab = 'dashboard' | 'interferencias' | 'prioridades' | 'cronograma';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento';
@@ -430,6 +430,7 @@ async function postToAppsScript<T>(payload: Record<string, unknown>): Promise<T>
     'deleteDatabaseLink',
     'saveTerceirizada',
     'deleteTerceirizada',
+    'savePlannerApprovals',
   ]);
   const action = String(payload.action || '').trim();
   if (!allowedActions.has(action)) {
@@ -473,31 +474,33 @@ function TabLoadingFallback() {
 
 class TabErrorBoundary extends React.Component<
   { children: React.ReactNode; resetKey: string },
-  { hasError: boolean }
+  { hasError: boolean; errorMessage: string | null }
 > {
   declare props: { children: React.ReactNode; resetKey: string };
-  declare state: { hasError: boolean };
+  declare state: { hasError: boolean; errorMessage: string | null };
   declare setState: React.Component<
     { children: React.ReactNode; resetKey: string },
-    { hasError: boolean }
+    { hasError: boolean; errorMessage: string | null }
   >['setState'];
 
   constructor(props: { children: React.ReactNode; resetKey: string }) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, errorMessage: null };
   }
 
   static getDerivedStateFromError() {
-    return { hasError: true };
+    return { hasError: true, errorMessage: null };
   }
 
   componentDidCatch(error: unknown) {
     console.error('Erro ao renderizar aba:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    this.setState({ errorMessage: message });
   }
 
   componentDidUpdate(prevProps: { resetKey: string }) {
     if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
-      this.setState({ hasError: false });
+      this.setState({ hasError: false, errorMessage: null });
     }
   }
 
@@ -510,9 +513,14 @@ class TabErrorBoundary extends React.Component<
             <p className="mt-2 text-[13px] text-[#6B7280]">
               A interface foi protegida para evitar a tela branca. Tente abrir a aba novamente ou recarregar a página.
             </p>
+            {this.state.errorMessage && (
+              <p className="mt-3 break-words rounded-xl bg-[#FFF7F7] px-3 py-2 text-left text-[12px] text-[#991B1B]">
+                {this.state.errorMessage}
+              </p>
+            )}
             <button
               type="button"
-              onClick={() => this.setState({ hasError: false })}
+              onClick={() => this.setState({ hasError: false, errorMessage: null })}
               className="mt-4 inline-flex h-11 items-center justify-center rounded-xl bg-[#F05D28] px-4 text-[13px] font-bold text-white transition hover:opacity-90"
             >
               Tentar de novo
@@ -1059,6 +1067,7 @@ export default function App() {
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('dashboard');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
+  const [showFilters, setShowFilters] = React.useState(false);
   const [globalData, setGlobalData] = useState<GlobalData>({});
 
   // ADMIN
@@ -1218,6 +1227,31 @@ export default function App() {
     }
   }, [applyLoadedGlobalData, loadCollaborationData]);
 
+  const syncPlannerApprovals = useCallback(async (rows: Array<{
+    id: string;
+    itemCodigo: string;
+    itemNome: string;
+    progress: number;
+    approved: boolean;
+  }>) => {
+    if (!rows.length) return;
+
+    const response = await postToAppsScript<GenericResponse>({
+      action: 'savePlannerApprovals',
+      approvals: rows,
+      userEmail: currentUser?.email || '',
+      userName: currentUser?.nome || '',
+    });
+
+    if (!response.success) {
+      throw new Error(response.error || 'Falha ao sincronizar as aprovacoes do cronograma.');
+    }
+
+    if (currentUser) {
+      await refreshRealtimeEnvironment(currentUser);
+    }
+  }, [currentUser, refreshRealtimeEnvironment]);
+
   useEffect(() => {
     const lockedContract = lockedContractCode;
     if (lockedContract) {
@@ -1226,6 +1260,12 @@ export default function App() {
     }
     setFiltrosAtivos((prev) => ({ ...prev, contrato: 'Todos', os: 'Todos' }));
   }, [lockedContractCode]);
+
+  useEffect(() => {
+    if (activeTab !== 'registro' || areaTecnicaSubTab !== 'atividades') {
+      setShowFilters(false);
+    }
+  }, [activeTab, areaTecnicaSubTab]);
 
   const loadGlobalEnvironment = async (user: AuthUser, isBackgroundSync = false) => {
     if (!isBackgroundSync) {
@@ -1367,9 +1407,10 @@ export default function App() {
       (activeTab === 'contrato' && contratoSubTab === 'cronograma') ||
       (activeTab === 'nc2' && nc2SubTab === 'cronograma');
 
-    const wantsEap = activeTab === 'controle' && subTab === 'curva-s';
+    const wantsEap =
+      activeTab === 'controle' && subTab === 'curva-s';
     const wantsRegistro =
-      (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ||
+      activeTab === 'registro' ||
       activeTab === 'controle' ||
       activeTab === 'planejamento' ||
       activeTab === 'contrato' ||
@@ -1752,10 +1793,11 @@ export default function App() {
 
   const headerTabs = (() => {
     if (activeTab === 'controle') {
-        return [
-          { key: 'profissionais', label: 'Profissionais', icon: <Users size={16} />, active: subTab === 'profissionais', onClick: () => setSubTab('profissionais') },
-          { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
-          { key: 'alertas', label: 'Alertas', icon: <AlertTriangle size={16} />, active: subTab === 'alertas', onClick: () => setSubTab('alertas') },
+      return [
+        { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: subTab === 'dashboard', onClick: () => setSubTab('dashboard') },
+        { key: 'profissionais', label: 'Profissionais', icon: <Users size={16} />, active: subTab === 'profissionais', onClick: () => setSubTab('profissionais') },
+        { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
+        { key: 'alertas', label: 'Alertas', icon: <AlertTriangle size={16} />, active: subTab === 'alertas', onClick: () => setSubTab('alertas') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: subTab === 'cronograma', onClick: () => setSubTab('cronograma') }] : []),
       ];
     }
@@ -1763,13 +1805,13 @@ export default function App() {
     if (activeTab === 'planejamento') {
       return [
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'dashboard', onClick: () => setPlanejamentoSubTab('dashboard') },
-        { key: 'tecnico', label: 'Planejamento Técnico', icon: <ClipboardList size={16} />, active: planejamentoSubTab === 'tecnico', onClick: () => setPlanejamentoSubTab('tecnico') },
         { key: 'alertas', label: 'Alertas', icon: <AlertTriangle size={16} />, active: planejamentoSubTab === 'alertas', onClick: () => setPlanejamentoSubTab('alertas') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: planejamentoSubTab === 'cronograma', onClick: () => setPlanejamentoSubTab('cronograma') }] : []),
       ];
     }
 
     if (activeTab === 'nc2') {
+
       return [
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: nc2SubTab === 'dashboard', onClick: () => setNc2SubTab('dashboard') },
         { key: 'preenchimento', label: 'Preenchimento', icon: <Clipboard size={16} />, active: nc2SubTab === 'preenchimento', onClick: () => setNc2SubTab('preenchimento') },
@@ -1789,12 +1831,13 @@ export default function App() {
 
     if (activeTab === 'registro') {
       return [
-        { key: 'atividades', label: 'Atividades', icon: <ClipboardList size={16} />, active: areaTecnicaSubTab === 'atividades', onClick: () => setAreaTecnicaSubTab('atividades') },
+        { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: areaTecnicaSubTab === 'atividades', onClick: () => setAreaTecnicaSubTab('atividades') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: areaTecnicaSubTab === 'cronograma', onClick: () => setAreaTecnicaSubTab('cronograma') }] : []),
       ];
     }
 
     if (activeTab === 'administracao') {
+
       return [
         { key: 'usuarios', label: 'Usuários', icon: <Users size={16} />, active: adminSubTab === 'usuarios', onClick: () => setAdminSubTab('usuarios') },
         { key: 'terceirizadas', label: 'Terceirizadas', icon: <ShieldCheck size={16} />, active: adminSubTab === 'terceirizadas', onClick: () => setAdminSubTab('terceirizadas') },
@@ -1877,7 +1920,13 @@ export default function App() {
             <div className="flex flex-col shrink-0">
               <div className="flex items-center gap-3">
                 <h2 className="text-[18px] font-bold text-[#2D2D2D] leading-tight">
-                  {activeTab === 'registro' ? 'Área Técnica' : activeTab === 'controle' ? 'Coordenação de Engenharia' : activeTab === 'planejamento' ? 'Planejamento' : activeTab === 'contrato' ? 'Contrato' : activeTab === 'nc2' ? 'Conformidade' : 'Administração'}
+                  {activeTab === 'registro'
+                    ? (areaTecnicaSubTab === 'atividades' ? 'Atividades' : 'Cronograma')
+                    : activeTab === 'controle' ? 'Coordenação de Engenharia'
+                    : activeTab === 'planejamento' ? 'Planejamento'
+                    : activeTab === 'contrato' ? 'Contrato'
+                    : activeTab === 'nc2' ? 'Conformidade'
+                    : 'Administração'}
                 </h2>
               </div>
               <span className="text-[10px] font-medium text-[#757575] uppercase tracking-widest mt-1">EcoQuanta · Ecossistema Quanta</span>
@@ -1902,6 +1951,15 @@ export default function App() {
           )}
 
           <div className="flex items-center gap-4">
+            {activeTab === 'registro' && areaTecnicaSubTab === 'atividades' && (
+              <button
+                type="button"
+                onClick={() => setShowFilters((prev) => !prev)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border ${showFilters ? 'bg-[#F05D28] text-white border-[#F05D28]' : 'bg-white text-[#757575] border-[#E5E7EB] hover:bg-[#F9FAFB]'}`}
+              >
+                <Filter size={18} /> Filtros
+              </button>
+            )}
             <button
               type="button"
               onClick={() => currentUser && void refreshRealtimeEnvironment(currentUser)}
@@ -1918,24 +1976,22 @@ export default function App() {
           </div>
         </header>
 
-        <main className={`flex-1 overflow-y-auto p-8 ${activeTab === 'registro' && areaTecnicaSubTab === 'atividades' ? 'bg-white' : 'bg-[#F8F9FA]'}`}>
+        <main className={`flex-1 overflow-y-auto ${activeTab === 'registro' && areaTecnicaSubTab === 'atividades' ? 'p-3' : 'p-8'} bg-[#F8F9FA]`}>
           <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'atividades'
-                  ? <RegistroDeAtividade currentUser={currentUser} preloadedData={effectiveGlobalData} viewMode="atividades" />
+                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} isHeaderFiltersOpen={showFilters} onCloseHeaderFilters={() => setShowFilters(false)} />
                   : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
                 planejamentoSubTab === 'dashboard'
                   ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="dashboard" activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
-                  : planejamentoSubTab === 'tecnico'
-                    ? <PlanejamentoTecnico preloadedData={effectiveGlobalData} />
-                    : planejamentoSubTab === 'alertas'
+                  : planejamentoSubTab === 'alertas'
                     ? <Alertas currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                     : planejamentoSubTab === 'cronograma'
-                    ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                    ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
                     : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />}

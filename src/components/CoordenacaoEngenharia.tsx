@@ -78,6 +78,7 @@ function getLatestEapDisplayDate(eap?: any) {
 
 export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
   const tabs = [
+    { id: 'dashboard', label: 'Dashboard' },
     { id: 'profissionais', label: 'Profissionais' },
     { id: 'curva-s', label: 'Curva S' },
     { id: 'alertas', label: 'Alertas' },
@@ -105,6 +106,7 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
       </div>
 
       <div className="pb-10">
+        {subTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="dashboard" activeContractCode={activeContractCode} />}
         {subTab === 'profissionais' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="profissionais" activeContractCode={activeContractCode} />}
         {subTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
         {subTab === 'alertas' && <Alertas currentUser={currentUser} preloadedData={preloadedData} activeContractCode={activeContractCode} />}

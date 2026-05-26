@@ -454,6 +454,18 @@ function doPost(e) {
       });
     }
 
+    if (payload.action === 'savePlannerApprovals') {
+      var approvals = Array.isArray(payload.approvals) ? payload.approvals : [];
+      var plannerSaveResult = savePlannerApprovals_(ss, approvals, payload.userEmail, payload.userName);
+      return json_({
+        success: true,
+        message: plannerSaveResult.message,
+        updated: plannerSaveResult.updated,
+        published: plannerSaveResult.published,
+        newVersion: plannerSaveResult.newVersion
+      });
+    }
+
     if (payload.action === 'salvarReajuste') {
       var sheet = ss.getSheetByName('Reajustado');
 
@@ -719,6 +731,112 @@ function getLatestEapSheet_(ss, snapshotSheets) {
   return null;
 }
 
+function getLatestPublishedEapSheet_(ss) {
+  var sheets = ss.getSheets();
+  var snapshotSheets = [];
+
+  for (var i = 0; i < sheets.length; i++) {
+    var sh = sheets[i];
+    var name = String(sh.getName() || '').trim();
+    if (isDateSheetName_(name)) {
+      snapshotSheets.push({
+        name: name,
+        sheet: sh
+      });
+    }
+  }
+
+  snapshotSheets.sort(function(a, b) {
+    return parseSimpleDate_(a.name) - parseSimpleDate_(b.name);
+  });
+
+  return snapshotSheets.length > 0 ? snapshotSheets[snapshotSheets.length - 1].sheet : null;
+}
+
+function buildEapRowMap_(sheet) {
+  var values = sheet.getDataRange().getValues();
+  var displayValues = sheet.getDataRange().getDisplayValues();
+  var map = {};
+
+  for (var i = 1; i < values.length; i++) {
+    var codigo = String(displayValues[i][3] || values[i][3] || '').trim();
+    if (!codigo) continue;
+    map[codigo] = i + 1;
+  }
+
+  return map;
+}
+
+function applyPlannerApprovalsToSheet_(sheet, approvals) {
+  if (!sheet || !approvals.length) return 0;
+
+  var rowMap = buildEapRowMap_(sheet);
+  var updated = 0;
+
+  for (var i = 0; i < approvals.length; i++) {
+    var item = approvals[i] || {};
+    var code = String(item.itemCodigo || item.code || '').trim();
+    var approved = Boolean(item.approved);
+    var progress = Number(item.progress || 0);
+    if (!code || !approved || progress <= 0) continue;
+
+    var rowIndex = rowMap[code];
+    if (!rowIndex) continue;
+
+    sheet.getRange(rowIndex, 3).setValue(Math.max(0, Math.min(100, progress)) / 100);
+    updated++;
+  }
+
+  return updated;
+}
+
+function savePlannerApprovals_(ss, approvals, userEmail, userName) {
+  var validApprovals = [];
+  for (var i = 0; i < approvals.length; i++) {
+    var item = approvals[i] || {};
+    var code = String(item.itemCodigo || item.code || '').trim();
+    var progress = Number(item.progress || 0);
+    if (!code || progress <= 0) continue;
+    validApprovals.push({
+      itemCodigo: code,
+      itemNome: String(item.itemNome || '').trim(),
+      progress: Math.max(0, Math.min(100, progress)),
+      approved: Boolean(item.approved),
+      updatedBy: String(userName || userEmail || '').trim(),
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  if (!validApprovals.length) {
+    return {
+      updated: 0,
+      published: false,
+      newVersion: '',
+      message: 'Nenhuma aprovacao valida foi enviada.'
+    };
+  }
+
+  var updated = 0;
+  var latestSheet = getLatestPublishedEapSheet_(ss);
+  if (latestSheet) {
+    updated += applyPlannerApprovalsToSheet_(latestSheet, validApprovals);
+  }
+
+  var atualSheet = ss.getSheetByName('Atual');
+  if (atualSheet) {
+    updated += applyPlannerApprovalsToSheet_(atualSheet, validApprovals);
+  }
+
+  var publishedMessage = publishCompressedDataToFirebaseNow();
+
+  return {
+    updated: updated,
+    published: true,
+    newVersion: String(publishedMessage || ''),
+    message: 'Aprovacoes do planejamento salvas. ' + updated + ' linha(s) atualizada(s) na EAP e Firebase republicado.'
+  };
+}
+
 function getRawEapRows_(sheet) {
   var values = sheet.getDataRange().getValues();
   var displayValues = sheet.getDataRange().getDisplayValues();
@@ -728,6 +846,7 @@ function getRawEapRows_(sheet) {
     var codigo = String(displayValues[i][3] || values[i][3] || '').trim();
     var nome = String(displayValues[i][4] || values[i][4] || '').trim();
     if (!codigo || !nome) continue;
+    var disciplinas = splitDisciplines_(displayValues[i][14] || values[i][14] || '');
 
     rows.push({
       progress: toNumberSafe_(values[i][2]),
@@ -740,11 +859,23 @@ function getRawEapRows_(sheet) {
       idealProgress: toNumberSafe_(values[i][9]),
       realStart: normalizeSheetDate_(values[i][11]),
       realEnd: normalizeSheetDate_(values[i][12]),
-      baselineIdealProgress: toNumberSafe_(values[i][13])
+      baselineIdealProgress: toNumberSafe_(values[i][13]),
+      disciplina: disciplinas.join(' | '),
+      disciplinas: disciplinas
     });
   }
 
   return rows;
+}
+
+function splitDisciplines_(value) {
+  var raw = Array.isArray(value) ? value.join(' | ') : String(value || '').trim();
+  if (!raw) return [];
+
+  return raw
+    .split(/[\n,;|/]+/)
+    .map(function(item) { return String(item || '').trim(); })
+    .filter(Boolean);
 }
 
 function getEapStructuredDataFromRows_(rows) {
@@ -770,7 +901,14 @@ function getEapStructuredDataFromRows_(rows) {
   for (var j = 0; j < hierarchy.nodes.length; j++) {
     var itemNode = hierarchy.nodes[j];
     if (itemNode.tipo === 'item' && itemNode.osCodigo) {
-      itemOptions.push({ codigo: itemNode.codigo, nome: itemNode.nome, osCodigo: itemNode.osCodigo });
+      var matchedRow = rows.find(function(row) { return String(row.code || '').trim() === String(itemNode.codigo || '').trim(); }) || {};
+      itemOptions.push({
+        codigo: itemNode.codigo,
+        nome: itemNode.nome,
+        osCodigo: itemNode.osCodigo,
+        disciplina: String(matchedRow.disciplina || '').trim(),
+        disciplinas: Array.isArray(matchedRow.disciplinas) ? matchedRow.disciplinas : []
+      });
     }
   }
 
@@ -798,7 +936,9 @@ function buildEapHierarchyPayloadFromRows_(rows) {
       codigo: codigo,
       nome: nome,
       dotCount: (codigo.match(/\./g) || []).length,
-      isOs: isOsItemName_(nome)
+      isOs: isOsItemName_(nome),
+      disciplina: String(item.disciplina || '').trim(),
+      disciplinas: Array.isArray(item.disciplinas) ? item.disciplinas : []
     });
     nodeMap[codigo] = true;
   }
@@ -847,7 +987,9 @@ function buildEapHierarchyPayloadFromRows_(rows) {
       nivel: raw.dotCount,
       parentCodigo: parentCodigo,
       contratoCodigo: contratoCodigo,
-      osCodigo: osCodigo
+      osCodigo: osCodigo,
+      disciplina: raw.disciplina,
+      disciplinas: raw.disciplinas
     });
   }
 

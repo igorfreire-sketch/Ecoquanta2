@@ -84,7 +84,12 @@ function readStoredInterferencias(items?: StoredInterference[]) {
 }
 
 function readPlannedItems(items?: PlannedItem[]) {
-  return Array.isArray(items) ? items : [];
+  return (Array.isArray(items) ? items : []).filter((item: any) => {
+    const recordType = String(item?.recordType || '').trim().toLowerCase();
+    const origin = String(item?.origin || '').trim().toLowerCase();
+    return (recordType === 'planning-review' || origin === 'planning-review')
+      && Boolean(item?.plannerApproved || item?.approvedByPlanner || item?.plannerOk || item?.okPlanejamento);
+  });
 }
 
 function getSourceActivities(registro: any) {

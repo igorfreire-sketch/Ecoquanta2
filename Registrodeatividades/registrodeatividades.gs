@@ -23,8 +23,76 @@ var FIREBASE_AUTH_CACHE_KEY = "firebase_anonymous_id_token";
 var FIREBASE_COMMIT_BATCH_SIZE = 400;
 var FIREBASE_APPDATA_CHUNK_SIZE = 750000;
 var FIREBASE_SYNC_DELAY_MS = 5000;
-
-function onOpen() {
+var DEFAULT_ALOCACAO_SOURCE = [
+  'Rio de Janeiro',
+  'Maca\u00e9',
+  'Maric\u00e1',
+  'Quanta',
+  'S\u00e3o Paulo',
+  'Fortaleza',
+  'Belo Horizonte',
+  'Bahia',
+  'Jo\u00e3o Pessoa',
+  'Natal',
+  'Oiticica'
+];
+var DEFAULT_DISCIPLINE_SOURCE = [
+  ['ARQ', 'Arquitetura'],
+  ['URB', 'Urbanismo'],
+  ['LAY', 'Layout'],
+  ['LUM', 'Luminot\u00e9cnica'],
+  ['ACES', 'Acessibilidade'],
+  ['APS', 'Paisagismo'],
+  ['TSD', 'Sondagem'],
+  ['EST', 'Estrutura Mista'],
+  ['SCO', 'Estrutura de Concreto'],
+  ['CONT', 'Conten\u00e7\u00e3o'],
+  ['SMT', 'Estrutura Met\u00e1lica'],
+  ['FUND', 'Funda\u00e7\u00f5es'],
+  ['HIDS', 'Hidrossanit\u00e1rio'],
+  ['HIDA', 'Hidr\u00e1ulica'],
+  ['ESG', 'Esgoto'],
+  ['DREN', 'Drenagem'],
+  ['GAS', 'G\u00e1s'],
+  ['REUS', 'Reuso'],
+  ['SUB', 'Subesta\u00e7\u00e3o'],
+  ['ELET', 'El\u00e9trica'],
+  ['SPDA', 'SPDA'],
+  ['EREN', 'Energia Renov\u00e1vel'],
+  ['CFTV', 'CFTV'],
+  ['SOM', 'Sonoriza\u00e7\u00e3o'],
+  ['AUVI', '\u00c1udio e V\u00eddeo'],
+  ['ACUS', 'Ac\u00fastica'],
+  ['CENO', 'Cenot\u00e9cnica'],
+  ['DADO', 'Dados'],
+  ['AUTO', 'Automa\u00e7\u00e3o'],
+  ['TELE', 'Telecom'],
+  ['AVAC', 'AVAC'],
+  ['ARCO', 'Ar Comprimido'],
+  ['IMPE', 'Impermeabiliza\u00e7\u00e3o'],
+  ['ALA', 'Alarme'],
+  ['PCI', 'PCI'],
+  ['TERR', 'Terraplanagem'],
+  ['TOPO', 'Topografia'],
+  ['VPAV', 'Vias e Pavimenta\u00e7\u00e3o'],
+  ['SINS', 'Sinaliza\u00e7\u00e3o Vi\u00e1ria'],
+  ['MEC', 'Mec\u00e2nica / Caldeiraria'],
+  ['AMB', 'Ambiental'],
+  ['COMP', 'Compatibiliza\u00e7\u00e3o'],
+  ['ORC', 'Or\u00e7amento'],
+  ['ENG', 'Engenharia'],
+  ['JUR', 'Jur\u00eddico'],
+  ['MULT', 'Multidisciplinar'],
+  ['ECON', 'Econ\u00f4mico-Financeiro'],
+  ['GEO', 'Geof\u00edsica'],
+  ['VIAR', 'Vi\u00e1rio'],
+  ['DES', 'Desapropria\u00e7\u00e3o'],
+  ['CLSH', 'Clash'],
+  ['SUP', 'Supervis\u00e3o'],
+  ['GER', 'Gerenciamento'],
+  ['GECO', 'Gest\u00e3o do Contrato'],
+  ['CONF', 'Conformidade']
+];\r\nfunction onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
@@ -402,7 +470,7 @@ function doPost(e) {
       var approvePatch = { status: 'approved' };
       if (data.name !== undefined) approvePatch.nome = data.name || '';
       if (data.role !== undefined) approvePatch.role = data.role || '';
-      if (data.discipline !== undefined) approvePatch.disciplina = data.discipline || '';
+      if (data.discipline !== undefined) approvePatch.disciplina = normalizeUserDisciplines_(data.discipline).join(' | ');
       if (data.allowedTabs !== undefined) approvePatch.abas = normalizeAllowedTabs_(data.allowedTabs);
       if (data.allocation !== undefined) approvePatch.alocacao = String(data.allocation || '');
       if (data.contract !== undefined) approvePatch.contrato = String(data.contract || '');
@@ -440,7 +508,7 @@ function doPost(e) {
       var saveUserPatch = {};
       if (data.name !== undefined) saveUserPatch.nome = String(data.name || '');
       if (data.role !== undefined) saveUserPatch.role = String(data.role || '');
-      if (data.discipline !== undefined) saveUserPatch.disciplina = String(data.discipline || '');
+      if (data.discipline !== undefined) saveUserPatch.disciplina = normalizeUserDisciplines_(data.discipline).join(' | ');
       if (data.allowedTabs !== undefined) saveUserPatch.abas = normalizeAllowedTabs_(data.allowedTabs);
       if (data.allocation !== undefined) saveUserPatch.alocacao = String(data.allocation || '');
       if (data.contract !== undefined) saveUserPatch.contrato = String(data.contract || '');
@@ -507,7 +575,7 @@ function doGet(e) {
   if (action === 'getInitialData') {
     var userEmailR = normalizeEmail_(e.parameter.email);
     var userRoleR = String(e.parameter.role || '').trim().toLowerCase();
-    var userDisciplinaR = String(e.parameter.disciplina || '').trim();
+    var userDisciplinaR = normalizeUserDisciplines_(e.parameter.disciplinas || e.parameter.disciplina).join(' | ');
     var isAdmin = String(e.parameter.isAdmin || '') === 'true';
     
     // Tratamento rigoroso das abas para evitar que venham vazias
@@ -595,7 +663,7 @@ function doGet(e) {
   if (action === 'getRegistroAtividadesData') {
     var uEmail = normalizeEmail_(e.parameter.userEmail);
     var uRole = String(e.parameter.userRole || '').trim().toLowerCase();
-    var uDisciplina = String(e.parameter.userDisciplina || '').trim();
+    var uDisciplina = primaryDiscipline_(e.parameter.userDisciplina || '');
     return json_(Object.assign({ success: true }, buildRegistroAtividadesResponseData_(ss, uEmail, uRole, uDisciplina)));
   }
 
@@ -622,7 +690,7 @@ function registerActivitiesBatch_(ss, data) {
   var userEmailA = normalizeEmail_(data.userEmail);
   var userNameA = String(data.userName || '').trim();
   var userRoleA = String(data.userRole || '').trim();
-  var userDisciplinaA = String(data.userDisciplina || '').trim();
+  var userDisciplinaA = primaryDiscipline_(data.userDisciplina || '');
   var activities = Array.isArray(data.activities) ? data.activities : [];
 
   if (!userEmailA) return json_({ success: false, error: 'Usuário inválido.' });
@@ -771,7 +839,7 @@ function updateActivitiesBatch_(ss, data) {
   var userEmailU = normalizeEmail_(data.userEmail);
   var userNameU = String(data.userName || '').trim();
   var userRoleU = String(data.userRole || '').trim();
-  var userDisciplinaU = String(data.userDisciplina || '').trim();
+  var userDisciplinaU = primaryDiscipline_(data.userDisciplina || '');
   var updates = Array.isArray(data.updates) ? data.updates : [];
 
   if (!updates.length) {
@@ -969,6 +1037,54 @@ function getOrCreateConfigSheet_(ss) {
   return sh;
 }
 
+function getDefaultDisciplineLabels_() {
+  return DEFAULT_DISCIPLINE_SOURCE.map(function (item) {
+    return String(item[0] || '').trim() + ' - ' + String(item[1] || '').trim();
+  }).filter(Boolean);
+}
+
+function getDefaultAlocacaoLabels_() {
+  return DEFAULT_ALOCACAO_SOURCE.map(function (item) {
+    return String(item || '').trim();
+  }).filter(Boolean);
+}
+
+function seedDefaultDisciplineConfigIfMissing_(ss) {
+  var sh = getOrCreateConfigSheet_(ss);
+  var values = sh.getDataRange().getValues();
+  var hasDisciplineRows = false;
+  var hasAlocacaoRows = false;
+
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][1] || '').trim()) {
+      hasDisciplineRows = true;
+    }
+    if (String(values[i][2] || '').trim()) {
+      hasAlocacaoRows = true;
+    }
+  }
+
+  if (hasDisciplineRows && hasAlocacaoRows) return false;
+
+  var defaults = getDefaultDisciplineLabels_();
+  var alocacoes = getDefaultAlocacaoLabels_();
+  var rowCount = Math.max(values.length - 1, defaults.length, alocacoes.length);
+  var rows = [['Cargo', 'Disciplina', 'Alocacao']];
+
+  for (var j = 0; j < rowCount; j++) {
+    var current = values[j + 1] || [];
+    rows.push([
+      String(current[0] || ''),
+      String(defaults[j] || current[1] || ''),
+      String(alocacoes[j] || current[2] || '')
+    ]);
+  }
+
+  sh.clearContents();
+  sh.getRange(1, 1, rows.length, 3).setValues(rows);
+  return true;
+}
+
 function getOrCreateRoleTabPermissionsSheet_(ss) {
   var sh = ss.getSheetByName('permissoes_cargos');
   if (!sh) {
@@ -1055,7 +1171,14 @@ function saveConfigSheet_(ss, cargos, disciplinas, alocacoes) {
   var sh = getOrCreateConfigSheet_(ss);
   sh.clearContents();
 
+  disciplinas = Array.isArray(disciplinas) ? disciplinas : [];
+  if (disciplinas.length === 0) {
+    disciplinas = getDefaultDisciplineLabels_();
+  }
   alocacoes = Array.isArray(alocacoes) ? alocacoes : [];
+  if (alocacoes.length === 0) {
+    alocacoes = getDefaultAlocacaoLabels_();
+  }
   var maxLen = Math.max(cargos.length, disciplinas.length, alocacoes.length, 1);
   var rows = [['Cargo', 'Disciplina', 'Alocacao']];
   for (var i = 0; i < maxLen; i++) {
@@ -1066,6 +1189,7 @@ function saveConfigSheet_(ss, cargos, disciplinas, alocacoes) {
 }
 
 function getConfigOptions_(ss) {
+  seedDefaultDisciplineConfigIfMissing_(ss);
   var sh = getOrCreateConfigSheet_(ss);
   var values = sh.getDataRange().getValues();
   var cargos = [];
@@ -1081,7 +1205,7 @@ function getConfigOptions_(ss) {
   return {
     cargos: uniqueSorted_(cargos),
     disciplinas: uniqueSorted_(disciplinas),
-    alocacoes: uniqueSorted_(alocacoes)
+    alocacoes: uniqueSorted_(alocacoes.length ? alocacoes : getDefaultAlocacaoLabels_())
   };
 }
 
@@ -1419,32 +1543,49 @@ function getProfessionalsByDisciplina_(ss, disciplina) {
   var values = loginSheet.getDataRange().getValues();
 
   var out = [];
-  var disciplinaNorm = String(disciplina || '').trim().toLowerCase();
+  var disciplinaNorms = normalizeUserDisciplines_(disciplina).map(function (item) { return normalizeText_(item); });
+  if (!disciplinaNorms.length) return out;
 
   for (var i = 1; i < values.length; i++) {
     var email = String(values[i][header.email] || '').trim();
     var nome = String(values[i][header.nome] || '').trim();
     var cargo = String(values[i][header.role] || '').trim();
-    var userDisciplina = String(values[i][header.disciplina] || '').trim();
+    var userDisciplinaList = normalizeUserDisciplines_(values[i][header.disciplina] || '');
     var status = String(values[i][header.status] || '').trim().toLowerCase();
 
     if (!email || status !== 'approved') continue;
-    if (String(userDisciplina || '').trim().toLowerCase() !== disciplinaNorm) continue;
+    if (!userDisciplinaList.length) continue;
 
-    out.push({ nome: nome, email: email, cargo: cargo, disciplina: userDisciplina });
+    var matchesUser = false;
+    for (var d = 0; d < userDisciplinaList.length; d++) {
+      if (disciplinaNorms.indexOf(normalizeText_(userDisciplinaList[d])) !== -1) {
+        matchesUser = true;
+        break;
+      }
+    }
+    if (!matchesUser) continue;
+
+    out.push({ nome: nome, email: email, cargo: cargo, disciplina: userDisciplinaList.join(' | ') });
   }
 
   var terceirizadas = getTerceirizadas_(ss);
   for (var t = 0; t < terceirizadas.length; t++) {
     var terceirizada = terceirizadas[t] || {};
-    var terceirizadaDisciplina = String(terceirizada.disciplina || '').trim();
-    if (String(terceirizadaDisciplina || '').trim().toLowerCase() !== disciplinaNorm) continue;
+    var terceirizadaDisciplinaList = normalizeUserDisciplines_(terceirizada.disciplina || '');
+    var matchesTerceirizada = false;
+    for (var td = 0; td < terceirizadaDisciplinaList.length; td++) {
+      if (disciplinaNorms.indexOf(normalizeText_(terceirizadaDisciplinaList[td])) !== -1) {
+        matchesTerceirizada = true;
+        break;
+      }
+    }
+    if (!matchesTerceirizada) continue;
 
     out.push({
       nome: String(terceirizada.nome || '').trim(),
       email: buildTerceirizadaProfessionalId_(terceirizada.id),
       cargo: 'Terceirizada',
-      disciplina: terceirizadaDisciplina
+      disciplina: terceirizadaDisciplinaList.join(' | ')
     });
   }
 
@@ -1658,10 +1799,13 @@ function findUserRowByEmail_(values, header, email) {
 function normalizeUserResponse_(row, header) {
   var lastSeen = Number(row[header.lastseen] || 0);
   var online = lastSeen > 0 && (Date.now() - lastSeen <= 2 * 60 * 1000);
+  var disciplinas = normalizeUserDisciplines_(row[header.disciplina] || '');
   return {
     id: String(row[header.email] || ''), data: row[header.data], nome: String(row[header.nome] || ''),
     email: String(row[header.email] || ''), cargo: String(row[header.role] || ''), role: String(row[header.role] || ''),
-    disciplina: String(row[header.disciplina] || ''), status: String(row[header.status] || 'pending'),
+    disciplina: disciplinas.length > 0 ? disciplinas[0] : String(row[header.disciplina] || ''),
+    disciplinas: disciplinas,
+    status: String(row[header.status] || 'pending'),
     alocacao: String(row[header.alocacao] || ''),
     contrato: String(row[header.contrato] || ''),
     allowedTabs: parseAllowedTabs_(row[header.abas]), abas: parseAllowedTabs_(row[header.abas]),
@@ -1672,6 +1816,62 @@ function normalizeUserResponse_(row, header) {
 
 function newSessionVersion_() {
   return String(Date.now()) + '-' + Utilities.getUuid().slice(0, 8);
+}
+
+function normalizeText_(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+function buildDisciplineLookup_() {
+  var map = {};
+  for (var i = 0; i < DEFAULT_DISCIPLINE_SOURCE.length; i++) {
+    var code = String(DEFAULT_DISCIPLINE_SOURCE[i][0] || '').trim();
+    var name = String(DEFAULT_DISCIPLINE_SOURCE[i][1] || '').trim();
+    var label = code + ' - ' + name;
+    var aliases = [code, name, label, code + ' ' + name, name + ' - ' + code];
+    for (var j = 0; j < aliases.length; j++) {
+      var key = normalizeText_(aliases[j]);
+      if (key) map[key] = label;
+    }
+  }
+  return map;
+}
+
+var DISCIPLINE_LOOKUP_ = buildDisciplineLookup_();
+
+function resolveDisciplineEntry_(value) {
+  var clean = String(value || '').trim();
+  if (!clean) return '';
+  return DISCIPLINE_LOOKUP_[normalizeText_(clean)] || clean;
+}
+
+function splitDisciplineValues_(value) {
+  if (Array.isArray(value)) {
+    return value.map(function (item) { return resolveDisciplineEntry_(item); }).filter(Boolean);
+  }
+  return String(value || '')
+    .split(/[\n,;|]+/)
+    .map(function (item) { return resolveDisciplineEntry_(item); })
+    .filter(Boolean);
+}
+
+function normalizeUserDisciplines_(value) {
+  var list = splitDisciplineValues_(value);
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var item = String(list[i] || '').trim();
+    var key = normalizeText_(item);
+    if (!item || seen[key]) continue;
+    seen[key] = true;
+    out.push(item);
+  }
+  return out;
+}
+
+function primaryDiscipline_(value) {
+  var list = normalizeUserDisciplines_(value);
+  return list.length > 0 ? list[0] : '';
 }
 
 function normalizeAllowedTabs_(value) {

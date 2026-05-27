@@ -8,6 +8,7 @@ import {
   X,
 } from 'lucide-react';
 import type { AuthUser } from './LoginScreen';
+import { getUserDisciplineList } from '../lib/disciplineCatalog';
 import {
   addEmergencyMessage,
   createEmergency,
@@ -112,7 +113,8 @@ function buildActivities(preloadedData?: EmergenciaCenterProps['preloadedData'])
 function buildSectorOptions(preloadedData: EmergenciaCenterProps['preloadedData'], currentUser: AuthUser, activities: ActiveActivity[]) {
   const fromAdmin = Array.isArray(preloadedData?.admin?.disciplinas) ? preloadedData?.admin?.disciplinas : [];
   const fromActivities = activities.map((item) => item.setor);
-  return Array.from(new Set([...fromAdmin, ...fromActivities, currentUser.disciplina].map((item) => String(item || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const fromUser = getUserDisciplineList(currentUser);
+  return Array.from(new Set([...fromAdmin, ...fromActivities, ...fromUser].map((item) => String(item || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 }
 
 function getUnreadEmergencyIds(data: EmergencyPayload, sector: string) {
@@ -150,6 +152,8 @@ export default function EmergenciaCenter({
   const [feedback, setFeedback] = useState('');
 
   const activities = useMemo(() => buildActivities(preloadedData), [preloadedData]);
+  const currentSectors = useMemo(() => getUserDisciplineList(currentUser), [currentUser]);
+  const currentSector = currentSectors[0] || currentUser.disciplina || '';
   const sectorOptions = useMemo(
     () => buildSectorOptions(preloadedData, currentUser, activities),
     [activities, currentUser, preloadedData]
@@ -226,8 +230,8 @@ export default function EmergenciaCenter({
 
   const selectedEmergency = emergencies.find((item) => item.id === selectedEmergencyId) || emergencies[0] || null;
   const selectedMessages = selectedEmergency ? data.messagesByEmergency[selectedEmergency.id] || [] : [];
-  const unreadCount = getEmergencyUnreadCount(data, currentUser.disciplina);
-  const unreadIds = useMemo(() => new Set(getUnreadEmergencyIds(data, currentUser.disciplina)), [data, currentUser.disciplina]);
+  const unreadCount = getEmergencyUnreadCount(data, currentSector);
+  const unreadIds = useMemo(() => new Set(getUnreadEmergencyIds(data, currentSector)), [data, currentSector]);
 
   useEffect(() => {
     if (!selectedEmergencyId && emergencies[0]?.id) {
@@ -237,19 +241,19 @@ export default function EmergenciaCenter({
 
   useEffect(() => {
     if (!selectedEmergency) return;
-    if (!isEmergencyUnreadForSector(selectedEmergency, data.readMarkers, currentUser.disciplina)) return;
+    if (!isEmergencyUnreadForSector(selectedEmergency, data.readMarkers, currentSector)) return;
 
     void markEmergencyRead({
       emergencyId: selectedEmergency.id,
-      sector: currentUser.disciplina,
+      sector: currentSector,
       userEmail: currentUser.email,
     }).then(() => loadData()).catch(() => {});
-  }, [selectedEmergency?.id]);
+  }, [currentSector, selectedEmergency?.id, data.readMarkers]);
 
   const openModal = (activity: ActiveActivity) => {
     setSelectedActivity(activity);
     setObservationDraft('');
-    setSelectedSectors(currentUser.disciplina ? [currentUser.disciplina] : []);
+    setSelectedSectors(currentSector ? [currentSector] : []);
     setModalOpen(true);
   };
 
@@ -269,7 +273,7 @@ export default function EmergenciaCenter({
       await createEmergency({
         userEmail: currentUser.email,
         userName: currentUser.nome,
-        userSector: currentUser.disciplina,
+        userSector: currentSector,
         activityId: selectedActivity.id,
         contratoCodigo: selectedActivity.contratoCodigo,
         contratoNome: selectedActivity.contratoNome,
@@ -300,7 +304,7 @@ export default function EmergenciaCenter({
         emergencyId: selectedEmergency.id,
         userEmail: currentUser.email,
         userName: currentUser.nome,
-        userSector: currentUser.disciplina,
+        userSector: currentSector,
         message: messageDraft.trim(),
       });
       setMessageDraft('');

@@ -45,6 +45,7 @@ export interface UserAccessRecord {
   email: string;
   online: boolean;
   disciplina: string;
+  disciplinas: string[];
   cargo: string;
   alocacao: string;
   contrato: string;
@@ -148,6 +149,64 @@ function StatusOnline({ online }: { online: boolean }) {
         {online ? 'ON' : 'OFF'}
       </span>
     </div>
+  );
+}
+
+function DisciplineMultiSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: string[];
+  options: string[];
+  onChange: (nextValue: string[]) => void;
+}) {
+  const selected = Array.isArray(value) ? value : [];
+  const selectedPreview = selected.length > 0 ? selected.slice(0, 2).join(' | ') : 'Selecionar';
+
+  const toggleValue = (item: string) => {
+    const exists = selected.includes(item);
+    const next = exists ? selected.filter((entry) => entry !== item) : [...selected, item];
+    onChange(next);
+  };
+
+  return (
+    <details className="group relative">
+      <summary className="h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center justify-between gap-3 cursor-pointer list-none hover:border-[#F05D28] transition-colors [&::-webkit-details-marker]:hidden">
+        <span className={`min-w-0 flex-1 text-[13px] font-medium truncate ${selected.length > 0 ? 'text-[#2D2D2D]' : 'text-[#9CA3AF]'}`}>
+          {selected.length > 0 ? `${selectedPreview}${selected.length > 2 ? ` +${selected.length - 2}` : ''}` : 'Selecionar'}
+        </span>
+        <span className="shrink-0 text-[11px] font-bold text-[#757575]">
+          {selected.length || 0}
+        </span>
+      </summary>
+
+      <div className="absolute z-20 mt-2 w-full min-w-[280px] rounded-2xl border border-[#E5E7EB] bg-white shadow-xl shadow-black/5 p-2 max-h-[280px] overflow-y-auto">
+        {options.length === 0 && (
+          <div className="px-3 py-2 text-[12px] text-[#757575]">
+            Nenhuma disciplina disponivel.
+          </div>
+        )}
+
+        {options.map((item) => {
+          const checked = selected.includes(item);
+          return (
+            <label
+              key={item}
+              className="flex items-start justify-between gap-3 rounded-xl px-3 py-2.5 hover:bg-[#F9FAFB] cursor-pointer transition-colors"
+            >
+              <span className="text-[12px] font-medium text-[#2D2D2D] leading-tight">{item}</span>
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggleValue(item)}
+                className="w-4 h-4 accent-[#F05D28] cursor-pointer shrink-0 mt-0.5"
+              />
+            </label>
+          );
+        })}
+      </div>
+    </details>
   );
 }
 
@@ -756,7 +815,9 @@ export default function Administracao({
         user.email.toLowerCase().includes(termo);
 
       const matchesDisciplina =
-        disciplinaFiltro === 'Todas' || user.disciplina === disciplinaFiltro;
+        disciplinaFiltro === 'Todas' ||
+        user.disciplina === disciplinaFiltro ||
+        (Array.isArray(user.disciplinas) && user.disciplinas.includes(disciplinaFiltro));
 
       const matchesCargo =
         cargoFiltro === 'Todos' || user.cargo === cargoFiltro;
@@ -931,18 +992,19 @@ export default function Administracao({
 
                 <div className="flex flex-col gap-1.5">
                   <label className="bentham-label">Disciplina</label>
-                  <select
-                    className="bentham-select"
-                    value={user.disciplina}
-                    onChange={(e) => onUpdateUsuario(user.id, { disciplina: e.target.value })}
-                  >
-                    <option value="">Selecionar</option>
-                    {disciplinas.map((disciplina) => (
-                      <option key={disciplina} value={disciplina}>
-                        {disciplina}
-                      </option>
-                    ))}
-                  </select>
+                  <DisciplineMultiSelect
+                    value={user.disciplinas || (user.disciplina ? [user.disciplina] : [])}
+                    options={disciplinas}
+                    onChange={(nextValue) => onUpdateUsuario(user.id, {
+                      disciplina: nextValue[0] || '',
+                      disciplinas: nextValue,
+                    })}
+                  />
+                  <p className="text-[11px] text-[#757575] leading-relaxed">
+                    {Array.isArray(user.disciplinas) && user.disciplinas.length > 0
+                      ? user.disciplinas.join(' | ')
+                      : user.disciplina || 'Nenhuma disciplina selecionada'}
+                  </p>
                 </div>
 
                 <div className="flex flex-col gap-1.5">

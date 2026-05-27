@@ -13,6 +13,7 @@ import {
   Search,
   X,
 } from 'lucide-react';
+import Atividades from '../Atividades';
 import type { AuthUser } from '../LoginScreen';
 import Cronograma from '../Cronograma';
 import { deleteFirebaseDocument, isFirebaseConfigured, setFirebaseDocument } from '../../lib/firebaseDb';
@@ -28,7 +29,7 @@ interface ContratoProps {
   };
   activeContractCode?: string;
   lockedContractCode?: string;
-  activeView?: 'dashboard' | 'interferencias' | 'prioridades' | 'cronograma';
+  activeView?: 'dashboard' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
 }
 
 interface ActivityRow {
@@ -692,7 +693,7 @@ export default function Contrato({
 
   return (
     <div className="space-y-6 font-['Montserrat']">
-      {activeView !== 'cronograma' && (
+      {activeView !== 'cronograma' && activeView !== 'atividades' && (
         <section className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm p-5">
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(220px,280px)_minmax(220px,280px)_minmax(0,1fr)] gap-4">
             <div>
@@ -747,7 +748,9 @@ export default function Contrato({
         </section>
       )}
 
-      {(activeView === 'dashboard' || activeView === 'prioridades') && (
+      {activeView === 'atividades' ? (
+        <Atividades currentUser={_currentUser} preloadedData={preloadedData} showAllDisciplines filtersAlwaysVisible />
+      ) : (activeView === 'dashboard' || activeView === 'prioridades') && (
         <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
           <ActivitiesList
             activities={filteredActivities}

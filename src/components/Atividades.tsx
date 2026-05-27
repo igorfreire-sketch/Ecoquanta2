@@ -12,29 +12,30 @@ import {
   X
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import { getUserDisciplineList } from '../lib/disciplineCatalog';
 
 export type ProductionStatus =
-  | 'NÃ£o iniciado'
+  | 'Não iniciado'
   | 'Programado para a semana'
-  | 'Em execuÃ§Ã£o'
-  | 'Em revisÃ£o'
+  | 'Em execução'
+  | 'Em revisão'
   | 'Bloqueado'
-  | 'ConcluÃ­do'
+  | 'Concluído'
   | 'Atrasado';
 
 export type PriorityLevel = 'Normal' | 'Alta' | 'Contratual' | 'Emergencial';
 
 export type TechnicalStep =
   | 'Inicial'
-  | 'NF InÃ­cio de Contrato'
+  | 'NF Início de Contrato'
   | 'Modelagem'
-  | 'NF IntermediÃ¡ria'
-  | 'RevisÃ£o'
+  | 'NF Intermediária'
+  | 'Revisão'
   | 'NF Final';
 
 export type LodLevel = 100 | 200 | 300 | 350 | 400;
 export type LeaderActivityStatus = 'Bom' | 'Regular' | 'Problema' | '';
-export type LeaderDifficulty = 'Dificil' | 'Regular' | 'Facil' | '';
+export type LeaderDifficulty = 'Difícil' | 'Regular' | 'Fácil' | '';
 
 export interface EngineeringActivity {
   id: string;
@@ -100,20 +101,23 @@ interface AtividadesProps {
     nome?: string;
     email?: string;
     disciplina?: string;
+    disciplinas?: string[];
     contrato?: string;
     onlyThirdParty?: boolean;
   } | null;
   preloadedData?: any;
   isHeaderFiltersOpen?: boolean;
   onCloseHeaderFilters?: () => void;
+  showAllDisciplines?: boolean;
+  filtersAlwaysVisible?: boolean;
 }
 
 const STORAGE_KEY = 'quanta_producao_tecnica_cards';
 const TODAY = new Date();
 const RESPONSAVEIS = ['Vinicius', 'Beatriz', 'Carlos', 'Mariana', 'Rodrigo', 'Fernanda'];
-const TECHNICAL_STEPS: TechnicalStep[] = ['Inicial', 'NF InÃ­cio de Contrato', 'Modelagem', 'NF IntermediÃ¡ria', 'RevisÃ£o', 'NF Final'];
+const TECHNICAL_STEPS: TechnicalStep[] = ['Inicial', 'NF Início de Contrato', 'Modelagem', 'NF Intermediária', 'Revisão', 'NF Final'];
 const PRIORITY_OPTIONS: PriorityLevel[] = ['Normal', 'Alta', 'Contratual', 'Emergencial'];
-const STATUS_OPTIONS: ProductionStatus[] = ['NÃ£o iniciado', 'Programado para a semana', 'Em execuÃ§Ã£o', 'Em revisÃ£o', 'Bloqueado', 'ConcluÃ­do', 'Atrasado'];
+const STATUS_OPTIONS: ProductionStatus[] = ['Não iniciado', 'Programado para a semana', 'Em execução', 'Em revisão', 'Bloqueado', 'Concluído', 'Atrasado'];
 const LOD_OPTIONS: LodLevel[] = [100, 200, 300, 350, 400];
 
 const priorityColorMap: Record<PriorityLevel, { text: string; bg: string; border: string }> = {
@@ -774,7 +778,7 @@ const splitMultiValue = (value: any) => {
   }
 
   return String(value || '')
-    .split(/[\n,;|/]+/)
+    .split(/[\n,;|]+/)
     .map((item) => String(item || '').trim())
     .filter(Boolean);
 };
@@ -815,18 +819,27 @@ const hasLeaderInputs = (activity: EngineeringActivity) => {
 };
 
 const getLeaderStatusLabel = (activity: EngineeringActivity) => {
-  return hasLeaderInputs(activity) ? 'Executando' : 'NÃ£o iniciado';
+  return hasLeaderInputs(activity) ? 'Executando' : 'Não iniciado';
 };
 
-const buildProfessionalOptions = (preloadedData: any, currentUser?: AtividadesProps['currentUser']) => {
+const buildProfessionalOptions = (
+  preloadedData: any,
+  currentUser?: AtividadesProps['currentUser'],
+  showAllDisciplines = false,
+) => {
   const registro = preloadedData?.registro || preloadedData || {};
   const professionalsByDisciplina = registro?.professionalsByDisciplina && typeof registro.professionalsByDisciplina === 'object'
     ? registro.professionalsByDisciplina
     : {};
-
-  const normalizedCurrent = normalizeText(currentUser?.disciplina);
-  const exactEntry = Object.entries(professionalsByDisciplina).find(([key]) => normalizeText(key) === normalizedCurrent);
-  const rawProfessionals = Array.isArray(exactEntry?.[1]) ? exactEntry[1] : Array.isArray(registro?.professionals) ? registro.professionals : [];
+  const currentDisciplines = getUserDisciplineList(currentUser || {}).map((item) => normalizeText(item)).filter(Boolean);
+  const allProfessionals = Object.values(professionalsByDisciplina).flatMap((value) => (Array.isArray(value) ? value : []));
+  const rawProfessionals = showAllDisciplines
+    ? (allProfessionals.length > 0 ? allProfessionals : (Array.isArray(registro?.professionals) ? registro.professionals : []))
+    : currentDisciplines.length > 0
+      ? Object.entries(professionalsByDisciplina)
+          .filter(([key]) => currentDisciplines.includes(normalizeText(key)))
+          .flatMap(([, value]) => (Array.isArray(value) ? value : []))
+      : Array.isArray(registro?.professionals) ? registro.professionals : [];
 
   const seen = new Set<string>();
   return rawProfessionals
@@ -856,6 +869,13 @@ const buildEapMaps = (preloadedData: any) => {
   const nodeByCode = new Map<string, any>(hierarchyNodes.map((item: any) => [String(item.codigo || '').trim(), item]));
 
   return { contractNameByCode, osNameByCode, itemNameByCode, nodeByCode, hierarchyNodes };
+};
+
+const getUnifiedEapRegistry = (preloadedData: any) => {
+  return preloadedData?.eap?.data?.registro
+    || preloadedData?.eap?.registro
+    || preloadedData?.registro
+    || {};
 };
 
 const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProps['currentUser']): EngineeringActivity[] => {
@@ -896,7 +916,7 @@ const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProp
         inicioPlanejado: String(row.plannedStart || row.realStart || getCurrentWeekKey()),
         terminoPlanejado: String(row.plannedEnd || row.realEnd || getCurrentWeekKey()),
         prioridade: 'Normal',
-        status: 'NÃ£o iniciado',
+        status: 'Não iniciado',
         percentualPrevisto: clampPercentage(typeof row.idealProgress === 'number' ? row.idealProgress : row.baselineIdealProgress),
         percentualRealizado: 0,
         atividade: rowName,
@@ -924,20 +944,20 @@ const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProp
 const normalizeLegacyStatus = (value?: string): ProductionStatus => {
   switch (value) {
     case 'Entrada':
-      return 'NÃ£o iniciado';
+      return 'Não iniciado';
     case 'Programado para a Semana':
       return 'Programado para a semana';
+    case 'Em Execução':
     case 'Em ExecuÃ§Ã£o':
-    case 'Em ExecuÃƒÂ§ÃƒÂ£o':
-      return 'Em execuÃ§Ã£o';
+      return 'Em execução';
+    case 'Em Revisão/Validação':
     case 'Em RevisÃ£o/ValidaÃ§Ã£o':
-    case 'Em RevisÃƒÂ£o/ValidaÃƒÂ§ÃƒÂ£o':
-      return 'Em revisÃ£o';
+      return 'Em revisão';
     case 'Bloqueado':
       return 'Bloqueado';
+    case 'Concluído':
     case 'ConcluÃ­do':
-    case 'ConcluÃƒÂ­do':
-      return 'ConcluÃ­do';
+      return 'Concluído';
     case 'Atrasado':
       return 'Atrasado';
     default:
@@ -1024,9 +1044,9 @@ const mergeSavedActivitiesWithSource = (savedActivities: EngineeringActivity[], 
 };
 
 const getEffectiveStatus = (activity: EngineeringActivity): ProductionStatus => {
-  if (hasLeaderInputs(activity)) return 'Em execuÃ§Ã£o';
-  if (activity.status === 'ConcluÃ­do' || activity.percentualRealizado >= 100) return 'ConcluÃ­do';
-  if (activity.status === 'NÃ£o iniciado') return 'NÃ£o iniciado';
+  if (hasLeaderInputs(activity)) return 'Em execução';
+  if (activity.status === 'Concluído' || activity.percentualRealizado >= 100) return 'Concluído';
+  if (activity.status === 'Não iniciado') return 'Não iniciado';
   if (activity.status === 'Bloqueado') return 'Bloqueado';
   if (parseDate(activity.terminoPlanejado).getTime() < TODAY.getTime() && activity.percentualRealizado < 100) return 'Atrasado';
   return isProductionStatus(activity.status) ? activity.status : 'Programado para a semana';
@@ -1037,7 +1057,7 @@ const getProgressDelta = (activity: EngineeringActivity) => getLeaderPercentual(
 const getLodStatus = (activity: EngineeringActivity) => {
   if (activity.lodAtual > activity.lodAlvoSemana) return 'Acima do alvo';
   if (activity.lodAtual === activity.lodAlvoSemana) return 'Atingido';
-  if (getEffectiveStatus(activity) === 'Atrasado' || getProgressDelta(activity) < -15) return 'AtenÃ§Ã£o';
+  if (getEffectiveStatus(activity) === 'Atrasado' || getProgressDelta(activity) < -15) return 'Atenção';
   return 'Em evoluÃ§Ã£o';
 };
 
@@ -1061,12 +1081,25 @@ const compareActivities = (first: EngineeringActivity, second: EngineeringActivi
 };
 
 const matchesUserDiscipline = (activity: EngineeringActivity, discipline?: string) => {
-  const normalizedDiscipline = normalizeText(discipline);
-  if (!normalizedDiscipline) return true;
+  const normalizedDiscipline = getUserDisciplineList({ disciplina: discipline }).map((item) => normalizeText(item)).filter(Boolean);
+  if (!normalizedDiscipline.length) return true;
   const activityDisciplinas = splitDisciplinas(activity.disciplinas || activity.disciplina);
   const hasExplicitDiscipline = activityDisciplinas.some((item) => normalizeText(item) !== 'sem disciplina');
   if (!hasExplicitDiscipline) return true;
-  return activityDisciplinas.some((item) => normalizeText(item) === normalizedDiscipline);
+  return activityDisciplinas.some((item) => normalizedDiscipline.includes(normalizeText(item)));
+};
+
+const isThirdPartyActivity = (activity: EngineeringActivity) => {
+  const searchable = [
+    activity.responsavel,
+    activity.atividade,
+    activity.observacoes,
+    activity.motivoBloqueio,
+    ...activity.executadoPor,
+  ]
+    .map((value) => normalizeText(String(value || '')))
+    .join(' ');
+  return searchable.includes('terceirizada');
 };
 
 function PriorityBadge({ priority }: { priority: PriorityLevel }) {
@@ -1090,15 +1123,120 @@ function FilterSelect({
   options: Array<string | { label: string; value: string }>;
 }) {
   return (
-    <div className="min-w-[150px]">
-      <label className="bentham-label">{label}</label>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="bentham-select h-10 text-[13px]">
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#757575]">{label}</label>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-11 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none transition-colors focus:border-[#F05D28]"
+      >
         {options.map((option) => (
           <option key={typeof option === 'string' ? option : option.value} value={typeof option === 'string' ? option : option.value}>
             {typeof option === 'string' ? option : option.label}
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function FilterMultiSelectDropdown({
+  label,
+  value,
+  options,
+  placeholder,
+  onChange
+}: {
+  label: string;
+  value: string[];
+  options: string[];
+  placeholder: string;
+  onChange: (next: string[]) => void;
+}) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!wrapperRef.current) return;
+      if (!wrapperRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, []);
+
+  const selectedLabels = options.filter((option) => value.includes(option));
+  const toggleValue = (option: string) => {
+    if (value.includes(option)) {
+      onChange(value.filter((item) => item !== option));
+      return;
+    }
+    onChange([...value, option]);
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative min-w-0">
+      <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#757575]">{label}</label>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="mt-1 flex h-11 w-full items-center justify-between gap-3 rounded-xl border border-[#E5E7EB] bg-white px-3 text-left text-[13px] font-medium text-[#2D2D2D] outline-none transition-colors hover:border-[#F7C7B7] focus:border-[#F05D28]"
+      >
+        <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+          {selectedLabels.length > 0 ? (
+            selectedLabels.map((item) => (
+              <span key={item} className="inline-flex max-w-full items-center rounded-full bg-[#EEF6FD] px-2.5 py-1 text-[11px] font-semibold text-[#0F4C81]">
+                <span className="truncate">{item}</span>
+              </span>
+            ))
+          ) : (
+            <span className="text-[#94A3B8]">{placeholder}</span>
+          )}
+        </div>
+        <ChevronDown size={16} className={`shrink-0 text-[#94A3B8] transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <motion.div
+          initial={{ opacity: 0, y: -6, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -6, scale: 0.98 }}
+          className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_20px_48px_rgba(15,76,129,0.14)]"
+        >
+          <div className="max-h-[280px] overflow-y-auto p-2">
+            {options.length === 0 ? (
+              <div className="rounded-xl bg-[#F8FAFC] px-3 py-3 text-[12px] text-[#94A3B8]">
+                Nenhuma disciplina encontrada.
+              </div>
+            ) : (
+              options.map((option) => {
+                const checked = value.includes(option);
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => toggleValue(option)}
+                    className={`flex w-full items-start gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-[#F8FAFC] ${checked ? 'bg-[#ECFEFF]' : ''}`}
+                  >
+                    <span className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border ${checked ? 'border-[#0F766E] bg-[#0F766E]' : 'border-[#CBD5E1] bg-white'}`}>
+                      {checked ? <span className="text-[10px] font-black leading-none text-white">✓</span> : null}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold text-[#2D2D2D]">{option}</span>
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          <div className="border-t border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-[10px] font-medium text-[#64748B]">
+            Sem seleção, todas as disciplinas aparecem.
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }
@@ -1191,7 +1329,7 @@ function MultiCheckboxDropdown({
                     className={`flex w-full items-start gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-[#F8FAFC] ${checked ? 'bg-[#ECFEFF]' : ''}`}
                   >
                     <span className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border ${checked ? 'border-[#0F766E] bg-[#0F766E]' : 'border-[#CBD5E1] bg-white'}`}>
-                      {checked ? <span className="text-[10px] font-black leading-none text-white">âœ“</span> : null}
+                      {checked ? <span className="text-[10px] font-black leading-none text-white">✓</span> : null}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] font-semibold text-[#2D2D2D]">{option.nome}</span>
@@ -1458,7 +1596,9 @@ export default function Atividades({
   currentUser,
   preloadedData,
   isHeaderFiltersOpen = false,
-  onCloseHeaderFilters
+  onCloseHeaderFilters,
+  showAllDisciplines = false,
+  filtersAlwaysVisible = false
 }: AtividadesProps) {
   const sourceActivities = useMemo(() => buildActivitiesFromEap(preloadedData, currentUser), [preloadedData, currentUser]);
   const [activities, setActivities] = useState<EngineeringActivity[]>(() => {
@@ -1481,7 +1621,8 @@ export default function Atividades({
   const [filterSemana, setFilterSemana] = useState(getCurrentWeekKey());
   const [filterContrato, setFilterContrato] = useState('Todos');
   const [filterOs, setFilterOs] = useState('Todos');
-  const [filterDisciplina, setFilterDisciplina] = useState('Todos');
+  const [filterDisciplinas, setFilterDisciplinas] = useState<string[]>([]);
+  const [filterTerceirizada, setFilterTerceirizada] = useState(false);
   const [filterEtapa, setFilterEtapa] = useState('Todos');
   const [filterLod, setFilterLod] = useState('Todos');
   const [filterStatus, setFilterStatus] = useState('Todos');
@@ -1502,8 +1643,10 @@ export default function Atividades({
   );
 
   const disciplineScopedActivities = useMemo(
-    () => activities.filter((activity) => matchesUserDiscipline(activity, currentUser?.disciplina)),
-    [activities, currentUser?.disciplina]
+    () => (showAllDisciplines
+      ? activities
+      : activities.filter((activity) => matchesUserDiscipline(activity, [currentUser?.disciplina, ...(currentUser?.disciplinas || [])].filter(Boolean).join(' | ')))),
+    [activities, currentUser?.disciplina, currentUser?.disciplinas, showAllDisciplines]
   );
 
   useEffect(() => {
@@ -1514,24 +1657,52 @@ export default function Atividades({
     setActivities((previous) => mergeSavedActivitiesWithSource(previous, sourceActivities));
   }, [sourceActivities]);
 
-  const contratosDisponiveis = useMemo(
-    () => ['Todos', ...Array.from(new Set(activities.map((activity) => activity.contratoCodigo)))],
-    [activities]
-  );
+  const contratosDisponiveis = useMemo(() => {
+    const registry = getUnifiedEapRegistry(preloadedData);
+    const contracts = Array.isArray(registry.contracts) ? registry.contracts : [];
+    const options = contracts
+      .map((item: any) => ({
+        value: String(item?.codigo || '').trim(),
+        label: item?.codigo && item?.nome && String(item.nome).trim() !== String(item.codigo).trim()
+          ? `${String(item.codigo).trim()} - ${String(item.nome).trim()}`
+          : String(item?.nome || item?.codigo || '').trim(),
+      }))
+      .filter((item: { value: string; label: string }) => Boolean(item.value));
+
+    if (options.length > 0) return ['Todos', ...options];
+    return ['Todos', ...Array.from(new Set(activities.map((activity) => activity.contratoCodigo))).filter(Boolean)];
+  }, [activities, preloadedData]);
 
   const osDisponiveis = useMemo(() => {
+    const registry = getUnifiedEapRegistry(preloadedData);
+    const osOptions = Array.isArray(registry.osOptions) ? registry.osOptions : [];
     const source = filterContrato === 'Todos'
+      ? osOptions
+      : osOptions.filter((item: any) => String(item?.contratoCodigo || '').trim() === filterContrato);
+
+    const options = source
+      .map((item: any) => ({
+        value: String(item?.codigo || '').trim(),
+        label: item?.codigo && item?.nome && String(item.nome).trim() !== String(item.codigo).trim()
+          ? `${String(item.codigo).trim()} - ${String(item.nome).trim()}`
+          : String(item?.nome || item?.codigo || '').trim(),
+      }))
+      .filter((item: { value: string; label: string }) => Boolean(item.value));
+
+    if (options.length > 0) return ['Todos', ...options];
+
+    const fallbackActivities = filterContrato === 'Todos'
       ? activities
       : activities.filter((activity) => activity.contratoCodigo === filterContrato);
-    return ['Todos', ...Array.from(new Set(source.map((activity) => activity.osCodigo)))];
-  }, [activities, filterContrato]);
+    return ['Todos', ...Array.from(new Set(fallbackActivities.map((activity) => activity.osCodigo))).filter(Boolean)];
+  }, [activities, filterContrato, preloadedData]);
 
   const disciplinasDisponiveis = useMemo(() => {
     const collected = new Set<string>();
     activities.forEach((activity) => {
       splitDisciplinas(activity.disciplinas || activity.disciplina).forEach((item) => collected.add(item));
     });
-    return ['Todos', ...Array.from(collected)];
+    return Array.from(collected);
   }, [activities]);
 
   const etapasDisponiveis = useMemo(() => ['Todos', ...TECHNICAL_STEPS], []);
@@ -1566,7 +1737,10 @@ export default function Atividades({
 
         const matchesContrato = filterContrato === 'Todos' || activity.contratoCodigo === filterContrato;
         const matchesOs = filterOs === 'Todos' || activity.osCodigo === filterOs;
-        const matchesDisciplina = filterDisciplina === 'Todos' || splitDisciplinas(activity.disciplinas || activity.disciplina).includes(filterDisciplina);
+        const activityDisciplinas = splitDisciplinas(activity.disciplinas || activity.disciplina);
+        const matchesDisciplina = filterDisciplinas.length === 0
+          || filterDisciplinas.some((discipline) => activityDisciplinas.includes(discipline));
+        const matchesTerceirizada = !filterTerceirizada || isThirdPartyActivity(activity);
         const matchesEtapa = filterEtapa === 'Todos' || activity.etapaTecnica === filterEtapa;
         const matchesLod = filterLod === 'Todos' || String(activity.lodAtual) === filterLod || String(activity.lodAlvoSemana) === filterLod;
         const matchesStatus = filterStatus === 'Todos' || getEffectiveStatus(activity) === filterStatus;
@@ -1577,6 +1751,7 @@ export default function Atividades({
           matchesContrato &&
           matchesOs &&
           matchesDisciplina &&
+          matchesTerceirizada &&
           matchesEtapa &&
           matchesLod &&
           matchesStatus &&
@@ -1587,12 +1762,13 @@ export default function Atividades({
   }, [
     disciplineScopedActivities,
     filterContrato,
-    filterDisciplina,
     filterEtapa,
     filterLod,
     filterOs,
     filterPrioridade,
     filterStatus,
+    filterDisciplinas,
+    filterTerceirizada,
     searchText,
   ]);
 
@@ -1608,7 +1784,7 @@ export default function Atividades({
 
   const kpis = useMemo(() => {
     const total = boardActivities.length;
-    const emExecucao = boardActivities.filter((activity) => getEffectiveStatus(activity) === 'Em execuÃ§Ã£o').length;
+    const emExecucao = boardActivities.filter((activity) => getEffectiveStatus(activity) === 'Em execução').length;
     const bloqueadas = boardActivities.filter((activity) => getEffectiveStatus(activity) === 'Bloqueado').length;
     const atrasadas = boardActivities.filter((activity) => getEffectiveStatus(activity) === 'Atrasado').length;
     const concluidas = boardActivities.filter((activity) => Number(activity.percentualRealizado || 0) >= 100).length;
@@ -1616,7 +1792,7 @@ export default function Atividades({
   }, [boardActivities]);
 
   const boardColumns = useMemo(() => {
-    const dayLabels = ['Segunda-feira', 'TerÃ§a-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira'];
+    const dayLabels = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira'];
     const shortLabels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
 
     const columns = Array.from({ length: 5 }, (_, index) => ({
@@ -1644,7 +1820,7 @@ export default function Atividades({
   }, [filteredActivities, weekStart]);
 
   const handleResetBoard = () => {
-    if (window.confirm('Redefinir o quadro semanal para os dados padrÃ£o? As alteraÃ§Ãµes locais serÃ£o perdidas.')) {
+    if (window.confirm('Redefinir o quadro semanal para os dados padrão? As alterações locais serão perdidas.')) {
       const resetActivities = sourceActivities.length > 0 ? sourceActivities : INITIAL_MOCK_ACTIVITIES;
       setActivities(resetActivities);
       safeSetLocalStorageValue(STORAGE_KEY, JSON.stringify(resetActivities));
@@ -1671,11 +1847,11 @@ export default function Atividades({
       inicioPlanejado: importInicio,
       terminoPlanejado: importTermino,
       prioridade: importPrioridade,
-      status: 'NÃ£o iniciado',
+      status: 'Não iniciado',
       percentualPrevisto: 25,
       percentualRealizado: 0,
       atividade: `${selectedItem.item} - ${selectedItem.nomeAtividade}`,
-      proximaAcao: `Iniciar frente de ${importEtapa.toLowerCase()} e avanÃ§ar atÃ© LOD ${importLodAlvo}.`,
+      proximaAcao: `Iniciar frente de ${importEtapa.toLowerCase()} e avançar até LOD ${importLodAlvo}.`,
       observacoes: 'Atividade vinculada localmente a partir do cronograma/EAP para acompanhamento semanal.',
       dataCriacao: toIsoDate(TODAY),
       origemItem: selectedItem.item,
@@ -1695,7 +1871,7 @@ export default function Atividades({
   };
 
   const selectedEffectiveStatus = selectedActivity ? getLeaderStatusLabel(selectedActivity) : null;
-  const executadoPorOptions = useMemo(() => buildProfessionalOptions(preloadedData, currentUser), [currentUser, preloadedData]);
+  const executadoPorOptions = useMemo(() => buildProfessionalOptions(preloadedData, currentUser, showAllDisciplines), [currentUser, preloadedData, showAllDisciplines]);
 
   const updateSelectedActivity = (patch: Partial<EngineeringActivity>) => {
     if (!selectedActivity) return;
@@ -1714,7 +1890,7 @@ export default function Atividades({
 
       return {
         ...next,
-        status: touched ? 'Em execuÃ§Ã£o' : 'NÃ£o iniciado',
+        status: touched ? 'Em execução' : 'Não iniciado',
         leaderEdited: touched
       };
     }));
@@ -1722,19 +1898,21 @@ export default function Atividades({
 
   return (
     <div className="flex w-full flex-col gap-3 font-['Montserrat'] animate-in fade-in duration-500">
-      <AnimatePresence>
-        {isHeaderFiltersOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="fixed right-8 top-[92px] z-50 w-[min(92vw,640px)] rounded-[26px] border border-[#E5E7EB] bg-white p-4 shadow-[0_18px_42px_rgba(15,76,129,0.12)]"
-          >
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Filtros</p>
-                <p className="mt-1 text-[13px] font-semibold text-[#475569]">Busca rÃ¡pida, semana, contrato, OS e disciplina.</p>
-              </div>
+      {(filtersAlwaysVisible || isHeaderFiltersOpen) && (
+        <motion.section
+          initial={filtersAlwaysVisible ? false : { opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          className={filtersAlwaysVisible
+            ? 'rounded-2xl border border-[#E5E7EB] bg-white px-4 py-4 shadow-sm'
+            : 'fixed right-8 top-[92px] z-50 w-[min(92vw,980px)] rounded-2xl border border-[#E5E7EB] bg-white px-4 py-4 shadow-[0_18px_42px_rgba(15,76,129,0.12)]'}
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Filtros</p>
+              <p className="mt-1 text-[13px] font-semibold text-[#475569]">Busca rápida, semana, contrato, OS, disciplina e terceirizada.</p>
+            </div>
+            {!filtersAlwaysVisible && (
               <button
                 type="button"
                 onClick={onCloseHeaderFilters}
@@ -1743,42 +1921,63 @@ export default function Atividades({
               >
                 <X size={14} />
               </button>
-            </div>
+            )}
+          </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="md:col-span-2">
-                <label className="bentham-label">Busca rÃ¡pida</label>
-                <div className="flex h-10 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 focus-within:border-[#F05D28]">
-                  <Search size={15} className="text-[#94A3B8]" />
-                  <input
-                    value={searchText}
-                    onChange={(event) => setSearchText(event.target.value)}
-                    placeholder="OS, atividade ou responsÃ¡vel"
-                    className="h-full w-full border-0 bg-transparent text-[13px] font-medium text-[#2D2D2D] outline-none placeholder:text-[#94A3B8]"
-                  />
-                </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="md:col-span-2">
+              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#757575]">Busca rápida</label>
+              <div className="mt-1 flex h-11 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 focus-within:border-[#F05D28]">
+                <Search size={15} className="text-[#94A3B8]" />
+                <input
+                  value={searchText}
+                  onChange={(event) => setSearchText(event.target.value)}
+                  placeholder="OS, atividade ou responsável"
+                  className="h-full w-full border-0 bg-transparent text-[13px] font-medium text-[#2D2D2D] outline-none placeholder:text-[#94A3B8]"
+                />
               </div>
-
-              <FilterSelect label="Semana" value={filterSemana} onChange={setFilterSemana} options={weekOptions} />
-              <FilterSelect label="Contrato" value={filterContrato} onChange={setFilterContrato} options={contratosDisponiveis} />
-              <FilterSelect label="OS" value={filterOs} onChange={setFilterOs} options={osDisponiveis} />
-              <FilterSelect label="Disciplina" value={filterDisciplina} onChange={setFilterDisciplina} options={disciplinasDisponiveis} />
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
+            <FilterSelect label="Semana" value={filterSemana} onChange={setFilterSemana} options={weekOptions} />
+            <FilterSelect label="Contrato" value={filterContrato} onChange={setFilterContrato} options={contratosDisponiveis} />
+            <FilterSelect label="OS" value={filterOs} onChange={setFilterOs} options={osDisponiveis} />
+            <FilterMultiSelectDropdown
+              label="Disciplina"
+              value={filterDisciplinas}
+              options={disciplinasDisponiveis}
+              placeholder="Todas"
+              onChange={setFilterDisciplinas}
+            />
+            <div className="flex items-end">
+              <label className={`inline-flex h-11 w-full items-center gap-3 rounded-xl border px-4 py-2.5 text-[12px] font-semibold transition-colors ${
+                filterTerceirizada
+                  ? 'border-[#F05D28] bg-[#FFF7ED] text-[#C2410C]'
+                  : 'border-[#E5E7EB] bg-white text-[#2D2D2D]'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={filterTerceirizada}
+                  onChange={(event) => setFilterTerceirizada(event.target.checked)}
+                  className="h-4 w-4 accent-[#F05D28]"
+                />
+                Terceirizada
+              </label>
+            </div>
+          </div>
+        </motion.section>
+      )}
 
       <section className="rounded-[34px] border border-[#E5E7EB] bg-[linear-gradient(180deg,#FFFFFF_0%,#F8FAFC_100%)] p-2.5 shadow-sm">
         <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
           <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 md:grid-cols-3 xl:max-w-[760px] xl:grid-cols-[1.35fr_0.75fr_0.75fr_0.75fr_0.75fr]">
             <CompactStat icon={<Calendar size={14} />} label="Semana" value={formatWeekLabel(filterSemana)} tone="border-[#E5E7EB]" valueClassName="whitespace-nowrap" />
             <CompactStat icon={<Activity size={14} />} label="Atividades" value={kpis.total} tone="border-[#C9E1F7]" />
-            <CompactStat icon={<Clock size={14} />} label="Em execuÃ§Ã£o" value={kpis.emExecucao} tone="border-[#DBEAFE]" />
+            <CompactStat icon={<Clock size={14} />} label="Em execução" value={kpis.emExecucao} tone="border-[#DBEAFE]" />
             <CompactStat icon={<AlertTriangle size={14} />} label="Bloqueadas" value={kpis.bloqueadas} tone="border-[#F7C7B7]" />
-            <CompactStat icon={<CheckCircle2 size={14} />} label="ConcluÃ­das" value={kpis.concluidas} tone="border-[#BBF7D0]" />
+            <CompactStat icon={<CheckCircle2 size={14} />} label="Concluídas" value={kpis.concluidas} tone="border-[#BBF7D0]" />
           </div>
           <div className="inline-flex items-center gap-2 self-start rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-[11px] font-semibold text-[#64748B] xl:shrink-0 xl:self-center">
-            <span>Clique no cartÃ£o para abrir os detalhes</span>
+            <span>Clique no cartão para abrir os detalhes</span>
           </div>
         </div>
 
@@ -1845,9 +2044,9 @@ export default function Atividades({
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-[#F05D28]">Detalhamento operacional</p>
-                    <h3 className="mt-2 text-[18px] font-black text-[#2D2D2D]">{selectedActivity.osCodigo} Â· {selectedActivity.osNome}</h3>
+                    <h3 className="mt-2 text-[18px] font-black text-[#2D2D2D]">{selectedActivity.osCodigo} · {selectedActivity.osNome}</h3>
                     <p className="mt-2 text-[12px] leading-relaxed text-[#64748B]">
-                      Painel lateral com os dados tÃ©cnicos e operacionais da atividade selecionada.
+                      Painel lateral com os dados técnicos e operacionais da atividade selecionada.
                     </p>
                   </div>
 
@@ -1867,11 +2066,11 @@ export default function Atividades({
                 <div className="rounded-[24px] border border-[#E5E7EB] bg-[#F8FAFC] p-4">
                   <div className="mb-3 flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[11px] font-extrabold uppercase tracking-[0.8px] text-[#F05D28]">Preenchimento do lÃ­der</p>
-                      <p className="mt-1 text-[12px] text-[#64748B]">Esses campos entram antes do detalhamento tÃ©cnico e ficam salvos localmente.</p>
+                      <p className="text-[11px] font-extrabold uppercase tracking-[0.8px] text-[#F05D28]">Preenchimento do líder</p>
+                      <p className="mt-1 text-[12px] text-[#64748B]">Esses campos entram antes do detalhamento técnico e ficam salvos localmente.</p>
                     </div>
                     <span className="rounded-full border border-[#F7C7B7] bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-[0.5px] text-[#D15B2C]">
-                      Campos obrigatÃ³rios
+                      Campos obrigatórios
                     </span>
                   </div>
 
@@ -1881,15 +2080,15 @@ export default function Atividades({
                       value={selectedActivity.executadoPor}
                       options={executadoPorOptions}
                       placeholder="Selecione uma ou mais pessoas"
-                      helperText="SeleÃ§Ã£o mÃºltipla restrita aos cadastrados da disciplina do usuÃ¡rio atual."
-                      onChange={(next) => updateSelectedActivity({ executadoPor: next, leaderEdited: true, status: 'Em execuÃ§Ã£o' })}
+                      helperText="Seleção múltipla restrita aos cadastrados da disciplina do usuário atual."
+                      onChange={(next) => updateSelectedActivity({ executadoPor: next, leaderEdited: true, status: 'Em execução' })}
                     />
 
                     <div>
                       <label className="bentham-label">Status da atividade *</label>
                       <select
                         value={selectedActivity.statusDaAtividade}
-                        onChange={(event) => updateSelectedActivity({ statusDaAtividade: event.target.value as LeaderActivityStatus, leaderEdited: true, status: 'Em execuÃ§Ã£o' })}
+                        onChange={(event) => updateSelectedActivity({ statusDaAtividade: event.target.value as LeaderActivityStatus, leaderEdited: true, status: 'Em execução' })}
                         className="bentham-select h-10 text-[13px]"
                       >
                         <option value="">Selecione</option>
@@ -1903,13 +2102,13 @@ export default function Atividades({
                       <label className="bentham-label">Dificuldade da atividade *</label>
                       <select
                         value={selectedActivity.dificuldadeAtividade}
-                        onChange={(event) => updateSelectedActivity({ dificuldadeAtividade: event.target.value as LeaderDifficulty, leaderEdited: true, status: 'Em execuÃ§Ã£o' })}
+                        onChange={(event) => updateSelectedActivity({ dificuldadeAtividade: event.target.value as LeaderDifficulty, leaderEdited: true, status: 'Em execução' })}
                         className="bentham-select h-10 text-[13px]"
                       >
                         <option value="">Selecione</option>
-                        <option value="Dificil">DifÃ­cil</option>
+                        <option value="Difícil">Difícil</option>
                         <option value="Regular">Regular</option>
-                        <option value="Facil">FÃ¡cil</option>
+                        <option value="Fácil">Fácil</option>
                       </select>
                     </div>
 
@@ -1922,7 +2121,7 @@ export default function Atividades({
                         value={selectedActivity.porcentagemAtividade ?? ''}
                         onChange={(event) => {
                           const parsed = event.target.value === '' ? null : clampPercentage(Number(event.target.value));
-                          updateSelectedActivity({ porcentagemAtividade: parsed, leaderEdited: true, status: 'Em execuÃ§Ã£o' });
+                          updateSelectedActivity({ porcentagemAtividade: parsed, leaderEdited: true, status: 'Em execução' });
                         }}
                         className="bentham-input h-10 text-[13px]"
                         placeholder="0 - 100"
@@ -1930,16 +2129,16 @@ export default function Atividades({
                     </div>
 
                     <div>
-                      <label className="bentham-label">ObservaÃ§Ã£o *</label>
+                      <label className="bentham-label">Observação *</label>
                       <textarea
                         minLength={30}
                         value={selectedActivity.observacaoLider}
-                        onChange={(event) => updateSelectedActivity({ observacaoLider: event.target.value, leaderEdited: true, status: 'Em execuÃ§Ã£o' })}
+                        onChange={(event) => updateSelectedActivity({ observacaoLider: event.target.value, leaderEdited: true, status: 'Em execução' })}
                         className={`bentham-input min-h-[110px] w-full resize-none py-2 text-[13px] ${selectedActivity.observacaoLider.trim().length > 0 && selectedActivity.observacaoLider.trim().length < 30 ? 'border-[#F59E0B]' : ''}`}
-                        placeholder="Descreva a observaÃ§Ã£o com pelo menos 30 caracteres"
+                        placeholder="Descreva a observação com pelo menos 30 caracteres"
                       />
                       <p className={`mt-1 text-[10px] font-medium ${selectedActivity.observacaoLider.trim().length > 0 && selectedActivity.observacaoLider.trim().length < 30 ? 'text-[#B45309]' : 'text-[#94A3B8]'}`}>
-                        MÃ­nimo de 30 caracteres.
+                        Mínimo de 30 caracteres.
                       </p>
                     </div>
                   </div>
@@ -1952,8 +2151,8 @@ export default function Atividades({
                   <DetailField label="Projeto / Objeto" value={selectedActivity.osNome} />
                   <DetailField label="Disciplina" value={selectedActivity.disciplina} />
                   <DetailField label="Subdisciplina" value={selectedActivity.subdisciplina} />
-                  <DetailField label="ResponsÃ¡vel" value={selectedActivity.responsavel} />
-                  <DetailField label="Etapa tÃ©cnica" value={selectedActivity.etapaTecnica} />
+                  <DetailField label="Responsável" value={selectedActivity.responsavel} />
+                  <DetailField label="Etapa técnica" value={selectedActivity.etapaTecnica} />
                   <DetailField label="Prioridade" value={<PriorityBadge priority={selectedActivity.prioridade} />} />
                 </div>
 
@@ -1974,12 +2173,12 @@ export default function Atividades({
                 <DetailField label="Atividade completa" value={<p className="leading-relaxed text-[#334155]">{selectedActivity.atividade}</p>} />
 
                 <div className="grid grid-cols-2 gap-3">
-                  <DetailField label="InÃ­cio planejado" value={formatDatePt(selectedActivity.inicioPlanejado)} />
-                  <DetailField label="TÃ©rmino planejado" value={formatDatePt(selectedActivity.terminoPlanejado)} />
+                  <DetailField label="Início planejado" value={formatDatePt(selectedActivity.inicioPlanejado)} />
+                  <DetailField label="Término planejado" value={formatDatePt(selectedActivity.terminoPlanejado)} />
                   <DetailField label="Percentual previsto" value={`${selectedActivity.percentualPrevisto}%`} />
                   <DetailField label="Percentual realizado" value={typeof selectedActivity.porcentagemAtividade === 'number' ? `${getLeaderPercentual(selectedActivity)}%` : '-'} />
                   <DetailField
-                    label="DiferenÃ§a previsto x realizado"
+                    label="Diferença previsto x realizado"
                     value={
                       <span className={typeof selectedActivity.porcentagemAtividade === 'number' ? (getProgressDelta(selectedActivity) < 0 ? 'text-[#B45309]' : 'text-[#0F766E]') : 'text-[#94A3B8]'}>
                         {typeof selectedActivity.porcentagemAtividade === 'number'
@@ -1988,14 +2187,14 @@ export default function Atividades({
                       </span>
                     }
                   />
-                  <DetailField label="Origem EAP" value={selectedActivity.origemItem || 'Sem cÃ³digo informado'} />
+                  <DetailField label="Origem EAP" value={selectedActivity.origemItem || 'Sem código informado'} />
                 </div>
 
                 <ProgressComparison activity={selectedActivity} />
 
                 <DetailField label="Motivo de bloqueio" value={selectedActivity.motivoBloqueio || 'Sem bloqueio registrado para esta atividade.'} />
-                <DetailField label="PrÃ³xima aÃ§Ã£o" value={selectedActivity.proximaAcao} />
-                <DetailField label="ObservaÃ§Ãµes" value={selectedActivity.observacaoLider || selectedActivity.observacoes} />
+                <DetailField label="Próxima ação" value={selectedActivity.proximaAcao} />
+                <DetailField label="Observações" value={selectedActivity.observacaoLider || selectedActivity.observacoes} />
                 </div>
               </div>
               </motion.div>
@@ -2054,7 +2253,7 @@ export default function Atividades({
                         >
                           <div className="flex items-center justify-between gap-3">
                             <span className="text-[10px] font-extrabold uppercase tracking-[0.6px] text-[#F05D28]">
-                              {item.contrato} Â· {item.os}
+                              {item.contrato} · {item.os}
                             </span>
                             <span className="rounded-full bg-[#EEF6FD] px-2 py-1 text-[10px] font-bold text-[#0F4C81]">
                               {item.disciplina}
@@ -2070,7 +2269,7 @@ export default function Atividades({
                 </div>
 
                 <div className="space-y-4">
-                  <label className="bentham-label">ConfiguraÃ§Ã£o operacional</label>
+                  <label className="bentham-label">Configuração operacional</label>
 
                   {selectedEapIndex !== null ? (
                     <div className="space-y-4 rounded-3xl border border-[#FAD9C8] bg-[#FFF8F5] p-4">
@@ -2082,7 +2281,7 @@ export default function Atividades({
                       </div>
 
                       <div>
-                        <label className="bentham-label">ResponsÃ¡vel</label>
+                        <label className="bentham-label">Responsável</label>
                         <select value={importResponsavel} onChange={(event) => setImportResponsavel(event.target.value)} className="bentham-select">
                           {RESPONSAVEIS.map((name) => (
                             <option key={name} value={name}>
@@ -2094,7 +2293,7 @@ export default function Atividades({
 
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="bentham-label">Etapa tÃ©cnica</label>
+                          <label className="bentham-label">Etapa técnica</label>
                           <select value={importEtapa} onChange={(event) => setImportEtapa(event.target.value as TechnicalStep)} className="bentham-select">
                             {TECHNICAL_STEPS.map((step) => (
                               <option key={step} value={step}>
@@ -2136,7 +2335,7 @@ export default function Atividades({
 
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="bentham-label">InÃ­cio planejado</label>
+                        <label className="bentham-label">Início planejado</label>
                           <input
                             type="date"
                             value={importInicio}
@@ -2146,7 +2345,7 @@ export default function Atividades({
                         </div>
 
                         <div>
-                          <label className="bentham-label">TÃ©rmino planejado</label>
+                          <label className="bentham-label">Término planejado</label>
                           <input
                             type="date"
                             value={importTermino}
@@ -2161,7 +2360,7 @@ export default function Atividades({
                       <FileText size={32} className="text-[#94A3B8]" />
                       <p className="mt-4 text-[13px] font-bold text-[#475569]">Selecione um item do cronograma</p>
                       <p className="mt-2 max-w-[240px] text-[12px] leading-relaxed text-[#94A3B8]">
-                        Assim que um item for escolhido, os campos operacionais da semana ficam disponÃ­veis para o vÃ­nculo local.
+                        Assim que um item for escolhido, os campos operacionais da semana ficam disponíveis para o vínculo local.
                       </p>
                     </div>
                   )}

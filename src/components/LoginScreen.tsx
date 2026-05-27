@@ -6,6 +6,7 @@ export interface AuthUser {
   email: string;
   role: string;
   disciplina: string;
+  disciplinas?: string[];
   contrato: string;
   status: string;
   abas: string[];

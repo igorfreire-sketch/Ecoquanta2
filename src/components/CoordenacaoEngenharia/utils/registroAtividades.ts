@@ -1,3 +1,5 @@
+import { splitDisciplineValues } from '../../../lib/disciplineCatalog';
+
 export type DisciplineMaps = {
   byEmail: Record<string, string>;
   byName: Record<string, string>;
@@ -49,6 +51,12 @@ function getAdminUsers(admin: any) {
   return [];
 }
 
+function formatUserDiscipline(user: any) {
+  const list = splitDisciplineValues(user?.disciplinas || user?.discipline || user?.disciplina);
+  if (list.length > 0) return list.join(' | ');
+  return String(user?.disciplina || user?.discipline || '').trim();
+}
+
 export function buildProfessionalDisciplineMaps(registro: any, admin?: any): DisciplineMaps {
   const byEmail: Record<string, string> = {};
   const byName: Record<string, string> = {};
@@ -57,7 +65,7 @@ export function buildProfessionalDisciplineMaps(registro: any, admin?: any): Dis
   adminUsers.forEach((user: any) => {
     const email = normalizeText(user?.email);
     const name = normalizeText(user?.nome || user?.name);
-    const disciplina = String(user?.disciplina || user?.discipline || '').trim();
+    const disciplina = formatUserDiscipline(user);
     if (email && disciplina && !byEmail[email]) byEmail[email] = disciplina;
     if (name && disciplina && !byName[name]) byName[name] = disciplina;
   });
@@ -66,7 +74,7 @@ export function buildProfessionalDisciplineMaps(registro: any, admin?: any): Dis
   usersSummary.forEach((user: any) => {
     const email = normalizeText(user?.email);
     const name = normalizeText(user?.nome || user?.name);
-    const disciplina = String(user?.disciplina || '').trim();
+    const disciplina = formatUserDiscipline(user);
     if (email && disciplina && !byEmail[email]) byEmail[email] = disciplina;
     if (name && disciplina && !byName[name]) byName[name] = disciplina;
   });
@@ -77,7 +85,7 @@ export function buildProfessionalDisciplineMaps(registro: any, admin?: any): Dis
     profissionais.forEach((prof: any) => {
       const email = normalizeText(prof?.email);
       const name = normalizeText(prof?.nome || prof?.name);
-      const disciplinaAtual = String(prof?.disciplina || disciplina || '').trim();
+      const disciplinaAtual = formatUserDiscipline(prof) || String(prof?.disciplina || disciplina || '').trim();
       if (email && !byEmail[email]) byEmail[email] = disciplinaAtual;
       if (name && !byName[name]) byName[name] = disciplinaAtual;
     });

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Send } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
+import { getUserDisciplineList } from '../../lib/disciplineCatalog';
 import { generateId, saveRecordsBatch, type Nc2Record } from './ncStore';
 
 type ItemKey = 'carimbo' | 'desenho' | 'relatorio' | 'faltaArquivo';
@@ -123,13 +124,14 @@ export default function Preenchimento({
   lockedContractCode,
   disciplinas = [],
 }: PreenchimentoProps) {
+  const currentDisciplines = useMemo(() => getUserDisciplineList(currentUser), [currentUser]);
   const [formData, setFormData] = useState({
     avaliador: currentUser.nome || '',
     contrato: lockedContractCode || currentUser.contrato || '',
     os: '',
     objetoOs: '',
     objetoOsCodigo: '',
-    disciplina: currentUser.disciplina || '',
+    disciplina: currentDisciplines[0] || currentUser.disciplina || '',
     origemAtividade: '' as '' | 'interno' | 'terceirizado',
     observacoes: '',
   });
@@ -155,9 +157,9 @@ export default function Preenchimento({
       ...prev,
       avaliador: currentUser.nome || '',
       contrato: lockedContractCode || prev.contrato || currentUser.contrato || '',
-      disciplina: prev.disciplina || currentUser.disciplina || '',
+      disciplina: prev.disciplina || currentDisciplines[0] || currentUser.disciplina || '',
     }));
-  }, [currentUser.contrato, currentUser.disciplina, currentUser.nome, lockedContractCode]);
+  }, [currentDisciplines, currentUser.contrato, currentUser.disciplina, currentUser.nome, lockedContractCode]);
 
   useEffect(() => {
     const updateClock = () => {
@@ -186,15 +188,23 @@ export default function Preenchimento({
       const osCodigo = String(activity?.osCodigo || '').trim();
       const itemCodigo = String(activity?.itemCodigo || '').trim();
       const disciplina = String(activity?.criadoPorDisciplina || activity?.disciplina || '').trim();
+      const disciplineMatches = currentDisciplines.length === 0
+        ? true
+        : currentDisciplines.some((item) => normalizeText(item) === normalizeText(disciplina));
 
       return (
         normalizeText(contratoCodigo) === normalizeText(formData.contrato) &&
         normalizeText(osCodigo) === normalizeText(formData.os) &&
         normalizeText(itemCodigo) === normalizeText(formData.objetoOsCodigo) &&
-        normalizeText(disciplina) === normalizeText(formData.disciplina)
+        disciplineMatches &&
+        (
+          !formData.disciplina ||
+          normalizeText(disciplina) === normalizeText(formData.disciplina) ||
+          currentDisciplines.some((item) => normalizeText(item) === normalizeText(formData.disciplina))
+        )
       );
     }) || null;
-  }, [formData.contrato, formData.disciplina, formData.objetoOsCodigo, formData.os, sourceActivities]);
+  }, [currentDisciplines, formData.contrato, formData.disciplina, formData.objetoOsCodigo, formData.os, sourceActivities]);
 
   const origemAutomatica = useMemo<'' | 'interno' | 'terceirizado'>(() => {
     if (!matchedActivity) return '';
@@ -258,7 +268,7 @@ export default function Preenchimento({
       os: '',
       objetoOs: '',
       objetoOsCodigo: '',
-      disciplina: currentUser.disciplina || '',
+      disciplina: currentDisciplines[0] || currentUser.disciplina || '',
       origemAtividade: '',
       observacoes: '',
     });

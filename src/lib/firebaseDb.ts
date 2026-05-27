@@ -16,6 +16,7 @@ import {
   writeBatch,
   type Firestore,
 } from 'firebase/firestore';
+import { getUserDisciplineList } from './disciplineCatalog';
 interface FirebaseRuntimeConfig {
   apiKey: string;
   authDomain: string;
@@ -30,6 +31,7 @@ interface AuthUserLike {
   nome?: string;
   role?: string;
   disciplina?: string;
+  disciplinas?: string[] | string;
   contrato?: string;
   isAdmin?: boolean;
   onlyThirdParty?: boolean;
@@ -254,15 +256,15 @@ function activityMatchesUser(activity: any, user: AuthUserLike, professionals: a
   const userContract = String(user.contrato || '').trim();
   if (userContract && String(activity?.contratoCodigo || '').trim() !== userContract) return false;
 
-  const userDiscipline = normalizeDiscipline(user.disciplina);
-  if (!userDiscipline) return true;
+  const userDisciplines = getUserDisciplineList(user).map((item) => normalizeDiscipline(item)).filter(Boolean);
+  if (!userDisciplines.length) return true;
 
   const activityDiscipline = normalizeDiscipline(activity?.criadoPorDisciplina || activity?.disciplina);
-  if (activityDiscipline) return activityDiscipline === userDiscipline;
+  if (activityDiscipline) return userDisciplines.includes(activityDiscipline);
 
   const disciplineEmails = new Set(
     professionals
-      .filter((item) => normalizeDiscipline(item?.disciplina) === userDiscipline)
+      .filter((item) => userDisciplines.includes(normalizeDiscipline(item?.disciplina)))
       .map((item) => normalizeEmail(item?.email))
       .filter(Boolean),
   );
@@ -469,9 +471,11 @@ function getProfessionalsForUser(registro: any, user: AuthUserLike, admin?: any)
     return filterVisibleProfessionals(Object.values(byDiscipline).flat().filter(Boolean));
   }
 
-  const target = normalizeDiscipline(user.disciplina) || normalizeDiscipline('Sem disciplina');
-  const entry = Object.entries(byDiscipline).find(([key, value]) => normalizeDiscipline(key) === target && Array.isArray(value));
-  return filterVisibleProfessionals((entry?.[1] as any[]) || []);
+  const targets = getUserDisciplineList(user).map((item) => normalizeDiscipline(item)).filter(Boolean);
+  if (!targets.length) return filterVisibleProfessionals(Array.isArray(registro?.professionals) ? registro.professionals : []);
+
+  const entries = Object.entries(byDiscipline).filter(([key, value]) => targets.includes(normalizeDiscipline(key)) && Array.isArray(value));
+  return filterVisibleProfessionals(entries.flatMap((entry) => entry[1] as any[]));
 }
 
 export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise<RegistroDataResponse> {

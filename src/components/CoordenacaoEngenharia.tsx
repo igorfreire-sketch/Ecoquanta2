@@ -3,8 +3,8 @@ import {
   CalendarClock,
   ChevronRight,
 } from 'lucide-react';
+import Atividades from './Atividades';
 import DashboardEngenharia from './CoordenacaoEngenharia/DashboardEngenharia';
-import Alertas from './CoordenacaoEngenharia/Alertas';
 import CurvaS from './CoordenacaoEngenharia/CurvaS';
 import Cronograma from './Cronograma';
 import type { AuthUser } from './LoginScreen';
@@ -77,11 +77,12 @@ function getLatestEapDisplayDate(eap?: any) {
 }
 
 export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
+  const effectiveSubTab = subTab === 'alertas' ? 'dashboard' : subTab;
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'profissionais', label: 'Profissionais' },
+    { id: 'planejamento', label: 'Atividades' },
     { id: 'curva-s', label: 'Curva S' },
-    { id: 'alertas', label: 'Alertas' },
     { id: 'cronograma', label: 'Cronograma' },
   ];
   const latestEapDate = getLatestEapDisplayDate(preloadedData?.eap);
@@ -94,7 +95,7 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
           <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
             <span>Coordenacao de Engenharia</span>
             <ChevronRight size={12} />
-            <span className="text-[#F05D28]">{tabs.find(t => t.id === subTab)?.label}</span>
+            <span className="text-[#F05D28]">{tabs.find(t => t.id === effectiveSubTab)?.label}</span>
           </div>
         </div>
 
@@ -106,11 +107,11 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
       </div>
 
       <div className="pb-10">
-        {subTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="dashboard" activeContractCode={activeContractCode} />}
-        {subTab === 'profissionais' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="profissionais" activeContractCode={activeContractCode} />}
-        {subTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
-        {subTab === 'alertas' && <Alertas currentUser={currentUser} preloadedData={preloadedData} activeContractCode={activeContractCode} />}
-        {subTab === 'cronograma' && <Cronograma preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
+        {effectiveSubTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="dashboard" activeContractCode={activeContractCode} />}
+        {effectiveSubTab === 'profissionais' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="profissionais" activeContractCode={activeContractCode} />}
+        {effectiveSubTab === 'planejamento' && <Atividades currentUser={currentUser} preloadedData={preloadedData} showAllDisciplines filtersAlwaysVisible />}
+        {effectiveSubTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
+        {effectiveSubTab === 'cronograma' && <Cronograma preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
       </div>
     </div>
   );

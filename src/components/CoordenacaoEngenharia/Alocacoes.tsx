@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Mail, Send, X } from 'lucide-react';
+import { ChevronDown, Mail, Send } from 'lucide-react';
 import {
   buildProfessionalDisciplineMaps,
   extractParticipantAssignments,
@@ -7,6 +7,7 @@ import {
   isAllContract,
   normalizeText,
 } from './utils/registroAtividades';
+import { resolveDisciplineEntry } from '../../lib/disciplineCatalog';
 
 interface Professional {
   name: string;
@@ -55,6 +56,10 @@ type Assignment = {
 
 function formatPercent(value: number) {
   return `${Math.round(value * 10) / 10}`.replace('.', ',') + '%';
+}
+
+function normalizeDisciplineLabel(value?: string) {
+  return resolveDisciplineEntry(String(value || '').trim()) || String(value || '').trim();
 }
 
 function getVisibleActivities(preloadedData?: AlocacoesProps['preloadedData'], activeContractCode?: string) {
@@ -137,7 +142,7 @@ function buildAssignments(preloadedData?: AlocacoesProps['preloadedData'], activ
       key: `${item.activityId}-${item.profissionalEmail || item.profissional}-${index}`,
       nome: item.profissional,
       email: item.profissionalEmail,
-      disciplina: item.disciplina,
+      disciplina: normalizeDisciplineLabel(item.disciplina),
       contrato: item.contratoCodigo,
       atividadeId: item.activityId,
       peso: item.participacaoProfissional || 0,
@@ -156,7 +161,7 @@ function buildAssignments(preloadedData?: AlocacoesProps['preloadedData'], activ
       key: `${String(activity?.activityId || activity?.id || activity?.itemCodigo || index)}-${participant.email || participant.nome}-${participantIndex}`,
       nome: participant.nome,
       email: participant.email,
-      disciplina: participant.disciplina,
+      disciplina: normalizeDisciplineLabel(participant.disciplina),
       contrato,
       atividadeId: String(activity?.activityId || activity?.id || activity?.itemCodigo || index),
       peso,
@@ -165,25 +170,38 @@ function buildAssignments(preloadedData?: AlocacoesProps['preloadedData'], activ
 }
 
 function getDisciplinas(preloadedData?: AlocacoesProps['preloadedData'], assignments: Assignment[] = []) {
-  const fromAdmin = Array.isArray(preloadedData?.admin?.disciplinas) ? preloadedData.admin.disciplinas : [];
-  const fromRegistro = Array.isArray(preloadedData?.registro?.usersSummary)
-    ? preloadedData.registro.usersSummary.map((user: any) => String(user?.disciplina || '').trim()).filter(Boolean)
-    : [];
-  const fromAssignments = assignments.map((item) => String(item.disciplina || '').trim()).filter(Boolean);
-  return Array.from(new Set([...fromAdmin, ...fromRegistro, ...fromAssignments].map(String).map((item) => item.trim()).filter(Boolean)));
+  const adminSettings = Array.isArray(preloadedData?.admin?.disciplineSettings)
+    ? preloadedData.admin.disciplineSettings
+    : Array.isArray(preloadedData?.admin?.disciplinas)
+      ? preloadedData.admin.disciplinas
+      : [];
+
+  const visibleFromAdmin: Array<{ nome: string; showInCharts: boolean }> = adminSettings
+    .map((item: any) => ({
+      nome: normalizeDisciplineLabel(String(item?.nome || item?.name || item || '').trim()),
+      showInCharts: item?.showInCharts !== false,
+    }))
+    .filter((item): item is { nome: string; showInCharts: boolean } => Boolean(item.showInCharts && item.nome));
+
+  if (adminSettings.length > 0) {
+    return Array.from(new Set(visibleFromAdmin.map((item) => item.nome).filter(Boolean)));
+  }
+
+  const fromAssignments: string[] = assignments.map((item) => normalizeDisciplineLabel(item.disciplina)).filter(Boolean);
+  return Array.from(new Set(fromAssignments.map(String).map((item) => item.trim()).filter(Boolean)));
 }
 
 function getProfessionalsByDisciplina(preloadedData?: AlocacoesProps['preloadedData'], assignments: Assignment[] = []) {
   const out: Record<string, Array<{ nome: string; email: string; disciplina: string }>> = {};
   const seen = new Set<string>();
-  const professionalsByDisciplina = preloadedData?.registro?.professionalsByDisciplina || {};
+  const professionalsByDisciplina: Record<string, Array<{ nome?: string; email?: string; disciplina?: string }>> = preloadedData?.registro?.professionalsByDisciplina || {};
 
   Object.keys(professionalsByDisciplina).forEach((disciplina) => {
     const list = Array.isArray(professionalsByDisciplina[disciplina]) ? professionalsByDisciplina[disciplina] : [];
     list.forEach((prof: any) => {
       const nome = String(prof?.nome || '').trim();
       const email = String(prof?.email || '').trim();
-      const disciplinaAtual = String(prof?.disciplina || disciplina || '').trim();
+      const disciplinaAtual = normalizeDisciplineLabel(String(prof?.disciplina || disciplina || '').trim());
       const key = `${normalizeText(nome)}|${normalizeText(email)}`;
       if (!nome || seen.has(key)) return;
       seen.add(key);
@@ -233,15 +251,15 @@ function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contrat
     totalByDisciplina[disciplinaKey] = (totalByDisciplina[disciplinaKey] || 0) + assignment.peso;
   });
 
-  return disciplinas.map((disciplina) => {
+  return disciplinas.map((disciplina: string) => {
     const profissionais = professionalsByDisciplina[normalizeText(disciplina)] || [];
     const disciplinaKey = normalizeText(disciplina);
     const totalDisciplina = Math.max(totalByDisciplina[disciplinaKey] || 0, 1);
 
     return {
       id: disciplina,
-      disciplina,
-      tituloCard: disciplina,
+      disciplina: String(disciplina),
+      tituloCard: normalizeDisciplineLabel(disciplina),
       profissionais: profissionais.map((prof) => {
         const personKey = normalizeText(prof.email) || normalizeText(prof.nome);
         const registryKey = `${disciplinaKey}|${personKey}`;
@@ -264,42 +282,91 @@ function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contrat
 }
 
 const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode, dadosTabela }) => {
-  const [filtroAtivo, setFiltroAtivo] = useState<string | null>(null);
+  const [filtroAtivo, setFiltroAtivo] = useState<string[]>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
   const assignments = useMemo(() => buildAssignments(preloadedData, activeContractCode, dadosTabela), [preloadedData, activeContractCode, dadosTabela]);
   const contratos = useMemo(() => getContratosAtivos(assignments), [assignments]);
   const dadosAlocacoes = useMemo(() => buildAlocacoes(preloadedData, contratos, activeContractCode), [preloadedData, contratos, activeContractCode]);
-  const disciplinasLista = dadosAlocacoes.map((item) => item.disciplina);
+  const disciplinasLista = useMemo(() => getDisciplinas(preloadedData, assignments), [assignments, preloadedData]);
 
-  const cardsFiltrados = filtroAtivo
-    ? dadosAlocacoes.filter((d) => d.disciplina === filtroAtivo)
+  const visibleLabels = useMemo(() => {
+    return disciplinasLista;
+  }, [disciplinasLista]);
+
+  const cardsFiltrados = filtroAtivo.length > 0
+    ? dadosAlocacoes.filter((d) => filtroAtivo.includes(d.disciplina))
     : dadosAlocacoes;
+
+  const selectedPreview = filtroAtivo.length === 0
+    ? 'Selecione...'
+    : filtroAtivo.slice(0, 2).join(' | ');
 
   return (
     <div className="min-h-full bg-[#F8F9FA] font-['Montserrat']">
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6 mb-8">
-        <div className="flex flex-wrap items-center gap-2">
-          {disciplinasLista.map((disciplina) => (
-            <button
-              key={disciplina}
-              onClick={() => setFiltroAtivo(disciplina)}
-              className={`px-4 py-2 rounded-full text-[12px] font-medium transition-all border ${
-                filtroAtivo === disciplina
-                  ? 'bg-[#F05D28]/10 border-[#F05D28] text-[#F05D28]'
-                  : 'bg-white border-[#E5E7EB] text-[#757575] hover:bg-gray-50'
-              }`}
-            >
-              {disciplina}
-            </button>
-          ))}
+        <div className="relative w-full max-w-[420px]">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((prev) => !prev)}
+            className="flex h-11 w-full items-center justify-between gap-3 rounded-xl border border-[#E5E7EB] bg-white px-4 text-left text-[13px] font-medium text-[#2D2D2D] shadow-sm transition-colors hover:border-[#F05D28]"
+          >
+            <span className={`min-w-0 flex-1 truncate ${filtroAtivo.length === 0 ? 'text-[#9CA3AF]' : ''}`}>
+              {selectedPreview}
+            </span>
+            <ChevronDown size={16} className="shrink-0 text-[#757575]" />
+          </button>
 
-          {filtroAtivo !== null && (
-            <button
-              onClick={() => setFiltroAtivo(null)}
-              className="flex items-center gap-1 px-4 py-2 text-[12px] font-medium text-[#EF4444] hover:bg-red-50 rounded-full transition-all"
-            >
-              <X size={14} />
-              Limpar Filtro
-            </button>
+          {menuOpen && (
+            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-full rounded-2xl border border-[#E5E7EB] bg-white p-2 shadow-xl shadow-black/5">
+              <div className="max-h-[280px] overflow-y-auto">
+                {visibleLabels.length === 0 ? (
+                  <div className="px-3 py-2 text-[12px] text-[#757575]">
+                    Nenhuma disciplina disponivel.
+                  </div>
+                ) : (
+                  visibleLabels.map((disciplina) => {
+                    const checked = filtroAtivo.includes(disciplina);
+                    return (
+                      <label
+                        key={disciplina}
+                        className="flex items-start justify-between gap-3 rounded-xl px-3 py-2.5 hover:bg-[#F9FAFB] cursor-pointer transition-colors"
+                      >
+                        <span className="text-[12px] font-medium text-[#2D2D2D] leading-tight">{disciplina}</span>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setFiltroAtivo((prev) => (
+                              prev.includes(disciplina)
+                                ? prev.filter((item) => item !== disciplina)
+                                : [...prev, disciplina]
+                            ));
+                          }}
+                          className="w-4 h-4 accent-[#F05D28] cursor-pointer shrink-0 mt-0.5"
+                        />
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="flex items-center justify-between gap-3 border-t border-[#E5E7EB] px-3 pt-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setFiltroAtivo([])}
+                  className="text-[11px] font-bold uppercase tracking-wider text-[#EF4444] hover:text-[#B91C1C]"
+                >
+                  Limpar filtro
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen(false)}
+                  className="text-[11px] font-bold uppercase tracking-wider text-[#757575] hover:text-[#2D2D2D]"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
           )}
         </div>
 

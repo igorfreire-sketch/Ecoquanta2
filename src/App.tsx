@@ -31,6 +31,12 @@ import type {
 import LoginScreen, { AuthUser } from './components/LoginScreen';
 import { getAppVersionLabel } from './config/appVersion';
 import {
+  DEFAULT_DISCIPLINE_SETTINGS,
+  getPrimaryDisciplineValue,
+  getUserDisciplineList,
+  splitDisciplineValues,
+} from './lib/disciplineCatalog';
+import {
   fetchBootstrapDataFromFirebase,
   fetchCronogramaDataFromFirebase,
   fetchEapDataFromFirebase,
@@ -43,7 +49,6 @@ import {
 const Atividades = React.lazy(() => import('./components/Atividades'));
 const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEngenharia'));
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
-const Alertas = React.lazy(() => import('./components/CoordenacaoEngenharia/Alertas'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
@@ -51,6 +56,19 @@ const Administracao = React.lazy(() => import('./components/Administracao'));
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
 const APP_VERSION_LABEL = getAppVersionLabel();
+const DEFAULT_ALOCACOES = [
+  'Rio de Janeiro',
+  'Maca\u00e9',
+  'Maric\u00e1',
+  'Quanta',
+  'S\u00e3o Paulo',
+  'Fortaleza',
+  'Belo Horizonte',
+  'Bahia',
+  'Jo\u00e3o Pessoa',
+  'Natal',
+  'Oiticica',
+];
 
 // Domínio corporativo: usuários deste domínio são aprovados automaticamente
 // mas sem nenhuma aba habilitada (admin atribuirá acessos depois se necessário)
@@ -75,9 +93,9 @@ function shouldLockUserToContract(user?: AuthUser | null) {
 type AppTab = 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'administracao';
 type AreaTecnicaSubTab = 'atividades' | 'cronograma';
 type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma';
-type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'cronograma';
+type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'cronograma' | 'atividades';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'cronograma';
-type ContratoSubTab = 'dashboard' | 'interferencias' | 'prioridades' | 'cronograma';
+type ContratoSubTab = 'dashboard' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
@@ -539,11 +557,13 @@ function normalizeUser(raw: any): AuthUser {
   const abas = Array.isArray(raw.abas)
     ? raw.abas
     : String(raw.abas || '').split(',').map((item) => item.trim()).filter(Boolean);
+  const disciplinas = splitDisciplineValues(raw.disciplinas || raw.disciplines || raw.disciplina);
   return {
     nome: raw.nome || '',
     email: raw.email || '',
     role: raw.role || '',
-    disciplina: raw.disciplina || '',
+    disciplina: getPrimaryDisciplineValue(raw.disciplina || disciplinas[0] || ''),
+    disciplinas,
     contrato: raw.contrato || '',
     status: raw.status || '',
     abas,
@@ -608,7 +628,8 @@ function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
       nome: String(u.nome || u.name || ''),
       email: String(u.email || u.id || ''),
       online: Boolean(u.online),
-      disciplina: String(u.disciplina || u.discipline || ''),
+      disciplina: getPrimaryDisciplineValue(u.disciplina || u.discipline || u.disciplinas || ''),
+      disciplinas: getUserDisciplineList(u),
       cargo: String(u.cargo || u.role || ''),
       alocacao: String(u.alocacao || u.allocation || ''),
       contrato: String(u.contrato || u.contract || ''),
@@ -630,7 +651,7 @@ function normalizeLoadedAdmin(admin: any, data: GlobalData) {
     admin.disciplineSettings
     ?? admin.disciplinas
     ?? admin.disciplinasConfiguradas
-    ?? [],
+    ?? DEFAULT_DISCIPLINE_SETTINGS,
   );
 
   return {
@@ -644,13 +665,14 @@ function normalizeLoadedAdmin(admin: any, data: GlobalData) {
 
 function getAdminState(data: GlobalData) {
   const admin = data.admin || {};
-  const disciplineSettings = normalizeDisciplineSettings(admin.disciplineSettings ?? admin.disciplinas);
+  const disciplineSettings = normalizeDisciplineSettings(admin.disciplineSettings ?? admin.disciplinas ?? DEFAULT_DISCIPLINE_SETTINGS);
+  const alocacoes = Array.isArray(admin.alocacoes) && admin.alocacoes.length > 0 ? admin.alocacoes : DEFAULT_ALOCACOES;
   return {
     usuarios: normalizeAdminUsers(data),
     disciplinas: getDisciplineNamesFromSettings(disciplineSettings),
     disciplineSettings,
     cargos: Array.isArray(admin.cargos) ? admin.cargos : [],
-    alocacoes: Array.isArray(admin.alocacoes) ? admin.alocacoes : [],
+    alocacoes,
     terceirizadas: Array.isArray(admin.terceirizadas) ? admin.terceirizadas.map((item: any) => ({
       id: String(item.id || ''),
       nome: String(item.nome || item.name || ''),
@@ -858,6 +880,8 @@ function applyAdminUserContext(user: AuthUser, admin: any): AuthUser {
   return {
     ...user,
     onlyThirdParty: Boolean(match?.onlyThirdParty || match?.onlyThirdPartyUsers || match?.somenteTerceirizados),
+    disciplina: getPrimaryDisciplineValue(match?.disciplina || match?.discipline || match?.disciplinas || user.disciplina),
+    disciplinas: getUserDisciplineList(match),
   };
 }
 
@@ -939,7 +963,7 @@ function buildLocalTestActivities(registro: any, admin: any, currentUser?: AuthU
   if (!contracts.length || !osOptions.length || !itemOptions.length || !professionalsByDisciplina.length) return [];
 
   const preferredContractCode = String(currentUser?.contrato || '').trim();
-  const preferredDisciplina = String(currentUser?.disciplina || '').trim();
+  const preferredDisciplina = getPrimaryDisciplineValue(getUserDisciplineList(currentUser || {}));
   const prioritizedDisciplineGroups = [
     ...professionalsByDisciplina.filter((item) => normalizeEapCode(item.disciplina) === normalizeEapCode(preferredDisciplina)),
     ...professionalsByDisciplina.filter((item) => normalizeEapCode(item.disciplina) !== normalizeEapCode(preferredDisciplina)),
@@ -1124,6 +1148,7 @@ export default function App() {
         email: user.email,
         online: user.online,
         disciplina: user.disciplina,
+        disciplinas: Array.isArray((user as any).disciplinas) ? (user as any).disciplinas : splitDisciplineValues(user.disciplina),
         cargo: user.cargo,
         alocacao: user.alocacao,
         contrato: user.contrato,
@@ -1510,7 +1535,22 @@ export default function App() {
   const persistUser = useCallback(async (user: UserAccessRecord) => {
     setUsuarios((prev) => prev.map((item) => item.id === user.id ? user : item));
     try {
-      const response = await postToAppsScript<GenericResponse>({ action: 'saveUserAccess', email: user.email, name: user.nome, role: user.cargo, discipline: user.disciplina, allocation: user.alocacao, contract: user.contrato, isAdmin: user.isAdmin, status: user.status, allowedTabs: user.allowedTabs, onlyThirdParty: user.onlyThirdParty });
+      const userDisciplines = Array.isArray((user as any).disciplinas) && (user as any).disciplinas.length > 0
+        ? (user as any).disciplinas
+        : splitDisciplineValues(user.disciplina);
+      const response = await postToAppsScript<GenericResponse>({
+        action: 'saveUserAccess',
+        email: user.email,
+        name: user.nome,
+        role: user.cargo,
+        discipline: userDisciplines,
+        allocation: user.alocacao,
+        contract: user.contrato,
+        isAdmin: user.isAdmin,
+        status: user.status,
+        allowedTabs: user.allowedTabs,
+        onlyThirdParty: user.onlyThirdParty,
+      });
       assertSuccess(response);
       await syncAdminSnapshotToFirebase({
         usuarios: usuarios.map((item) => item.id === user.id ? user : item),
@@ -1539,6 +1579,12 @@ export default function App() {
       if (Object.prototype.hasOwnProperty.call(patch, 'cargo')) {
         const cargo = String(patch.cargo || '').trim();
         nextUser.allowedTabs = cargo ? applyRolePresetTabs(cargo) : [];
+      }
+
+      if (Object.prototype.hasOwnProperty.call(patch, 'disciplina') || Object.prototype.hasOwnProperty.call(patch, 'disciplinas')) {
+        const nextDisciplines = splitDisciplineValues((patch as any).disciplinas || patch.disciplina);
+        nextUser.disciplina = getPrimaryDisciplineValue(nextDisciplines[0] || patch.disciplina || user.disciplina);
+        (nextUser as any).disciplinas = nextDisciplines.length > 0 ? nextDisciplines : splitDisciplineValues(user.disciplina);
       }
 
       return nextUser;
@@ -1796,8 +1842,8 @@ export default function App() {
       return [
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: subTab === 'dashboard', onClick: () => setSubTab('dashboard') },
         { key: 'profissionais', label: 'Profissionais', icon: <Users size={16} />, active: subTab === 'profissionais', onClick: () => setSubTab('profissionais') },
+        { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
-        { key: 'alertas', label: 'Alertas', icon: <AlertTriangle size={16} />, active: subTab === 'alertas', onClick: () => setSubTab('alertas') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: subTab === 'cronograma', onClick: () => setSubTab('cronograma') }] : []),
       ];
     }
@@ -1805,7 +1851,7 @@ export default function App() {
     if (activeTab === 'planejamento') {
       return [
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'dashboard', onClick: () => setPlanejamentoSubTab('dashboard') },
-        { key: 'alertas', label: 'Alertas', icon: <AlertTriangle size={16} />, active: planejamentoSubTab === 'alertas', onClick: () => setPlanejamentoSubTab('alertas') },
+        { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'atividades', onClick: () => setPlanejamentoSubTab('atividades') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: planejamentoSubTab === 'cronograma', onClick: () => setPlanejamentoSubTab('cronograma') }] : []),
       ];
     }
@@ -1824,6 +1870,7 @@ export default function App() {
     if (activeTab === 'contrato') {
       return [
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: contratoSubTab === 'dashboard', onClick: () => setContratoSubTab('dashboard') },
+        { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: contratoSubTab === 'atividades', onClick: () => setContratoSubTab('atividades') },
         { key: 'interferencias', label: 'Interferências', icon: <AlertTriangle size={16} />, active: contratoSubTab === 'interferencias', onClick: () => setContratoSubTab('interferencias') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: contratoSubTab === 'cronograma', onClick: () => setContratoSubTab('cronograma') }] : []),
       ];
@@ -1938,7 +1985,6 @@ export default function App() {
               <HeaderTab active={subTab === 'profissionais'} onClick={() => setSubTab('profissionais')} icon={<Users size={16} />} label="Dashboard" />
               <HeaderTab active={subTab === 'curva-s'} onClick={() => setSubTab('curva-s')} icon={<TrendingUp size={16} />} label="Curva S" />
               <HeaderTab active={subTab === 'planejamento'} onClick={() => setSubTab('planejamento')} icon={<LayoutGrid size={16} />} label="Planejamento" />
-              <HeaderTab active={subTab === 'alertas'} onClick={() => setSubTab('alertas')} icon={<AlertTriangle size={16} />} label="Alertas" />
             </div>
           )}
 
@@ -1988,11 +2034,11 @@ export default function App() {
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
                 planejamentoSubTab === 'dashboard'
                   ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="dashboard" activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
-                  : planejamentoSubTab === 'alertas'
-                    ? <Alertas currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
+                  : planejamentoSubTab === 'atividades'
+                    ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines filtersAlwaysVisible />
                     : planejamentoSubTab === 'cronograma'
-                    ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
-                    : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                      ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
+                      : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (

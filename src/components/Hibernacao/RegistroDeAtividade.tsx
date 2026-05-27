@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { AuthUser } from '../LoginScreen';
+import { getUserDisciplineList } from '../../lib/disciplineCatalog';
 import {
   fetchRegistroDataFromFirebase,
   isFirebaseConfigured,
@@ -139,16 +140,32 @@ function getProfessionalsByDiscipline(
 ) {
   if (!professionalsByDisciplina || typeof professionalsByDisciplina !== 'object') return [];
 
-  const exactKey = String(disciplina || '').trim() || 'Sem disciplina';
-  const exactMatch = professionalsByDisciplina[exactKey];
-  if (Array.isArray(exactMatch) && exactMatch.length > 0) return exactMatch;
+  const requestedDisciplines = String(disciplina || '')
+    .split(/[\n,;|]+/)
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
 
-  const normalizedTarget = normalizeDiscipline(disciplina) || normalizeDiscipline('Sem disciplina');
-  const matchedEntry = Object.entries(professionalsByDisciplina).find(([key, value]) => (
-    normalizeDiscipline(key) === normalizedTarget && Array.isArray(value)
-  ));
+  if (!requestedDisciplines.length) return [];
 
-  return matchedEntry?.[1] || [];
+  const out: ProfessionalOption[] = [];
+  const seen = new Set<string>();
+
+  requestedDisciplines.forEach((requested) => {
+    const exactMatch = professionalsByDisciplina[requested];
+    const entries = Array.isArray(exactMatch) && exactMatch.length > 0
+      ? exactMatch
+      : Object.entries(professionalsByDisciplina)
+          .find(([key, value]) => normalizeDiscipline(key) === normalizeDiscipline(requested) && Array.isArray(value))?.[1] || [];
+
+    entries.forEach((item: ProfessionalOption) => {
+      const key = `${String(item.nome || '').trim().toLowerCase()}|${String(item.email || '').trim().toLowerCase()}`;
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push(item);
+    });
+  });
+
+  return out;
 }
 
 function isHierarchyCode(value?: string) {
@@ -204,18 +221,18 @@ function normalizeRegistroActivity(
 }
 
 function activityMatchesUserDiscipline(activity: Partial<RegistroAtividade> | any, currentUser: AuthUser, professionals: ProfessionalOption[] = []) {
-  const currentDisciplina = normalizeDiscipline(currentUser.disciplina);
-  if (!currentDisciplina) return true;
+  const currentDisciplines = getUserDisciplineList(currentUser).map((item) => normalizeDiscipline(item)).filter(Boolean);
+  if (!currentDisciplines.length) return true;
 
   const activityDisciplina = normalizeDiscipline(activity?.criadoPorDisciplina || activity?.disciplina);
-  if (activityDisciplina) return activityDisciplina === currentDisciplina;
+  if (activityDisciplina) return currentDisciplines.includes(activityDisciplina);
 
   const professionalEmails = Array.isArray(activity?.profissionaisEmails)
     ? activity.profissionaisEmails
     : String(activity?.profissionaisEmails || '').split(' | ');
   const disciplineEmails = new Set(
     professionals
-      .filter((item) => normalizeDiscipline(item.disciplina) === currentDisciplina)
+      .filter((item) => currentDisciplines.includes(normalizeDiscipline(item.disciplina)))
       .map((item) => String(item.email || '').trim().toLowerCase())
       .filter(Boolean)
   );
@@ -328,7 +345,7 @@ function buildRegistroViewModel(preloadedData: any, currentUser: AuthUser, viewM
     hierarchyNodes: preloadedData.hierarchyNodes || [],
     childrenByParent: preloadedData.childrenByParent || {},
     rootCodes: preloadedData.rootCodes || [],
-    professionals: getProfessionalsByDiscipline(preloadedData.professionalsByDisciplina, currentUser.disciplina),
+    professionals: getProfessionalsByDiscipline(preloadedData.professionalsByDisciplina, getUserDisciplineList(currentUser).join(' | ') || currentUser.disciplina),
     activeActivities: mappedActivities.filter((item) => item.status !== 'concluida'),
     completedActivities: mappedActivities.filter((item) => item.status === 'concluida'),
   };
@@ -815,14 +832,14 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   }, [currentUser.contrato]);
 
   const filteredProfessionals = useMemo(() => {
-    const myDiscipline = String(currentUser.disciplina || '').trim().toLowerCase();
-    const disciplineFiltered = !myDiscipline
+    const myDisciplines = getUserDisciplineList(currentUser).map((item) => String(item || '').trim().toLowerCase()).filter(Boolean);
+    const disciplineFiltered = !myDisciplines.length
       ? professionals
-      : professionals.filter((p) => String(p.disciplina || '').trim().toLowerCase() === myDiscipline);
+      : professionals.filter((p) => myDisciplines.includes(String(p.disciplina || '').trim().toLowerCase()));
 
     if (!currentUser.onlyThirdParty) return disciplineFiltered;
     return disciplineFiltered.filter((p) => String(p.email || '').startsWith('terceirizada:'));
-  }, [professionals, currentUser.disciplina, currentUser.onlyThirdParty]);
+  }, [professionals, currentUser.disciplinas, currentUser.disciplina, currentUser.onlyThirdParty]);
 
   const selectedContract = useMemo(() => contracts.find((c) => c.codigo === formData.contratoCodigo), [contracts, formData.contratoCodigo]);
   const filteredOs = useMemo(() => {

@@ -391,7 +391,6 @@ function applyUnifiedEapData(data: GlobalData, eapData: any): GlobalData {
 
 // Session Storage
 function getStorageKey() { return 'quanta_auth_user'; }
-const CACHE_DATA_KEY = 'quanta_global_data_cache';
 
 function saveSession(user: AuthUser, remember: boolean) {
   const key = getStorageKey();
@@ -417,19 +416,6 @@ function clearSession() {
   const key = getStorageKey();
   localStorage.removeItem(key);
   sessionStorage.removeItem(key);
-  localStorage.removeItem(CACHE_DATA_KEY);
-}
-
-function saveGlobalDataCache(data: GlobalData) {
-  try { localStorage.setItem(CACHE_DATA_KEY, JSON.stringify(data)); } catch (e) { }
-}
-
-function getGlobalDataCache(): GlobalData | null {
-  try {
-    const cached = localStorage.getItem(CACHE_DATA_KEY);
-    if (cached) return JSON.parse(cached);
-  } catch (e) { }
-  return null;
 }
 
 async function postToAppsScript<T>(payload: Record<string, unknown>): Promise<T> {
@@ -1185,7 +1171,6 @@ export default function App() {
       : fullData;
 
     setGlobalData(normalizedData);
-    saveGlobalDataCache(normalizedData);
     setLoadedModules({});
 
     if (normalizedData.admin) {
@@ -1293,17 +1278,6 @@ export default function App() {
   }, [activeTab, areaTecnicaSubTab]);
 
   const loadGlobalEnvironment = async (user: AuthUser, isBackgroundSync = false) => {
-    if (!isBackgroundSync) {
-      const cachedData = getGlobalDataCache();
-      if (cachedData && Object.keys(cachedData).length > 0) {
-        const scopedCachedData = filterGlobalDataByContract(cachedData, shouldLockUserToContract(user) ? user.contrato || '' : '');
-        applyLoadedGlobalData(scopedCachedData);
-        setPreloading(false); setBooting(false);
-        void loadGlobalEnvironment(user, true);
-        return;
-      }
-    }
-
     let progressInterval: number | undefined;
     if (!isBackgroundSync) {
       setPreloading(true); setLoadProgress(0); setLoadText('Autenticando sessão...');
@@ -1334,7 +1308,7 @@ export default function App() {
         };
       } catch (fbError) {
         console.error('Erro ao carregar dados publicados:', fbError);
-        if (!isBackgroundSync) setLoadText('Erro ao conectar dados publicados. Usando cache...');
+        if (!isBackgroundSync) setLoadText('Erro ao conectar dados publicados. Tente atualizar a página.');
         fullData = {};
       }
 
@@ -1397,23 +1371,17 @@ export default function App() {
       if (moduleName === 'registro') {
         const registro = await fetchRegistroDataFromFirebase(currentUser);
         setGlobalData((prev) => {
-          const next = mergeGlobalData(prev, { registro });
-          saveGlobalDataCache(next);
-          return next;
+          return mergeGlobalData(prev, { registro });
         });
       } else if (moduleName === 'cronograma') {
         const cronograma = await fetchCronogramaDataFromFirebase();
         setGlobalData((prev) => {
-          const next = mergeGlobalData(prev, { cronograma });
-          saveGlobalDataCache(next);
-          return next;
+          return mergeGlobalData(prev, { cronograma });
         });
       } else if (moduleName === 'eap') {
         const eap = await fetchEapDataFromFirebase();
         setGlobalData((prev) => {
-          const next = applyUnifiedEapData(prev, eap);
-          saveGlobalDataCache(next);
-          return next;
+          return applyUnifiedEapData(prev, eap);
         });
       }
       setLoadedModules((prev) => ({ ...prev, [moduleName]: true }));
@@ -2027,7 +1995,7 @@ export default function App() {
             <React.Suspense fallback={<TabLoadingFallback />}>
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'atividades'
-                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} isHeaderFiltersOpen={showFilters} onCloseHeaderFilters={() => setShowFilters(false)} />
+                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} isHeaderFiltersOpen={showFilters} onCloseHeaderFilters={() => setShowFilters(false)} disciplineFilterEnabled />
                   : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />}
@@ -2035,7 +2003,7 @@ export default function App() {
                 planejamentoSubTab === 'dashboard'
                   ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="dashboard" activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                   : planejamentoSubTab === 'atividades'
-                    ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines filtersAlwaysVisible />
+                    ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines filtersAlwaysVisible disciplineFilterEnabled={false} />
                     : planejamentoSubTab === 'cronograma'
                       ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
                       : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />

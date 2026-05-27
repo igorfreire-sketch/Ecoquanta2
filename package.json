@@ -18,9 +18,11 @@
     "html2canvas": "^1.4.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "pdfkit": "^0.18.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "recharts": "^3.7.0"
+    "recharts": "^3.7.0",
+    "svg-to-pdfkit": "^0.1.8"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

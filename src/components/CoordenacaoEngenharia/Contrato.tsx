@@ -749,7 +749,7 @@ export default function Contrato({
       )}
 
       {activeView === 'atividades' ? (
-        <Atividades currentUser={_currentUser} preloadedData={preloadedData} showAllDisciplines filtersAlwaysVisible />
+        <Atividades currentUser={_currentUser} preloadedData={preloadedData} showAllDisciplines filtersAlwaysVisible disciplineFilterEnabled={false} />
       ) : (activeView === 'dashboard' || activeView === 'prioridades') && (
         <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
           <ActivitiesList

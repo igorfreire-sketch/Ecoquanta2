@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronDown, ChevronRight, Filter, Maximize2, X, AlertTriangle } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarDays, ChevronDown, ChevronRight, Filter, Maximize2, X, AlertTriangle, Clock3, ListChecks } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
 
 interface CronogramaRow {
@@ -60,6 +61,7 @@ interface GanttTask {
   level: number;
   rowIndex: number;
   predecessors: string[];
+  dependencyCodes: string[];
   start: Date | null;
   end: Date | null;
   durationDays: number;
@@ -184,11 +186,32 @@ function sameDay(a: Date, b: Date) {
   return startOfDay(a).getTime() === startOfDay(b).getTime();
 }
 
-function parsePredecessors(value?: string) {
+function parsePredecessors(value?: string | string[]) {
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => parsePredecessors(item))
+      .map((item) => normalizeCode(item))
+      .filter(Boolean);
+  }
+
   return String(value || '')
-    .split(/[,;|]+/)
+    .split(/[,;|/\n\r]+/)
     .map((item) => normalizeCode(item))
     .filter(Boolean);
+}
+
+function incrementTrailingNumericCode(code: string) {
+  const raw = normalizeCode(code);
+  const match = raw.match(/^(.*?)(\d+)$/);
+  if (!match) return '';
+
+  const prefix = match[1] || '';
+  const numeric = match[2] || '';
+  const nextValue = Number(numeric) + 1;
+  if (Number.isNaN(nextValue)) return '';
+
+  const padded = String(nextValue).padStart(numeric.length, '0');
+  return `${prefix}${padded}`;
 }
 
 function normalizeCronogramaRow(row: any): CronogramaRow | null {
@@ -224,7 +247,9 @@ function normalizeCronogramaRow(row: any): CronogramaRow | null {
     duration: Number(row.duration ?? row.duracao ?? 0),
     plannedStart: String(row.plannedStart || row.inicioPlanejado || row.dataInicio || '').trim(),
     plannedEnd: String(row.plannedEnd || row.terminoPlanejado || row.dataFim || '').trim(),
-    predecessor: String(row.predecessor || row.predecessoras || row.predecessora || '').trim(),
+    predecessor: Array.isArray(row.predecessors)
+      ? row.predecessors.join(' | ')
+      : String(row.predecessor || row.predecessoras || row.predecessora || row.predecessorCode || '').trim(),
     idealProgress: Number(row.idealProgress ?? row.progressIdeal ?? 0),
     realStart: String(row.realStart || row.dataInicioReal || '').trim(),
     realEnd: String(row.realEnd || row.dataFimReal || '').trim(),
@@ -585,6 +610,12 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
 
   const tasksBase = Array.from(rowMap.entries()).map(([code, row]) => {
     const predecessors = parsePredecessors(row.predecessor);
+    const inferredPredecessor = incrementTrailingNumericCode(code);
+    const dependencyCodes = predecessors.length > 0
+      ? predecessors
+      : inferredPredecessor && rowMap.has(inferredPredecessor)
+        ? [inferredPredecessor]
+        : [];
     const start = parseDate(row.plannedStart) || parseDate(row.realStart);
     const end = parseDate(row.plannedEnd) || parseDate(row.realEnd);
     const durationDays = estimateDurationDays(row, start, end);
@@ -594,6 +625,7 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
       name: normalizeText(row.name || row.code),
       row,
       predecessors,
+      dependencyCodes,
       start,
       end,
       durationDays,
@@ -707,7 +739,7 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
 
   const orderedTasks = sortedCodes.map((code, index) => {
     const task = taskMap.get(code)!;
-    const predecessorEnds = task.predecessors
+    const predecessorEnds = task.dependencyCodes
       .map((predecessorCode) => taskMap.get(predecessorCode)?.end)
       .filter((date): date is Date => Boolean(date && !Number.isNaN(date.getTime())));
     const maxPredecessorEnd = predecessorEnds.length
@@ -716,10 +748,10 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
     const { start, end } = getTaskDisplayDates(task.row, maxPredecessorEnd);
     const finalEnd = end || (start ? addDays(start, Math.max(0, task.durationDays - 1)) : null);
 
-    if (task.predecessors.length > 0 && maxPredecessorEnd && start && start.getTime() <= maxPredecessorEnd.getTime()) {
+    if (task.dependencyCodes.length > 0 && maxPredecessorEnd && start && start.getTime() <= maxPredecessorEnd.getTime()) {
       task.issues.push('Dependencia possui conflito de datas com predecessora.');
     }
-    if (task.predecessors.length > 0 && !maxPredecessorEnd) {
+    if (task.dependencyCodes.length > 0 && !maxPredecessorEnd) {
       task.issues.push('Dependencia sem datas suficientes para validação.');
     }
 
@@ -738,7 +770,7 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
 
   orderedTasks.forEach((task) => {
     if (!task.start || !task.end) return;
-    task.predecessors.forEach((predecessorCode) => {
+    task.dependencyCodes.forEach((predecessorCode) => {
       const predecessor = taskMap.get(predecessorCode);
       if (!predecessor || !predecessor.end) return;
       if (task.start && predecessor.end && task.start.getTime() < addDays(predecessor.end, 1).getTime()) {
@@ -1022,6 +1054,10 @@ export default function Cronograma({
   onPlannerApprovalSubmit,
 }: CronogramaProps) {
   const isPlanningMode = viewMode === 'planning';
+  const ganttLeftScrollRef = useRef<HTMLDivElement | null>(null);
+  const ganttRightScrollRef = useRef<HTMLDivElement | null>(null);
+  const ganttScrollLockRef = useRef<'left' | 'right' | null>(null);
+  const [ganttRightScrollLeft, setGanttRightScrollLeft] = useState(0);
   const rows = useMemo(() => getCronogramaSourceRows(preloadedData), [preloadedData]);
   const planningRows = useMemo(
     () => (isPlanningMode ? buildPlanningReviewRows(preloadedData) : []),
@@ -1039,6 +1075,7 @@ export default function Cronograma({
   const [approvalDrafts, setApprovalDrafts] = useState<Record<string, boolean>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [savingMessage, setSavingMessage] = useState('');
+  const [selectedGanttTaskCode, setSelectedGanttTaskCode] = useState<string | null>(null);
 
   useEffect(() => {
     const locked = normalizeText(lockedContractCode);
@@ -1059,14 +1096,18 @@ export default function Cronograma({
   const expandedDefaults = useMemo(() => new Set(tree.map((node) => node.code)), [tree]);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [ganttExpandedRows, setGanttExpandedRows] = useState<Set<string>>(new Set());
+  const ganttExpandedDefaults = useMemo(
+    () => new Set(flattenTreeNodes(tree).map((node) => node.code)),
+    [tree],
+  );
 
   useEffect(() => {
     setExpandedRows(expandedDefaults);
   }, [expandedDefaults]);
 
   useEffect(() => {
-    setGanttExpandedRows(expandedDefaults);
-  }, [expandedDefaults]);
+    setGanttExpandedRows(ganttExpandedDefaults);
+  }, [ganttExpandedDefaults]);
 
   const toggleRow = (code: string) => {
     setExpandedRows((prev) => {
@@ -1125,6 +1166,10 @@ export default function Cronograma({
     ganttVisibleTasks.forEach((task, index) => indexMap.set(task.code, index));
     return indexMap;
   }, [ganttVisibleTasks]);
+  const selectedGanttTask = useMemo(
+    () => ganttVisibleTasks.find((task) => task.code === selectedGanttTaskCode) || null,
+    [ganttVisibleTasks, selectedGanttTaskCode],
+  );
 
   const planningVisibleRows = useMemo(() => {
     if (!isPlanningMode || !showInProgressActivities) return [];
@@ -1220,7 +1265,24 @@ export default function Cronograma({
     const chartHeight = headerHeight + ganttVisibleTasks.length * rowHeight + 24;
     const todayLineX = Math.max(0, Math.min(timelineWidth, getGanttScaleTimelinePosition(ganttModel, startOfDay(new Date()))));
 
+    const syncGanttScroll = (source: 'left' | 'right') => (event: React.UIEvent<HTMLDivElement>) => {
+      const otherRef = source === 'left' ? ganttRightScrollRef : ganttLeftScrollRef;
+      const other = otherRef.current;
+      if (!other || ganttScrollLockRef.current === source) return;
+
+      if (source === 'right') {
+        setGanttRightScrollLeft(event.currentTarget.scrollLeft);
+      }
+
+      ganttScrollLockRef.current = source;
+      other.scrollTop = event.currentTarget.scrollTop;
+      window.requestAnimationFrame(() => {
+        if (ganttScrollLockRef.current === source) ganttScrollLockRef.current = null;
+      });
+    };
+
     return (
+      <>
       <div className="fixed inset-0 z-[200] bg-slate-950/70 backdrop-blur-sm p-3 md:p-5">
         <div className="flex h-full w-full flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
           <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 md:flex-row md:items-start md:justify-between">
@@ -1264,7 +1326,10 @@ export default function Cronograma({
               </div>
               <button
                 type="button"
-                onClick={() => setShowGantt(false)}
+                onClick={() => {
+                  setSelectedGanttTaskCode(null);
+                  setShowGantt(false);
+                }}
                 className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-[13px] font-bold text-slate-600 transition-all hover:border-slate-300 hover:bg-slate-50"
               >
                 <X size={18} />
@@ -1297,7 +1362,11 @@ export default function Cronograma({
                   <span>Atividade</span>
                   <span className="text-right">Datas / Progresso</span>
                 </div>
-                <div className="min-h-0 flex-1 overflow-auto">
+                <div
+                  ref={ganttLeftScrollRef}
+                  className="min-h-0 flex-1 overflow-auto"
+                  onScroll={syncGanttScroll('left')}
+                >
                   {ganttVisibleTasks.length === 0 ? (
                     <div className="p-6 text-[13px] text-slate-500">Nenhuma atividade disponivel para o Gantt.</div>
                   ) : (
@@ -1315,11 +1384,13 @@ export default function Cronograma({
                           key={task.code}
                           className="grid grid-cols-[1.2fr_0.8fr] gap-2 border-b border-slate-100 px-4 py-3"
                           style={{ minHeight: `${rowHeight}px` }}
+                          onClick={() => setSelectedGanttTaskCode(task.code)}
                         >
                           <div className="min-w-0">
                             <button
                               type="button"
-                              onClick={() => {
+                              onClick={(event) => {
+                                event.stopPropagation();
                                 if (!task.hasChildren) return;
                                 setGanttExpandedRows((prev) => {
                                   const next = new Set(prev);
@@ -1373,9 +1444,16 @@ export default function Cronograma({
                             <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[1px] ${statusClass}`}>
                               {getGanttTaskStatusLabel(progress)}
                             </span>
-                            <div className="w-full max-w-[160px]">
+                            <button
+                              type="button"
+                              className="w-full max-w-[160px] cursor-pointer"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedGanttTaskCode(task.code);
+                              }}
+                            >
                               <ProgressBar progress={progress} />
-                            </div>
+                            </button>
                             <div className="text-[10px] font-medium text-slate-400">
                               {task.milestone ? 'Marco' : `${task.durationDays} dia(s)`}
                               {task.critical ? ' · Critica' : ''}
@@ -1389,7 +1467,11 @@ export default function Cronograma({
               </div>
             </div>
 
-            <div className="min-w-0 flex-1 overflow-auto bg-white">
+            <div
+              ref={ganttRightScrollRef}
+              className="min-w-0 flex-1 overflow-auto bg-white"
+              onScroll={syncGanttScroll('right')}
+            >
               <div
                 className="relative"
                 style={{
@@ -1413,7 +1495,7 @@ export default function Cronograma({
 
                 <div
                   className="pointer-events-none absolute left-0 top-0 z-30 h-full"
-                  style={{ transform: `translateX(${todayLineX}px)` }}
+                  style={{ transform: `translateX(${Math.max(0, todayLineX - ganttRightScrollLeft)}px)` }}
                 >
                   <div className="absolute left-0 top-0 h-full w-px bg-rose-500/80" />
                   <div className="absolute left-0 top-2 -translate-x-1/2 rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-[1px] text-white shadow-sm">
@@ -1429,7 +1511,7 @@ export default function Cronograma({
                 >
                   {ganttVisibleTasks.flatMap((task) => {
                     if (!task.start || !task.end) return [];
-                    return task.predecessors.flatMap((predecessorCode) => {
+                    return task.dependencyCodes.flatMap((predecessorCode) => {
                       const predecessorIndex = ganttVisibleIndexByCode.get(predecessorCode);
                       if (predecessorIndex === undefined) return [];
                       const predecessor = ganttVisibleTasks[predecessorIndex];
@@ -1463,13 +1545,20 @@ export default function Cronograma({
                     const geometry = getGanttBarGeometry(ganttModel, task.start, task.end);
                     const top = 72 + task.rowIndex * rowHeight + 22;
                     const barHeight = 26;
-                    const colorClass = task.critical
-                      ? 'bg-rose-500'
+                    const barTone = task.critical
+                      ? '#F43F5E'
                       : progress >= 100
-                        ? 'bg-emerald-500'
+                        ? '#10B981'
                         : progress > 0
-                          ? 'bg-sky-500'
-                          : 'bg-slate-300';
+                          ? '#0EA5E9'
+                          : '#CBD5E1';
+                    const tailTone = task.critical
+                      ? 'rgba(244, 63, 94, 0.30)'
+                      : progress >= 100
+                        ? 'rgba(16, 185, 129, 0.30)'
+                        : progress > 0
+                          ? 'rgba(14, 165, 233, 0.30)'
+                          : 'rgba(148, 163, 184, 0.30)';
                     const barWidth = geometry.width || ganttModel.unitPx * 0.55;
                     const barLeft = geometry.left;
 
@@ -1480,11 +1569,12 @@ export default function Cronograma({
                         style={{ top: `${top}px`, height: `${barHeight}px` }}
                       >
                         <div
-                          className={`absolute rounded-full shadow-sm ${colorClass} ${task.critical ? 'ring-2 ring-rose-200' : ''}`}
+                          className={`absolute overflow-hidden rounded-full shadow-sm ${task.critical ? 'ring-2 ring-rose-200' : ''}`}
                           style={{
                             left: `${barLeft}px`,
                             width: `${Math.max(barWidth, task.milestone ? 16 : 18)}px`,
                             height: `${barHeight}px`,
+                            backgroundColor: barTone,
                             opacity: task.start && task.end ? 0.96 : 0.45,
                           }}
                         >
@@ -1492,6 +1582,15 @@ export default function Cronograma({
                             className="h-full rounded-full bg-white/25"
                             style={{ width: `${progress}%` }}
                           />
+                          {progress < 100 && (
+                            <div
+                              className="absolute right-0 top-0 h-full w-[22px] rounded-r-full"
+                              style={{ backgroundColor: tailTone, filter: 'saturate(0.3)' }}
+                            />
+                          )}
+                          <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-black leading-none text-slate-700 shadow-sm">
+                            {progress}%
+                          </div>
                         </div>
 
                         {task.milestone && (
@@ -1520,6 +1619,114 @@ export default function Cronograma({
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {selectedGanttTask && (
+          <div
+            className="fixed inset-0 z-[240] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-[2px]"
+            onClick={() => setSelectedGanttTaskCode(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="relative w-full max-w-[760px] overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_30px_100px_rgba(15,23,42,0.35)]"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-gradient-to-r from-[#F8FAFC] to-white px-6 py-5">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black uppercase tracking-[1.2px] text-[#F05D28]">Detalhes do Gantt</p>
+                  <h3 className="mt-2 truncate text-[20px] font-black text-[#1F2937]">
+                    {selectedGanttTask.code} - {selectedGanttTask.name}
+                  </h3>
+                  <p className="mt-2 text-[12px] text-[#64748B]">
+                    Clique no X para fechar ou selecione outro item do gráfico.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedGanttTaskCode(null)}
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-colors hover:border-[#F05D28]/25 hover:text-[#F05D28]"
+                  aria-label="Fechar detalhes"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="grid gap-4 p-6 md:grid-cols-2">
+                <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[1px] text-slate-500">
+                    <ListChecks size={14} />
+                    Resumo
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Código</p>
+                      <p className="mt-1 text-[13px] font-bold text-slate-800">{selectedGanttTask.code}</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Progresso</p>
+                      <p className="mt-1 text-[13px] font-bold text-slate-800">{toPercent(selectedGanttTask.progress)}%</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Início</p>
+                      <p className="mt-1 text-[13px] font-bold text-slate-800">{formatDateBR(selectedGanttTask.row.plannedStart)}</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Término</p>
+                      <p className="mt-1 text-[13px] font-bold text-slate-800">{formatDateBR(selectedGanttTask.row.plannedEnd)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-white p-4">
+                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[1px] text-slate-500">
+                    <Clock3 size={14} />
+                    Dependências e alertas
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Predecessoras</p>
+                    <p className="mt-1 text-[13px] font-semibold text-slate-800">
+                      {selectedGanttTask.dependencyCodes.length > 0
+                        ? selectedGanttTask.dependencyCodes.join(', ')
+                        : selectedGanttTask.predecessors.length > 0
+                          ? selectedGanttTask.predecessors.join(', ')
+                        : 'Nenhuma predecessora informada'}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Tipo</p>
+                    <p className="mt-1 text-[13px] font-semibold text-slate-800">
+                      {selectedGanttTask.milestone ? 'Marco' : `${selectedGanttTask.durationDays} dia(s)`}
+                      {selectedGanttTask.critical ? ' · Crítica' : ''}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Alertas</p>
+                    <p className="mt-1 text-[13px] font-semibold text-slate-800">
+                      {selectedGanttTask.issues.length > 0
+                        ? selectedGanttTask.issues.join(' ')
+                        : 'Nenhuma inconsistência encontrada'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="md:col-span-2 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Descrição</p>
+                  <p className="mt-2 text-[14px] leading-relaxed text-slate-700">
+                    {selectedGanttTask.row.name}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      </>
     );
   };
 

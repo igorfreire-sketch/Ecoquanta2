@@ -110,6 +110,7 @@ interface AtividadesProps {
   onCloseHeaderFilters?: () => void;
   showAllDisciplines?: boolean;
   filtersAlwaysVisible?: boolean;
+  disciplineFilterEnabled?: boolean;
 }
 
 const STORAGE_KEY = 'quanta_producao_tecnica_cards';
@@ -788,6 +789,38 @@ const splitDisciplinas = (value: any) => {
   return list.length > 0 ? list : ['Sem disciplina'];
 };
 
+const getDisciplineAbbreviation = (value: string) => {
+  const cleaned = splitDisciplinas(value)[0] || 'Sem disciplina';
+  const compact = cleaned
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .trim();
+
+  if (!compact || normalizeText(compact) === 'sem disciplina') return 'SD';
+
+  const initials = compact
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0] || '')
+    .join('')
+    .slice(0, 3)
+    .toUpperCase();
+
+  return initials || compact.slice(0, 2).toUpperCase();
+};
+
+const getDisciplineLabel = (value: string) => {
+  const cleaned = splitDisciplinas(value)[0] || 'Sem disciplina';
+  const label = cleaned
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return label || 'Sem disciplina';
+};
+
 const hasLodToken = (value?: string) => /\bLOD[\s_\-]*\d+/i.test(String(value || ''));
 
 const extractLodValue = (value?: string) => {
@@ -880,7 +913,12 @@ const getUnifiedEapRegistry = (preloadedData: any) => {
 
 const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProps['currentUser']): EngineeringActivity[] => {
   const { contractNameByCode, osNameByCode, itemNameByCode, nodeByCode } = buildEapMaps(preloadedData);
-  const rawRows = Array.isArray(preloadedData?.cronograma) ? preloadedData.cronograma : [];
+  const rawRows = [
+    preloadedData?.cronograma,
+    preloadedData?.eap?.data?.cronograma,
+    preloadedData?.eap?.cronograma,
+    preloadedData?.registro?.cronograma,
+  ].find(Array.isArray) || [];
 
   const activities = rawRows
     .map((row: EapSourceRow) => {
@@ -936,9 +974,7 @@ const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProp
     .filter(Boolean) as EngineeringActivity[];
 
   if (activities.length > 0) return activities.sort(compareActivities);
-
-  const fallback = INITIAL_MOCK_ACTIVITIES.map((activity) => normalizeActivity(activity as Partial<EngineeringActivity> & Record<string, unknown>));
-  return fallback.sort(compareActivities);
+  return [];
 };
 
 const normalizeLegacyStatus = (value?: string): ProductionStatus => {
@@ -1501,12 +1537,13 @@ function ProductionCard({
   const isBehind = leaderPercentual < activity.percentualPrevisto;
   const valueTone = isBehind ? 'text-[#EF4444]' : 'text-[#166534]';
   const participants = getActivityParticipants(activity);
+  const disciplineLabel = getDisciplineLabel(activity.disciplina || activity.disciplinas?.[0] || '');
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="relative block w-full overflow-hidden rounded-[22px] border border-[#E7EDF4] bg-white p-2 text-left shadow-[0_8px_24px_rgba(15,76,129,0.06)] transition-all hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_16px_34px_rgba(240,93,40,0.10)] cursor-pointer"
+      className="relative block w-full min-h-[252px] overflow-hidden rounded-[24px] border border-[#E7EDF4] bg-white p-3 text-left shadow-[0_8px_24px_rgba(15,76,129,0.06)] transition-all hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_16px_34px_rgba(240,93,40,0.10)] cursor-pointer"
     >
       <div
         className="absolute right-2 top-2 flex flex-col items-center"
@@ -1528,7 +1565,7 @@ function ProductionCard({
         </p>
       </div>
 
-      <div className="mt-2 rounded-xl px-2 py-1.5 bg-[#F0FDF4]">
+      <div className="mt-3 rounded-xl px-2 py-1.5 bg-[#F0FDF4]">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
             <p className="text-[10px] font-extrabold uppercase tracking-[0.5px] text-[#166534]">Participantes</p>
@@ -1562,7 +1599,7 @@ function ProductionCard({
         </div>
       </div>
 
-      <div className="mt-2 rounded-2xl bg-[#F8FAFC] pl-10 pr-2 py-2 text-[10px] font-semibold text-[#64748B] 2xl:hidden">
+      <div className="mt-3 rounded-2xl bg-[#F8FAFC] px-2 py-2 text-[10px] font-semibold text-[#64748B] 2xl:hidden">
         <div className="grid grid-cols-2 gap-3">
           <div className="min-w-0">
             <span className="block font-extrabold uppercase tracking-[0.5px] text-[#94A3B8]">Início:</span>
@@ -1575,7 +1612,7 @@ function ProductionCard({
         </div>
       </div>
 
-      <div className="mt-2 hidden rounded-2xl bg-[#F8FAFC] pl-10 pr-2 py-1.5 text-[10px] font-semibold text-[#64748B] 2xl:block">
+      <div className="mt-3 hidden rounded-2xl bg-[#F8FAFC] px-2 py-1.5 text-[10px] font-semibold text-[#64748B] 2xl:block">
         <div className="grid grid-cols-2 gap-3">
           <div className="min-w-0">
             <span className="block font-extrabold uppercase tracking-[0.5px] text-[#94A3B8]">Início:</span>
@@ -1586,6 +1623,12 @@ function ProductionCard({
             <span className="mt-1 block font-bold text-[#475569]">{formatDatePt(activity.terminoPlanejado)}</span>
           </div>
         </div>
+      </div>
+
+      <div className="mt-2 flex justify-center">
+        <span className="inline-flex min-w-[92px] items-center justify-center rounded-full border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-1 text-[10px] font-black uppercase tracking-[0.7px] text-[#0F4C81] shadow-sm">
+          {disciplineLabel}
+        </span>
       </div>
 
     </button>
@@ -1598,23 +1641,12 @@ export default function Atividades({
   isHeaderFiltersOpen = false,
   onCloseHeaderFilters,
   showAllDisciplines = false,
-  filtersAlwaysVisible = false
+  filtersAlwaysVisible = false,
+  disciplineFilterEnabled = true,
 }: AtividadesProps) {
   const sourceActivities = useMemo(() => buildActivitiesFromEap(preloadedData, currentUser), [preloadedData, currentUser]);
   const [activities, setActivities] = useState<EngineeringActivity[]>(() => {
-    const saved = safeGetLocalStorageValue(STORAGE_KEY);
-    if (saved) {
-      try {
-        const normalizedSaved = normalizeActivityList(JSON.parse(saved));
-        if (normalizedSaved.length > 0 && sourceActivities.length > 0) {
-          return mergeSavedActivitiesWithSource(normalizedSaved, sourceActivities);
-        }
-        if (normalizedSaved.length > 0) return normalizedSaved;
-      } catch {
-        // Mantemos a tela funcionando com a fonte da EAP se o cache local estiver corrompido.
-      }
-    }
-    return sourceActivities.length > 0 ? sourceActivities : INITIAL_MOCK_ACTIVITIES;
+    return sourceActivities;
   });
 
   const [searchText, setSearchText] = useState('');
@@ -1650,11 +1682,7 @@ export default function Atividades({
   );
 
   useEffect(() => {
-    safeSetLocalStorageValue(STORAGE_KEY, JSON.stringify(activities));
-  }, [activities]);
-
-  useEffect(() => {
-    setActivities((previous) => mergeSavedActivitiesWithSource(previous, sourceActivities));
+    setActivities(sourceActivities);
   }, [sourceActivities]);
 
   const contratosDisponiveis = useMemo(() => {
@@ -1738,7 +1766,8 @@ export default function Atividades({
         const matchesContrato = filterContrato === 'Todos' || activity.contratoCodigo === filterContrato;
         const matchesOs = filterOs === 'Todos' || activity.osCodigo === filterOs;
         const activityDisciplinas = splitDisciplinas(activity.disciplinas || activity.disciplina);
-        const matchesDisciplina = filterDisciplinas.length === 0
+        const matchesDisciplina = !disciplineFilterEnabled
+          || filterDisciplinas.length === 0
           || filterDisciplinas.some((discipline) => activityDisciplinas.includes(discipline));
         const matchesTerceirizada = !filterTerceirizada || isThirdPartyActivity(activity);
         const matchesEtapa = filterEtapa === 'Todos' || activity.etapaTecnica === filterEtapa;
@@ -1769,6 +1798,7 @@ export default function Atividades({
     filterStatus,
     filterDisciplinas,
     filterTerceirizada,
+    disciplineFilterEnabled,
     searchText,
   ]);
 
@@ -1821,9 +1851,7 @@ export default function Atividades({
 
   const handleResetBoard = () => {
     if (window.confirm('Redefinir o quadro semanal para os dados padrão? As alterações locais serão perdidas.')) {
-      const resetActivities = sourceActivities.length > 0 ? sourceActivities : INITIAL_MOCK_ACTIVITIES;
-      setActivities(resetActivities);
-      safeSetLocalStorageValue(STORAGE_KEY, JSON.stringify(resetActivities));
+      setActivities(sourceActivities);
       setSelectedActivityId(null);
     }
   };
@@ -1941,13 +1969,15 @@ export default function Atividades({
             <FilterSelect label="Semana" value={filterSemana} onChange={setFilterSemana} options={weekOptions} />
             <FilterSelect label="Contrato" value={filterContrato} onChange={setFilterContrato} options={contratosDisponiveis} />
             <FilterSelect label="OS" value={filterOs} onChange={setFilterOs} options={osDisponiveis} />
-            <FilterMultiSelectDropdown
-              label="Disciplina"
-              value={filterDisciplinas}
-              options={disciplinasDisponiveis}
-              placeholder="Todas"
-              onChange={setFilterDisciplinas}
-            />
+            {disciplineFilterEnabled && (
+              <FilterMultiSelectDropdown
+                label="Disciplina"
+                value={filterDisciplinas}
+                options={disciplinasDisponiveis}
+                placeholder="Todas"
+                onChange={setFilterDisciplinas}
+              />
+            )}
             <div className="flex items-end">
               <label className={`inline-flex h-11 w-full items-center gap-3 rounded-xl border px-4 py-2.5 text-[12px] font-semibold transition-colors ${
                 filterTerceirizada

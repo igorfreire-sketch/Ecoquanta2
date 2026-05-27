@@ -92,7 +92,9 @@ var DEFAULT_DISCIPLINE_SOURCE = [
   ['GER', 'Gerenciamento'],
   ['GECO', 'Gest\u00e3o do Contrato'],
   ['CONF', 'Conformidade']
-];\r\nfunction onOpen() {
+];
+
+function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
   ui.createMenu('QUANTA Sync')
@@ -2106,12 +2108,18 @@ function safeJson_(x) { try { return JSON.stringify(x); } catch (e) { return Str
 
 function getRawCronogramaData_(ss) {
   var unifiedEap = getUnifiedEapPublicDataSafe_();
+  var sheetRows = getEapCronogramaSheetRows_(ss);
+
   if (unifiedEap && Array.isArray(unifiedEap.cronograma)) {
-    return { success: true, rawRows: unifiedEap.cronograma };
+    return { success: true, rawRows: mergeCronogramaRowsWithSheet_(unifiedEap.cronograma, sheetRows) };
   }
 
+  return { success: true, rawRows: sheetRows };
+}
+
+function getEapCronogramaSheetRows_(ss) {
   var sh = ss.getSheetByName('EAP');
-  if (!sh) return { success: true, rawRows: [] };
+  if (!sh) return [];
 
   var values = sh.getDataRange().getValues();
   var displayValues = sh.getDataRange().getDisplayValues();
@@ -2137,7 +2145,41 @@ function getRawCronogramaData_(ss) {
     });
   }
 
-  return { success: true, rawRows: rows };
+  return rows;
+}
+
+function mergeCronogramaRowsWithSheet_(sourceRows, sheetRows) {
+  var sheetByCode = {};
+  for (var i = 0; i < sheetRows.length; i++) {
+    var sheetRow = sheetRows[i] || {};
+    var sheetCode = String(sheetRow.code || '').trim();
+    if (!sheetCode) continue;
+    sheetByCode[sheetCode] = sheetRow;
+  }
+
+  var source = Array.isArray(sourceRows) ? sourceRows : [];
+  if (source.length === 0) return sheetRows;
+
+  return source.map(function (row) {
+    var code = String(row && (row.code || row.codigo || row.id) || '').trim();
+    var sheetRow = code ? sheetByCode[code] : null;
+    var predecessor = row && (row.predecessor || row.predecessoras || row.predecessora || row.predecessorCode || row.predecessors);
+    if (Array.isArray(predecessor)) predecessor = predecessor.join(' | ');
+
+    return {
+      progress: toNumberSafe_(row && (row.progress || row.avancoAtual || row.percentage)),
+      code: code,
+      name: String(row && (row.name || row.nome || row.title) || '').trim() || String(sheetRow && sheetRow.name || '').trim(),
+      duration: toNumberSafe_(row && (row.duration || row.duracao) || (sheetRow && sheetRow.duration)),
+      plannedStart: normalizeSheetDate_(row && (row.plannedStart || row.inicioPlanejado || row.dataInicio) || (sheetRow && sheetRow.plannedStart)),
+      plannedEnd: normalizeSheetDate_(row && (row.plannedEnd || row.terminoPlanejado || row.dataFim) || (sheetRow && sheetRow.plannedEnd)),
+      predecessor: String(predecessor || (sheetRow && sheetRow.predecessor) || '').trim(),
+      idealProgress: toNumberSafe_(row && (row.idealProgress || row.progressIdeal) || (sheetRow && sheetRow.idealProgress)),
+      realStart: normalizeSheetDate_(row && (row.realStart || row.dataInicioReal) || (sheetRow && sheetRow.realStart)),
+      realEnd: normalizeSheetDate_(row && (row.realEnd || row.dataFimReal) || (sheetRow && sheetRow.realEnd)),
+      baselineIdealProgress: toNumberSafe_(row && (row.baselineIdealProgress || row.idealProgressBase) || (sheetRow && sheetRow.baselineIdealProgress))
+    };
+  }).filter(function (row) { return Boolean(row.code); });
 }
 
 function toNumberSafe_(value) {

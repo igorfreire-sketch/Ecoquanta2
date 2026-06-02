@@ -554,7 +554,7 @@ function getGanttScaleUnitPx(scaleMode: GanttScaleMode, unitCount: number) {
   if (scaleMode === 'year') return 150;
   if (scaleMode === 'month') return 128;
   if (scaleMode === 'week') return 96;
-  return unitCount > 240 ? 12 : unitCount > 120 ? 16 : unitCount > 60 ? 20 : 26;
+  return unitCount > 240 ? 24 : unitCount > 120 ? 26 : 30;
 }
 
 function getGanttScaleLabelStep(scaleMode: GanttScaleMode, unitCount: number) {
@@ -573,20 +573,20 @@ function getGanttScaleTimelinePosition(model: GanttModel, date: Date) {
 
   if (model.scaleMode === 'week') {
     const weekStart = startOfWeek(date);
-    const fraction = Math.max(0, Math.min(1, diffDays(weekStart, date) / 7));
+    const fraction = Math.max(0, Math.min(1, (diffDays(weekStart, date) + 0.5) / 7));
     return unitIndex * model.unitPx + fraction * model.unitPx;
   }
 
   if (model.scaleMode === 'month') {
     const daysInMonth = endOfMonth(date).getDate();
-    const fraction = Math.max(0, Math.min(1, startOfDay(date).getDate() / Math.max(1, daysInMonth)));
+    const fraction = Math.max(0, Math.min(1, (startOfDay(date).getDate() - 0.5) / Math.max(1, daysInMonth)));
     return unitIndex * model.unitPx + fraction * model.unitPx;
   }
 
   const yearStart = startOfYear(date);
   const isLeapYear = new Date(yearStart.getFullYear(), 1, 29).getMonth() === 1;
   const daysInYear = isLeapYear ? 366 : 365;
-  const fraction = Math.max(0, Math.min(1, diffDays(yearStart, date) / Math.max(1, daysInYear)));
+  const fraction = Math.max(0, Math.min(1, (diffDays(yearStart, date) + 0.5) / Math.max(1, daysInYear)));
   return unitIndex * model.unitPx + fraction * model.unitPx;
 }
 
@@ -1104,7 +1104,6 @@ export default function Cronograma({
   const ganttLeftScrollRef = useRef<HTMLDivElement | null>(null);
   const ganttRightScrollRef = useRef<HTMLDivElement | null>(null);
   const ganttScrollLockRef = useRef<'left' | 'right' | null>(null);
-  const [ganttRightScrollLeft, setGanttRightScrollLeft] = useState(0);
   const rows = useMemo(() => getCronogramaSourceRows(preloadedData), [preloadedData]);
   const planningRows = useMemo(
     () => (isPlanningMode ? buildPlanningReviewRows(preloadedData) : []),
@@ -1312,20 +1311,28 @@ export default function Cronograma({
     const chartHeight = headerHeight + ganttVisibleTasks.length * rowHeight + 24;
     const ganttToday = getTodayInSaoPaulo();
     const todayLineX = Math.max(0, Math.min(timelineWidth, getGanttScaleTimelinePosition(ganttModel, ganttToday)));
-    const ganttViewportWidth = ganttRightScrollRef.current?.clientWidth || timelineWidth;
-    const todayMarkerX = Math.min(
-      Math.max(todayLineX - ganttRightScrollLeft, 16),
-      Math.max(16, ganttViewportWidth - 16),
-    );
+    const ganttDayMonthGroups = ganttModel.scaleMode === 'day'
+      ? Array.from({ length: ganttModel.unitCount }).reduce<Array<{ key: string; label: string; count: number }>>((groups, _, index) => {
+          const date = getGanttUnitDate(ganttModel, index);
+          const key = `${date.getFullYear()}-${date.getMonth()}`;
+          const current = groups[groups.length - 1];
+          if (current?.key === key) {
+            current.count += 1;
+          } else {
+            groups.push({
+              key,
+              label: date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }),
+              count: 1,
+            });
+          }
+          return groups;
+        }, [])
+      : [];
 
     const syncGanttScroll = (source: 'left' | 'right') => (event: React.UIEvent<HTMLDivElement>) => {
       const otherRef = source === 'left' ? ganttRightScrollRef : ganttLeftScrollRef;
       const other = otherRef.current;
       if (!other || ganttScrollLockRef.current === source) return;
-
-      if (source === 'right') {
-        setGanttRightScrollLeft(event.currentTarget.scrollLeft);
-      }
 
       ganttScrollLockRef.current = source;
       other.scrollTop = event.currentTarget.scrollTop;
@@ -1521,18 +1528,6 @@ export default function Cronograma({
             </div>
 
             <div className="relative min-w-0 flex-1">
-              <div className="pointer-events-none absolute left-0 right-0 top-[72px] bottom-0 z-30 overflow-hidden">
-                <div
-                  className="absolute top-0 h-full"
-                  style={{ left: `${todayMarkerX}px` }}
-                >
-                  <div className="absolute left-0 top-0 h-full w-px bg-rose-500/80" />
-                  <div className="absolute left-0 top-2 -translate-x-1/2 rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-[1px] text-white shadow-sm">
-                    Hoje
-                  </div>
-                </div>
-              </div>
-
               <div
                 ref={ganttRightScrollRef}
                 className="min-w-0 h-full overflow-auto bg-white"
@@ -1547,16 +1542,68 @@ export default function Cronograma({
                   backgroundSize: `${ganttModel.unitPx}px 100%`,
                 }}
               >
-                <div className="sticky top-0 z-20 flex h-[72px] border-b border-slate-200 bg-white/95 backdrop-blur-sm">
-                  {Array.from({ length: ganttModel.unitCount }).map((_, index) => (
-                    <div
-                      key={`${index}-${ganttModel.scaleMode}`}
-                      className="flex h-full items-center justify-center border-r border-slate-200 px-2 text-center text-[10px] font-black uppercase tracking-[1px] text-slate-500"
-                      style={{ width: `${ganttModel.unitPx}px` }}
-                    >
-                      {index % ganttModel.labelStep === 0 ? getGanttUnitLabel(ganttModel, index) : ''}
+                <div
+                  className="pointer-events-none absolute bottom-0 top-[72px] z-30"
+                  style={{ left: `${todayLineX}px` }}
+                >
+                  <div className="absolute left-0 top-0 h-full w-px bg-rose-500/80" />
+                  <div className="absolute left-0 top-2 -translate-x-1/2 rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-[1px] text-white shadow-sm">
+                    Hoje
+                  </div>
+                </div>
+
+                <div className="sticky top-0 z-20 h-[72px] border-b border-slate-200 bg-white/95 backdrop-blur-sm">
+                  {ganttModel.scaleMode === 'day' ? (
+                    <div className="h-full">
+                      <div className="flex h-8 border-b border-slate-200 bg-slate-50">
+                        {ganttDayMonthGroups.map((group) => (
+                          <div
+                            key={group.key}
+                            className="flex shrink-0 items-center border-r border-slate-300 px-2 text-[10px] font-black uppercase tracking-[1px] text-slate-600"
+                            style={{ width: `${group.count * ganttModel.unitPx}px` }}
+                          >
+                            {group.label}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex h-10">
+                        {Array.from({ length: ganttModel.unitCount }).map((_, index) => {
+                          const date = getGanttUnitDate(ganttModel, index);
+                          const isToday = sameDay(date, ganttToday);
+                          const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+                          return (
+                            <div
+                              key={`${index}-${ganttModel.scaleMode}`}
+                              className={`flex shrink-0 flex-col items-center justify-center border-r border-slate-200 text-center ${
+                                isToday
+                                  ? 'bg-rose-50 text-rose-600'
+                                  : isWeekend
+                                    ? 'bg-slate-50 text-slate-400'
+                                    : 'text-slate-600'
+                              }`}
+                              style={{ width: `${ganttModel.unitPx}px` }}
+                              title={date.toLocaleDateString('pt-BR')}
+                            >
+                              <span className="text-[11px] font-black leading-none">{String(date.getDate()).padStart(2, '0')}</span>
+                              <span className="mt-1 text-[8px] font-bold uppercase leading-none">{date.toLocaleDateString('pt-BR', { weekday: 'narrow' })}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="flex h-full">
+                      {Array.from({ length: ganttModel.unitCount }).map((_, index) => (
+                        <div
+                          key={`${index}-${ganttModel.scaleMode}`}
+                          className="flex h-full shrink-0 items-center justify-center border-r border-slate-200 px-2 text-center text-[10px] font-black uppercase tracking-[1px] text-slate-500"
+                          style={{ width: `${ganttModel.unitPx}px` }}
+                        >
+                          {index % ganttModel.labelStep === 0 ? getGanttUnitLabel(ganttModel, index) : ''}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <svg

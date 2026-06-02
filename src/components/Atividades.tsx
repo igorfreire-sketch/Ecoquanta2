@@ -1109,18 +1109,56 @@ const buildProfessionalOptions = (
 };
 
 const buildEapMaps = (preloadedData: any) => {
-  const registro = getUnifiedRegistryData(preloadedData);
-  const contracts = Array.isArray(registro.contracts) ? registro.contracts : [];
-  const osOptions = Array.isArray(registro.osOptions) ? registro.osOptions : [];
-  const itemOptions = Array.isArray(registro.itemOptions) ? registro.itemOptions : [];
-  const hierarchyNodes = Array.isArray(registro.hierarchyNodes) ? registro.hierarchyNodes : [];
+  const registros = [
+    preloadedData?.eap?.data?.registro,
+    preloadedData?.eap?.registro,
+    preloadedData?.registro,
+    getUnifiedRegistryData(preloadedData),
+  ].filter((item) => item && typeof item === 'object');
+  const contracts = registros.flatMap((registro) => Array.isArray(registro.contracts) ? registro.contracts : []);
+  const osOptions = registros.flatMap((registro) => Array.isArray(registro.osOptions) ? registro.osOptions : []);
+  const itemOptions = registros.flatMap((registro) => Array.isArray(registro.itemOptions) ? registro.itemOptions : []);
+  const hierarchyNodes = registros.flatMap((registro) => Array.isArray(registro.hierarchyNodes) ? registro.hierarchyNodes : []);
 
-  const contractNameByCode = new Map<string, string>(contracts.map((item: any) => [String(item.codigo || '').trim(), String(item.nome || item.codigo || '').trim()]));
-  const osNameByCode = new Map<string, string>(osOptions.map((item: any) => [String(item.codigo || '').trim(), String(item.nome || item.codigo || '').trim()]));
-  const itemNameByCode = new Map<string, string>(itemOptions.map((item: any) => [String(item.codigo || '').trim(), String(item.nome || item.codigo || '').trim()]));
+  const buildNameMap = (options: any[]) => {
+    const map = new Map<string, string>();
+    options.forEach((item: any) => {
+      const code = String(item?.codigo || '').trim();
+      const name = String(item?.nome || item?.codigo || '').trim();
+      if (code && name && !map.has(code)) map.set(code, name);
+    });
+    return map;
+  };
+
+  const contractNameByCode = buildNameMap(contracts);
+  const osNameByCode = buildNameMap(osOptions);
+  const itemNameByCode = buildNameMap(itemOptions);
   const nodeByCode = new Map<string, any>(hierarchyNodes.map((item: any) => [String(item.codigo || '').trim(), item]));
 
+  [
+    preloadedData?.eap?.curvaS?.atual,
+    preloadedData?.eap?.data?.curvaS?.atual,
+    preloadedData?.curvaS?.atual,
+  ].filter(Array.isArray).flat().forEach((row: any) => {
+    const code = String(Array.isArray(row) ? row?.[0] : row?.codigo || row?.code || '').trim();
+    const name = String(Array.isArray(row) ? row?.[1] : row?.nome || row?.name || '').trim();
+    if (code && name) osNameByCode.set(code, name);
+  });
+
   return { contractNameByCode, osNameByCode, itemNameByCode, nodeByCode, hierarchyNodes };
+};
+
+const findLongestHierarchyMatch = (code: string, namesByCode: Map<string, string>) => {
+  let bestMatch: { codigo: string; nome: string } | null = null;
+
+  namesByCode.forEach((nome, codigo) => {
+    if (code !== codigo && !code.startsWith(`${codigo}.`)) return;
+    if (!bestMatch || codigo.length > bestMatch.codigo.length) {
+      bestMatch = { codigo, nome };
+    }
+  });
+
+  return bestMatch;
 };
 
 const resolveDisciplineLeaderName = (preloadedData: any, discipline?: string) => {
@@ -1204,10 +1242,12 @@ const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProp
       const progressPercent = Math.max(0, normalizeSheetProgressPercent(Array.isArray(row) ? row?.[2] : row.progress));
       const percentualRealizado = Math.min(100, Math.floor(progressPercent));
       const lodAtual = extractLodValue(rowName) || inferCurrentLod(300, progressPercent);
-      const contractCode = getHierarchyCodePrefix(code, 1) || String(Array.isArray(row) ? row?.[11] : (row as any).contractCode || (row as any).contratoCodigo || '').trim() || codeParts[0] || code;
-      const osCode = getHierarchyCodePrefix(code, 2) || String(Array.isArray(row) ? row?.[10] : (row as any).osCode || (row as any).osCodigo || '').trim() || (codeParts.length >= 2 ? codeParts.slice(0, 2).join('.') : contractCode);
+      const matchedContract = findLongestHierarchyMatch(code, contractNameByCode);
+      const matchedOs = findLongestHierarchyMatch(code, osNameByCode);
+      const contractCode = matchedContract?.codigo || getHierarchyCodePrefix(code, 1) || String(Array.isArray(row) ? row?.[11] : (row as any).contractCode || (row as any).contratoCodigo || '').trim() || codeParts[0] || code;
+      const osCode = matchedOs?.codigo || String(Array.isArray(row) ? row?.[10] : (row as any).osCode || (row as any).osCodigo || '').trim() || getHierarchyCodePrefix(code, 2) || (codeParts.length >= 2 ? codeParts.slice(0, 2).join('.') : contractCode);
       const contractNome = contractNameByCode.get(contractCode) || String(Array.isArray(row) ? row?.[12] : (row as any).contractName || (row as any).contratoNome || contractCode).trim();
-      const osNome = osNameByCode.get(osCode) || itemNameByCode.get(code) || String(Array.isArray(row) ? row?.[1] : (row as any).osNome || (row as any).name || (row as any).nome || rowName || osCode).trim();
+      const osNome = matchedOs?.nome || osNameByCode.get(osCode) || String(Array.isArray(row) ? '' : (row as any).osNome || osCode).trim() || osCode;
       const leaderDisplay = resolveDisciplineLeaderName(preloadedData, disciplineForLeader) || 'Não atribuído';
       const status = progressPercent >= 100
         ? 'Concluído'
@@ -2019,7 +2059,7 @@ function getActivityItemKey(activity: EngineeringActivity) {
 }
 
 const CARD_DESIGN_WIDTH = 491;
-const CARD_DESIGN_HEIGHT = 198;
+const CARD_DESIGN_HEIGHT = 218;
 const BOARD_GAP = 8;
 
 function useResponsiveCardScale() {
@@ -2064,14 +2104,14 @@ function ProductionCard({
   const visibleParticipants = participants.slice(0, 2);
   const extraParticipants = Math.max(0, participants.length - visibleParticipants.length);
   const displayCode = getActivityRenderableCode(activity) || activity.origemItem || activity.osCodigo;
-  const workFrontText = '';
+  const workFrontText = 'Projeto...... - Licitação.....';
 
   return (
     <div ref={hostRef} className="relative w-full" style={{ height: `${CARD_DESIGN_HEIGHT * scale}px` }}>
       <button
         type="button"
         onClick={onClick}
-        className="absolute left-0 top-0 block overflow-hidden rounded-[22px] border border-[#E7EDF4] bg-white p-3 text-left shadow-[0_8px_20px_rgba(15,76,129,0.06)] transition-all hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.10)] cursor-pointer"
+        className="absolute left-0 top-0 block overflow-hidden rounded-[28px] border border-[#E7EDF4] bg-white px-4 py-3.5 text-left shadow-[0_9px_20px_rgba(45,45,45,0.22)] transition-all hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.14)] cursor-pointer"
         style={{
           width: `${CARD_DESIGN_WIDTH}px`,
           transform: `scale(${scale})`,
@@ -2079,27 +2119,27 @@ function ProductionCard({
         }}
       >
         <div
-          className="absolute right-2 top-2 flex flex-col items-center"
+          className="absolute right-0 top-0 flex flex-col items-center"
           aria-hidden="true"
         >
           <div
-            className="h-8 w-5 rounded-t-[4px]"
+            className="h-5 w-4"
             style={{ backgroundColor: osAccentColorMap[activity.osCodigo] || '#F05D28' }}
           />
+          <div className="h-[7px] w-4 bg-[#0F668D]" />
           <div
-            className="h-0 w-0 border-l-[10px] border-r-[10px] border-t-[10px] border-l-transparent border-r-transparent"
-            style={{ borderTopColor: osAccentColorMap[activity.osCodigo] || '#F05D28' }}
+            className="h-0 w-0 border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent border-t-[#0F668D]"
           />
         </div>
 
-        <div className="pr-8">
-          <p className="text-[13px] font-black leading-snug text-[#2D2D2D]">
-            <span className="text-[#F05D28]">{displayCode || activity.osCodigo}</span> - {activity.osNome}
+        <div className="flex min-h-[54px] items-center pr-8">
+          <p className="text-[18px] font-medium leading-[1.18] text-[#111827]">
+            <span className="font-black text-[#F05D28]">{displayCode || activity.osCodigo}</span> - {activity.osNome}
           </p>
         </div>
 
-        <div className="mt-2.5 grid gap-1.5 2xl:grid-cols-[minmax(0,1.45fr)_minmax(220px,0.95fr)]">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-[14px] bg-[#F3F4F6] px-2.5 py-2">
+        <div className="mt-2 grid grid-cols-[minmax(0,1fr)_190px] gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-[12px] bg-[#F3F4F6] px-2.5 py-2">
             <div
               className="flex h-10 w-10 items-center justify-center rounded-full border border-[#F05D28] bg-white text-[#F05D28] shadow-[0_3px_8px_rgba(240,93,40,0.10)]"
               title={disciplineIcon.label}
@@ -2131,7 +2171,7 @@ function ProductionCard({
             )}
           </div>
 
-          <div className="rounded-[14px] bg-[#EAF7EC] px-3 py-2">
+          <div className="rounded-[12px] bg-[#DCF5E2] px-3 py-2">
             <div className="grid grid-cols-3 gap-1.5 text-center xl:gap-2">
               <div className="min-w-0">
                 <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">LOD</p>
@@ -2149,8 +2189,8 @@ function ProductionCard({
           </div>
         </div>
 
-        <div className="mt-2 rounded-[14px] bg-[#F8FAFC] px-3 py-2.5">
-          <div className="grid gap-2 2xl:grid-cols-[140px_minmax(0,1fr)] 2xl:items-center">
+        <div className="mt-3 rounded-[12px] bg-[#F3F4F6] px-3 py-2">
+          <div className="grid grid-cols-[150px_minmax(0,1fr)] items-center gap-3">
             <div className="grid grid-cols-2 gap-2">
               <div className="min-w-0">
                 <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Início</p>
@@ -2162,9 +2202,8 @@ function ProductionCard({
               </div>
             </div>
 
-            <div className="min-w-0 2xl:border-l 2xl:border-[#E2E8F0] 2xl:pl-4">
-              <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Frente de trabalho</p>
-              <p className="mt-1 text-[12px] font-black leading-snug text-[#111827] break-words">{workFrontText}</p>
+            <div className="min-w-0">
+              <p className="text-[14px] font-black leading-tight text-[#111827] break-words">{workFrontText}</p>
             </div>
           </div>
         </div>

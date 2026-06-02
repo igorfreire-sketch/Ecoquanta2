@@ -7,13 +7,11 @@ service cloud.firestore {
     }
 
     match /appData/{document} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow read, write, delete: if isSignedIn();
     }
 
     match /appData/{document}/chunks/{chunk} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow read, write, delete: if isSignedIn();
     }
 
     match /registroAtividades/{document} {

@@ -1,0 +1,742 @@
+import { initializeApp, type FirebaseApp } from 'firebase/app';
+import { getAuth, signInAnonymously } from 'firebase/auth';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  getFirestore,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+  writeBatch,
+  type Firestore,
+} from 'firebase/firestore';
+import {
+  fetchAdminModulePublicData,
+  fetchCronogramaModulePublicData,
+  fetchEapAppsScriptData,
+  fetchEapPublicData,
+  fetchRegistroModulePublicData,
+} from './publicJson';
+
+interface FirebaseRuntimeConfig {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  appId: string;
+}
+
+interface AuthUserLike {
+  email?: string;
+  nome?: string;
+  role?: string;
+  disciplina?: string;
+  contrato?: string;
+  isAdmin?: boolean;
+}
+
+interface GlobalData {
+  registro?: any;
+  cronograma?: any;
+  admin?: any;
+  eap?: any;
+}
+
+interface RegistroDataResponse {
+  success: boolean;
+  error?: string;
+  contracts: any[];
+  osOptions: any[];
+  itemOptions: any[];
+  hierarchyNodes?: any[];
+  childrenByParent?: Record<string, any[]>;
+  rootCodes?: string[];
+  professionals: any[];
+  activitiesList?: any[];
+  activeActivities: any[];
+  completedActivities: any[];
+}
+
+interface NewActivityDraftLike {
+  contratoCodigo: string;
+  contratoNome: string;
+  osCodigo: string;
+  osNome: string;
+  setor: string;
+  itemCodigo: string;
+  itemNome: string;
+  profissionaisEmails: string[];
+  profissionaisNomes: string[];
+  dificuldade: string;
+  descricao: string;
+  avancoInicial: number;
+}
+
+interface ActivityUpdateDraftLike {
+  profissionaisEmails: string[];
+  profissionaisNomes: string[];
+  avancoAtual: number;
+  avaliacaoAtual: string;
+  observacaoAtual: string;
+}
+
+interface BatchWriteResponse {
+  success: boolean;
+  error?: string;
+  message?: string;
+  duplicateItems?: Array<{ itemCodigo: string; itemNome: string }>;
+  syncUpdated?: boolean;
+  syncError?: string;
+  registroSnapshot?: Partial<RegistroDataResponse>;
+}
+
+let app: FirebaseApp | null = null;
+let db: Firestore | null = null;
+let authPromise: Promise<void> | null = null;
+
+const DEFAULT_FIREBASE_CONFIG: FirebaseRuntimeConfig = {
+  apiKey: 'AIzaSyCGJ4UHPGyaf1GqayvTXUhvn3eLdu9ZW9g',
+  authDomain: 'ecoquanta-c2720.firebaseapp.com',
+  projectId: 'ecoquanta-c2720',
+  storageBucket: 'ecoquanta-c2720.firebasestorage.app',
+  messagingSenderId: '321062094939',
+  appId: '1:321062094939:web:918e7a128f6c2825edd77e',
+};
+
+function readEnv(name: string) {
+  return String(import.meta.env[name] || '').trim();
+}
+
+function isExplicitlyDisabled(value: string) {
+  return ['false', '0', 'no', 'nao', 'não', 'off'].includes(value.trim().toLowerCase());
+}
+
+function readFirebaseConfig(): FirebaseRuntimeConfig | null {
+  const enabled = readEnv('VITE_FIREBASE_ENABLED');
+  if (isExplicitlyDisabled(enabled)) return null;
+
+  const config = {
+    apiKey: readEnv('VITE_FIREBASE_API_KEY') || DEFAULT_FIREBASE_CONFIG.apiKey,
+    authDomain: readEnv('VITE_FIREBASE_AUTH_DOMAIN') || DEFAULT_FIREBASE_CONFIG.authDomain,
+    projectId: readEnv('VITE_FIREBASE_PROJECT_ID') || DEFAULT_FIREBASE_CONFIG.projectId,
+    storageBucket: readEnv('VITE_FIREBASE_STORAGE_BUCKET') || DEFAULT_FIREBASE_CONFIG.storageBucket,
+    messagingSenderId: readEnv('VITE_FIREBASE_MESSAGING_SENDER_ID') || DEFAULT_FIREBASE_CONFIG.messagingSenderId,
+    appId: readEnv('VITE_FIREBASE_APP_ID') || DEFAULT_FIREBASE_CONFIG.appId,
+  };
+
+  if (!config.apiKey || !config.authDomain || !config.projectId || !config.appId) return null;
+  return config;
+}
+
+export function isFirebaseConfigured() {
+  return Boolean(readFirebaseConfig());
+}
+
+function getDb() {
+  const config = readFirebaseConfig();
+  if (!config) {
+    console.warn('⚠️ Firebase nao configurado. Verifique as variaveis de ambiente VITE_FIREBASE_*');
+    throw new Error('Firebase indisponivel para esta operacao. A leitura tenta usar os dados publicados.');
+  }
+
+  if (!app) app = initializeApp(config);
+  if (!db) db = getFirestore(app);
+  return db;
+}
+
+async function ensureFirebaseAuth() {
+  const anonymousEnabled = readEnv('VITE_FIREBASE_ANONYMOUS_AUTH');
+  if (isExplicitlyDisabled(anonymousEnabled)) return;
+
+  if (!app) getDb();
+  if (!app) return;
+
+  if (!authPromise) {
+    authPromise = signInAnonymously(getAuth(app)).then(() => undefined);
+  }
+  await authPromise;
+}
+
+function nowPtBr() {
+  return new Date().toLocaleString('pt-BR');
+}
+
+function normalizeEmail(value?: string) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeDiscipline(value?: string) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+function isLeadershipOrAdmin(user: AuthUserLike) {
+  if (user.isAdmin) return true;
+  const role = normalizeDiscipline(user.role);
+  return ['lider', 'coorden', 'geren', 'diretor', 'gestor', 'supervisor'].some((keyword) => role.includes(keyword));
+}
+
+function activityMatchesUser(activity: any, user: AuthUserLike, professionals: any[]) {
+  if (isLeadershipOrAdmin(user)) return true;
+
+  const userContract = String(user.contrato || '').trim();
+  if (userContract && String(activity?.contratoCodigo || '').trim() !== userContract) return false;
+
+  const userDiscipline = normalizeDiscipline(user.disciplina);
+  if (!userDiscipline) return true;
+
+  const activityDiscipline = normalizeDiscipline(activity?.criadoPorDisciplina || activity?.disciplina);
+  if (activityDiscipline) return activityDiscipline === userDiscipline;
+
+  const disciplineEmails = new Set(
+    professionals
+      .filter((item) => normalizeDiscipline(item?.disciplina) === userDiscipline)
+      .map((item) => normalizeEmail(item?.email))
+      .filter(Boolean),
+  );
+  const activityEmails = Array.isArray(activity?.profissionaisEmails)
+    ? activity.profissionaisEmails
+    : String(activity?.profissionaisEmails || '').split(' | ');
+
+  return activityEmails.some((email: string) => disciplineEmails.has(normalizeEmail(email)));
+}
+
+function normalizeFirestoreRecord(snapshot: any) {
+  const data = typeof snapshot?.data === 'function' ? snapshot.data() : snapshot;
+  return {
+    ...data,
+    activityId: String(data?.activityId || snapshot.id || ''),
+    id: String(data?.activityId || snapshot.id || ''),
+  };
+}
+
+function splitActivitiesForUser(activities: any[], user: AuthUserLike, professionals: any[]) {
+  const visible = activities.filter((item) => activityMatchesUser(item, user, professionals));
+  return {
+    activeActivities: visible.filter((item) => String(item?.status || '').trim().toLowerCase() !== 'concluida'),
+    completedActivities: visible.filter((item) => String(item?.status || '').trim().toLowerCase() === 'concluida'),
+  };
+}
+
+async function getAppDataDoc<T>(dbRef: Firestore, name: string): Promise<T | null> {
+  const snapshot = await getDoc(doc(dbRef, 'appData', name));
+  if (!snapshot.exists()) return null;
+  const payload = snapshot.data();
+  if (payload.chunked && Number(payload.chunkCount || 0) > 0) {
+    const jsonText = (await readChunkedAppData(dbRef, name, Number(payload.chunkCount || 0))).join('');
+    return JSON.parse(jsonText) as T;
+  }
+  if (typeof payload.dataJson === 'string') {
+    return JSON.parse(payload.dataJson) as T;
+  }
+  return ((payload.data && typeof payload.data === 'object') ? payload.data : payload) as T;
+}
+
+async function readChunkedAppData(dbRef: Firestore, name: string, chunkCount: number) {
+  const expectedIds = Array.from({ length: chunkCount }, (_, index) => String(index).padStart(5, '0'));
+  const expectedSnapshots = await Promise.all(
+    expectedIds.map((id) => getDoc(doc(dbRef, 'appData', name, 'chunks', id))),
+  );
+  const expectedValues = expectedSnapshots.map((entry) => String(entry.exists() ? entry.data()?.value || '' : ''));
+
+  if (expectedValues.every((value) => value.length > 0)) return expectedValues;
+
+  const chunkSnapshot = await getDocs(collection(dbRef, 'appData', name, 'chunks'));
+  const valuesById = new Map(
+    chunkSnapshot.docs.map((entry) => [entry.id, String(entry.data()?.value || '')]),
+  );
+  const mergedValues = expectedIds.map((id, index) => expectedValues[index] || valuesById.get(id) || '');
+
+  if (mergedValues.every((value) => value.length > 0)) return mergedValues;
+
+  return chunkSnapshot.docs
+    .map((entry) => ({ id: entry.id, value: String(entry.data()?.value || '') }))
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((entry) => entry.value);
+}
+
+function unwrapPublicData(payload: any, key?: string) {
+  const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
+  if (key && data?.[key] !== undefined) return data[key];
+  return data;
+}
+
+function isNonEmptyObject(value: any) {
+  return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
+}
+
+function mergePublishedRegistro(...sources: any[]) {
+  const out: any = {};
+
+  sources.forEach((source) => {
+    if (!source || typeof source !== 'object') return;
+
+    Object.entries(source).forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        if (value.length > 0 || !Array.isArray(out[key])) out[key] = value;
+        return;
+      }
+
+      if (value && typeof value === 'object') {
+        if (isNonEmptyObject(value) || !isNonEmptyObject(out[key])) out[key] = value;
+        return;
+      }
+
+      if (value !== undefined && value !== null && value !== '') out[key] = value;
+    });
+  });
+
+  return out;
+}
+
+function hasFullEapData(value: any) {
+  const data = value?.data && typeof value.data === 'object' ? value.data : value;
+  return Boolean(
+    data
+    && typeof data === 'object'
+    && Array.isArray(data.atual)
+    && data.atual.length > 0,
+  );
+}
+
+async function tryPublic<T>(label: string, loader: () => Promise<T>): Promise<T | null> {
+  try {
+    return await loader();
+  } catch (error) {
+    console.warn(`Falha ao carregar fallback publico (${label}):`, error);
+    return null;
+  }
+}
+
+async function fetchBootstrapDataFromPublicJson(): Promise<GlobalData> {
+  const [registroPayload, adminPayload, eapPayload] = await Promise.all([
+    tryPublic('app-registro.json', () => fetchRegistroModulePublicData<any>()),
+    tryPublic('app-administracao.json', () => fetchAdminModulePublicData<any>()),
+    tryPublic('eap-unificada.json', () => fetchEapPublicData<any>()),
+  ]);
+  const eapData = unwrapPublicData(eapPayload);
+  const registro = mergePublishedRegistro(unwrapPublicData(registroPayload, 'registro'), eapData?.registro);
+
+  return {
+    registro: isNonEmptyObject(registro) ? registro : undefined,
+    admin: unwrapPublicData(adminPayload, 'admin') || undefined,
+    eap: eapData || undefined,
+  };
+}
+
+async function fetchEapDataFromPublicSources(): Promise<any | null> {
+  const publicPayload = await tryPublic('eap-unificada.json', () => fetchEapPublicData<any>());
+  const publicData = unwrapPublicData(publicPayload);
+  if (hasFullEapData(publicData)) return publicData;
+
+  const appsScriptData = await tryPublic('EAP Apps Script', () => fetchEapAppsScriptData<any>());
+  return hasFullEapData(appsScriptData) ? appsScriptData : null;
+}
+
+async function fetchCronogramaDataFromPublicJson(): Promise<any[]> {
+  const payload = await tryPublic('app-cronograma.json', () => fetchCronogramaModulePublicData<any>());
+  const data = unwrapPublicData(payload);
+  if (Array.isArray(data?.cronograma)) return data.cronograma;
+  if (Array.isArray(data)) return data;
+  return [];
+}
+
+async function fetchRegistroDataFromPublicJson(user: AuthUserLike): Promise<RegistroDataResponse> {
+  const [payload, eapPayload] = await Promise.all([
+    tryPublic('app-registro.json', () => fetchRegistroModulePublicData<any>()),
+    tryPublic('eap-unificada.json', () => fetchEapPublicData<any>()),
+  ]);
+  const registro = mergePublishedRegistro(unwrapPublicData(payload, 'registro'), unwrapPublicData(eapPayload)?.registro);
+  const activitiesList = Array.isArray(registro.activitiesList) ? registro.activitiesList.map(normalizeFirestoreRecord) : [];
+  const professionals = getProfessionalsForUser(registro, user);
+  const split = splitActivitiesForUser(activitiesList, user, professionals);
+
+  return {
+    success: true,
+    contracts: registro.contracts || [],
+    osOptions: registro.osOptions || [],
+    itemOptions: registro.itemOptions || [],
+    hierarchyNodes: registro.hierarchyNodes || [],
+    childrenByParent: registro.childrenByParent || {},
+    rootCodes: registro.rootCodes || [],
+    professionals,
+    activitiesList,
+    activeActivities: split.activeActivities,
+    completedActivities: split.completedActivities,
+  };
+}
+
+export async function fetchGlobalDataFromFirebase(user?: AuthUserLike): Promise<GlobalData> {
+  if (!isFirebaseConfigured()) return fetchBootstrapDataFromPublicJson();
+
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const [registro, admin, cronograma, eap] = await Promise.all([
+    getAppDataDoc<any>(dbRef, 'registro'),
+    getAppDataDoc<any>(dbRef, 'admin'),
+    getAppDataDoc<any>(dbRef, 'cronograma'),
+    getAppDataDoc<any>(dbRef, 'eap'),
+  ]);
+
+  const registroData = mergePublishedRegistro(registro, eap?.registro);
+  const activitiesSnapshot = await getDocs(collection(dbRef, 'registroAtividades'));
+  const liveActivitiesList = activitiesSnapshot.docs.map(normalizeFirestoreRecord);
+  const activitiesList = liveActivitiesList.length > 0
+    ? liveActivitiesList
+    : Array.isArray(registroData.activitiesList)
+      ? registroData.activitiesList.map(normalizeFirestoreRecord)
+      : [];
+  const professionals = getProfessionalsForUser(registroData, user || {});
+  const split = splitActivitiesForUser(activitiesList, user || {}, professionals);
+
+  const fullData: GlobalData = {
+    registro: {
+      ...registroData,
+      activitiesList,
+      activeActivities: split.activeActivities,
+      completedActivities: split.completedActivities,
+      professionals,
+    },
+    admin: admin || undefined,
+    cronograma: cronograma || undefined,
+    eap: eap || undefined,
+  };
+
+  return fullData;
+}
+
+export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
+  try {
+    if (!isFirebaseConfigured()) {
+      console.warn('⚠️ Firebase não configurado - retornando dados vazios');
+      return fetchBootstrapDataFromPublicJson();
+    }
+    await ensureFirebaseAuth();
+    const dbRef = getDb();
+    const [menu, registroBase, admin] = await Promise.all([
+      getAppDataDoc<any>(dbRef, 'menu'),
+      getAppDataDoc<any>(dbRef, 'registro'),
+      getAppDataDoc<any>(dbRef, 'admin'),
+    ]);
+    const registro = mergePublishedRegistro(registroBase, menu?.registro || menu);
+
+    return {
+      admin: admin || undefined,
+      registro: isNonEmptyObject(registro) ? registro : undefined,
+      eap: menu?.eapResumo ? {
+        latestEapSheet: menu.eapResumo.latestEapSheet || '',
+        latestEapDate: menu.eapResumo.latestEapDate || '',
+        latestEapPublishedAt: menu.eapResumo.latestEapPublishedAt || '',
+        dates: Array.isArray(menu.eapResumo.dates) ? menu.eapResumo.dates : [],
+      } : undefined,
+    };
+  } catch (error) {
+    console.error('❌ Erro ao fetch bootstrap data:', error);
+    return fetchBootstrapDataFromPublicJson();
+  }
+}
+
+export async function fetchEapDataFromFirebase(): Promise<any> {
+  try {
+    if (!isFirebaseConfigured()) return fetchEapDataFromPublicSources();
+    await ensureFirebaseAuth();
+    const dbRef = getDb();
+    const eapData = await getAppDataDoc<any>(dbRef, 'eap');
+    return hasFullEapData(eapData) ? eapData : await fetchEapDataFromPublicSources();
+  } catch (error) {
+    console.error('❌ Erro ao fetch EAP data:', error);
+    return fetchEapDataFromPublicSources();
+  }
+}
+
+export async function fetchCronogramaDataFromFirebase(): Promise<any[]> {
+  try {
+    if (!isFirebaseConfigured()) return fetchCronogramaDataFromPublicJson();
+    await ensureFirebaseAuth();
+    const dbRef = getDb();
+    const cronograma = await getAppDataDoc<any>(dbRef, 'cronograma');
+    if (Array.isArray(cronograma)) return cronograma;
+    if (Array.isArray(cronograma?.cronograma)) return cronograma.cronograma;
+    return fetchCronogramaDataFromPublicJson();
+  } catch (error) {
+    console.error('❌ Erro ao fetch cronograma data:', error);
+    return fetchCronogramaDataFromPublicJson();
+  }
+}
+
+function getProfessionalsForUser(registro: any, user: AuthUserLike) {
+  const byDiscipline = registro?.professionalsByDisciplina;
+  if (!byDiscipline || typeof byDiscipline !== 'object') return Array.isArray(registro?.professionals) ? registro.professionals : [];
+
+  if (isLeadershipOrAdmin(user)) {
+    return Object.values(byDiscipline).flat().filter(Boolean);
+  }
+
+  const target = normalizeDiscipline(user.disciplina) || normalizeDiscipline('Sem disciplina');
+  const entry = Object.entries(byDiscipline).find(([key, value]) => normalizeDiscipline(key) === target && Array.isArray(value));
+  return (entry?.[1] as any[]) || [];
+}
+
+export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise<RegistroDataResponse> {
+  try {
+    if (!isFirebaseConfigured()) {
+      return fetchRegistroDataFromPublicJson(user);
+    }
+    
+    await ensureFirebaseAuth();
+    const dbRef = getDb();
+    const [registroBase, menu] = await Promise.all([
+      getAppDataDoc<any>(dbRef, 'registro'),
+      getAppDataDoc<any>(dbRef, 'menu'),
+    ]);
+    const activitiesSnapshot = await getDocs(collection(dbRef, 'registroAtividades'));
+    const liveActivitiesList = activitiesSnapshot.docs.map(normalizeFirestoreRecord);
+    const registro = mergePublishedRegistro(registroBase, menu?.registro || menu, { activitiesList: liveActivitiesList });
+    const activitiesList = liveActivitiesList.length > 0
+      ? liveActivitiesList
+      : Array.isArray(registro.activitiesList)
+        ? registro.activitiesList.map(normalizeFirestoreRecord)
+        : [];
+    const professionals = getProfessionalsForUser(registro, user);
+    const split = splitActivitiesForUser(activitiesList, user, professionals);
+
+    return {
+      success: true,
+      contracts: registro.contracts || [],
+      osOptions: registro.osOptions || [],
+      itemOptions: registro.itemOptions || [],
+      hierarchyNodes: registro.hierarchyNodes || [],
+      childrenByParent: registro.childrenByParent || {},
+      rootCodes: registro.rootCodes || [],
+      professionals,
+      activitiesList,
+      activeActivities: split.activeActivities,
+      completedActivities: split.completedActivities,
+    };
+  } catch (error) {
+    console.error('Erro ao fetch registro data:', error);
+    return fetchRegistroDataFromPublicJson(user);
+  }
+}
+
+export async function registerActivitiesInFirebase(user: AuthUserLike, activities: NewActivityDraftLike[]): Promise<BatchWriteResponse> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const validActivities = activities.filter((item) => (
+    item.contratoCodigo && item.osCodigo && item.itemCodigo && item.descricao && item.descricao.length >= 50 && item.profissionaisEmails?.length
+  ));
+
+  if (!validActivities.length) return { success: false, error: 'Nenhuma atividade valida para registrar.' };
+
+  const duplicateItems: Array<{ itemCodigo: string; itemNome: string }> = [];
+  const rowsToSave: any[] = [];
+  const queuedItems = new Set<string>();
+
+  for (const item of validActivities) {
+    const itemCodigo = String(item.itemCodigo || '').trim();
+    const existingSnapshot = await getDocs(query(collection(dbRef, 'registroAtividades'), where('itemCodigo', '==', itemCodigo)));
+    const hasOpen = existingSnapshot.docs.some((entry) => String(entry.data()?.status || '').trim().toLowerCase() !== 'concluida');
+
+    if (hasOpen || queuedItems.has(itemCodigo)) {
+      duplicateItems.push({ itemCodigo, itemNome: item.itemNome });
+      continue;
+    }
+
+    queuedItems.add(itemCodigo);
+    const activityId = crypto.randomUUID();
+    const nowStr = nowPtBr();
+    const avancoInicial = Math.max(0, Math.min(100, Number(item.avancoInicial || 0)));
+    const status = avancoInicial === 100 ? 'aguardando_conclusao' : 'em_andamento';
+
+    rowsToSave.push({
+      activityId,
+      dataRegistro: nowStr,
+      criadoPor: user.nome || '',
+      criadoPorEmail: normalizeEmail(user.email),
+      criadoPorRole: user.role || '',
+      criadoPorDisciplina: user.disciplina || '',
+      contratoCodigo: item.contratoCodigo,
+      contratoNome: item.contratoNome,
+      osCodigo: item.osCodigo,
+      osNome: item.osNome,
+      itemCodigo,
+      itemNome: item.itemNome,
+      setor: item.setor || 'Engenharia',
+      profissionais: item.profissionaisNomes.join(' | '),
+      profissionaisEmails: item.profissionaisEmails.join(' | '),
+      dificuldade: item.dificuldade,
+      descricao: item.descricao,
+      avancoAtual: avancoInicial,
+      avaliacaoAtual: '',
+      observacaoAtual: '',
+      status,
+      data100: avancoInicial === 100 ? nowStr : '',
+      dataConclusaoEfetiva: '',
+      ativo: true,
+      ultimaAtualizacao: nowStr,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  if (!rowsToSave.length) {
+    return {
+      success: false,
+      error: duplicateItems.length ? 'Todas as atividades enviadas ja estavam registradas.' : 'Nenhuma atividade valida para registrar.',
+      duplicateItems,
+    };
+  }
+
+  const batch = writeBatch(dbRef);
+  rowsToSave.forEach((activity) => {
+    batch.set(doc(dbRef, 'registroAtividades', activity.activityId), activity);
+    batch.set(doc(collection(dbRef, 'registroAtividadesHistorico')), {
+      activityId: activity.activityId,
+      data: activity.dataRegistro,
+      userEmail: normalizeEmail(user.email),
+      userName: user.nome || '',
+      tipo: 'registro_inicial',
+      valorAnterior: '',
+      valorNovo: JSON.stringify(activity),
+      createdAt: serverTimestamp(),
+    });
+  });
+  await batch.commit();
+
+  return {
+    success: true,
+    message: `${rowsToSave.length} atividade(s) registrada(s) com sucesso.`,
+    duplicateItems,
+    syncUpdated: true,
+    syncError: '',
+    registroSnapshot: await fetchRegistroDataFromFirebase(user),
+  };
+}
+
+export async function updateActivitiesInFirebase(user: AuthUserLike, updates: Array<{ activityId: string } & ActivityUpdateDraftLike>): Promise<BatchWriteResponse> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  if (!updates.length) return { success: false, error: 'Nenhuma alteracao para salvar.' };
+
+  const batch = writeBatch(dbRef);
+  let anyUpdated = false;
+  const nowStr = nowPtBr();
+
+  for (const update of updates) {
+    const activityId = String(update.activityId || '').trim();
+    if (!activityId) continue;
+
+    let activityRef = doc(dbRef, 'registroAtividades', activityId);
+    let snapshot = await getDoc(activityRef);
+
+    if (!snapshot.exists()) {
+      const lookup = await getDocs(query(collection(dbRef, 'registroAtividades'), where('activityId', '==', activityId)));
+      if (lookup.empty) continue;
+      activityRef = lookup.docs[0].ref;
+      snapshot = lookup.docs[0];
+    }
+
+    const current = snapshot.data();
+    if (String(current?.status || '').trim().toLowerCase() === 'concluida') continue;
+
+    const avancoAtual = Math.max(0, Math.min(100, Number(update.avancoAtual || 0)));
+    const status = avancoAtual === 100
+      ? 'aguardando_conclusao'
+      : String(current?.status || '') === 'aguardando_conclusao'
+        ? 'em_andamento'
+        : current?.status || 'em_andamento';
+
+    batch.update(activityRef, {
+      profissionais: update.profissionaisNomes.join(' | '),
+      profissionaisEmails: update.profissionaisEmails.join(' | '),
+      avancoAtual,
+      avaliacaoAtual: update.avaliacaoAtual || '',
+      observacaoAtual: update.observacaoAtual || '',
+      status,
+      data100: avancoAtual === 100 ? (current?.data100 || nowStr) : '',
+      ultimaAtualizacao: nowStr,
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(collection(dbRef, 'registroAtividadesHistorico')), {
+      activityId,
+      data: nowStr,
+      userEmail: normalizeEmail(user.email),
+      userName: user.nome || '',
+      tipo: 'atualizacao',
+      valorAnterior: JSON.stringify({
+        profissionaisEmails: current?.profissionaisEmails || '',
+        avancoAtual: current?.avancoAtual || 0,
+        avaliacaoAtual: current?.avaliacaoAtual || '',
+        observacaoAtual: current?.observacaoAtual || '',
+      }),
+      valorNovo: JSON.stringify(update),
+      createdAt: serverTimestamp(),
+    });
+    anyUpdated = true;
+  }
+
+  if (!anyUpdated) return { success: false, error: 'Nenhuma alteracao valida foi encontrada.' };
+
+  await batch.commit();
+  return {
+    success: true,
+    message: 'Alteracoes salvas com sucesso.',
+    syncUpdated: true,
+    syncError: '',
+    registroSnapshot: await fetchRegistroDataFromFirebase(user),
+  };
+}
+
+export async function upsertFirebaseAppData(name: string, data: any) {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  await setDoc(doc(dbRef, 'appData', name), {
+    data,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+export async function updateFirebaseRegistroActivity(activityId: string, patch: Record<string, unknown>) {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  await updateDoc(doc(dbRef, 'registroAtividades', activityId), {
+    ...patch,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function fetchFirebaseCollection<T = Record<string, unknown>>(collectionName: string): Promise<T[]> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const snapshot = await getDocs(collection(dbRef, collectionName));
+  return snapshot.docs.map((entry) => normalizeFirestoreRecord(entry) as T);
+}
+
+export async function setFirebaseDocument(collectionName: string, id: string, data: object) {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const payload = data as Record<string, unknown>;
+  await setDoc(doc(dbRef, collectionName, id), {
+    ...payload,
+    updatedAt: payload.updatedAt || serverTimestamp(),
+  }, { merge: true });
+}
+
+export async function setFirebaseDocuments(collectionName: string, rows: Array<object & { id: string }>) {
+  await ensureFirebaseAuth();
+  if (!rows.length) return;
+  const dbRef = getDb();
+  const batch = writeBatch(dbRef);
+  rows.forEach((row) => {
+    const payload = row as Record<string, unknown> & { id: string };
+    batch.set(doc(dbRef, collectionName, row.id), {
+      ...payload,
+      updatedAt: payload.updatedAt || serverTimestamp(),
+    }, { merge: true });
+  });
+  await batch.commit();
+}

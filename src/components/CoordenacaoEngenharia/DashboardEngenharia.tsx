@@ -35,6 +35,7 @@ type DashboardEngenhariaProps = {
     registro?: any;
     cronograma?: any;
     admin?: any;
+    eap?: any;
     contractPriorities?: Array<{ id: string; activityId: string; monthlyCycle?: string; licitatoria?: boolean }>;
   };
   mode?: 'dashboard' | 'profissionais' | 'planejamento';
@@ -295,10 +296,17 @@ function getActivityList(registro: any) {
   const activitiesList = Array.isArray(registro?.activitiesList) ? registro.activitiesList : [];
   const activeActivities = Array.isArray(registro?.activeActivities) ? registro.activeActivities : [];
   const completedActivities = Array.isArray(registro?.completedActivities) ? registro.completedActivities : [];
+  const alternateActivities = Array.isArray(registro?.activities)
+    ? registro.activities
+    : Array.isArray(registro?.atividades)
+      ? registro.atividades
+      : [];
 
   const source = activitiesList.length > 0
     ? activitiesList
-    : [...activeActivities, ...completedActivities];
+    : activeActivities.length + completedActivities.length > 0
+      ? [...activeActivities, ...completedActivities]
+      : alternateActivities;
 
   const seen = new Set<string>();
   return source.filter((activity: any, index: number) => {
@@ -442,6 +450,14 @@ function buildConsultaData(registro: any, cronograma: any, admin?: any, contract
       };
     });
   });
+}
+
+function getUnifiedRegistroData(preloadedData: any) {
+  return preloadedData?.eap?.data?.registro
+    || preloadedData?.eap?.registro
+    || preloadedData?.registro
+    || preloadedData
+    || {};
 }
 
 function getAvaliacaoBadgeClass(value: string) {
@@ -624,13 +640,19 @@ function filterByEvaluation(tableData: ConsultaAtividade[], avaliacao: string) {
 function matchesContractFilter(item: Pick<ConsultaAtividade, 'contratoCodigo' | 'contrato' | 'contratoNome'>, filtro: string) {
   if (isAllValue(filtro)) return true;
   const target = normalizeText(filtro);
-  return [item.contratoCodigo, item.contrato, item.contratoNome].some((value) => normalizeText(String(value || '')) === target);
+  return [item.contratoCodigo, item.contrato, item.contratoNome].some((value) => {
+    const normalized = normalizeText(String(value || ''));
+    return normalized === target || normalized.startsWith(`${target}.`) || target.startsWith(`${normalized}.`);
+  });
 }
 
 function matchesOsFilter(item: Pick<ConsultaAtividade, 'osCodigo' | 'os' | 'osNome'>, filtro: string) {
   if (isAllValue(filtro)) return true;
   const target = normalizeText(filtro);
-  return [item.osCodigo, item.os, item.osNome].some((value) => normalizeText(String(value || '')) === target);
+  return [item.osCodigo, item.os, item.osNome].some((value) => {
+    const normalized = normalizeText(String(value || ''));
+    return normalized === target || normalized.startsWith(`${target}.`) || target.startsWith(`${normalized}.`);
+  });
 }
 
 function filterByThirdParty(tableData: ConsultaAtividade[], terceirizada: boolean) {
@@ -669,10 +691,15 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   const filtroContratoGlobal = filtrosAtivos?.contrato || 'Todos';
   const filtroOSGlobal = filtrosAtivos?.os || 'Todos';
   const filtroDisciplina = filtrosAtivos?.disciplina || 'Todos';
+  const registro = React.useMemo(() => getUnifiedRegistroData(preloadedData), [preloadedData]);
+  const cronograma = React.useMemo(
+    () => preloadedData?.cronograma || preloadedData?.eap?.cronograma || preloadedData?.eap?.data?.cronograma || [],
+    [preloadedData]
+  );
 
   const tableData = React.useMemo(
-    () => buildConsultaData(preloadedData?.registro, preloadedData?.cronograma, preloadedData?.admin, preloadedData?.contractPriorities),
-    [preloadedData?.registro, preloadedData?.cronograma, preloadedData?.admin, preloadedData?.contractPriorities]
+    () => buildConsultaData(registro, cronograma, preloadedData?.admin, preloadedData?.contractPriorities),
+    [registro, cronograma, preloadedData?.admin, preloadedData?.contractPriorities]
   );
 
   const disciplinasCadastradas = React.useMemo(() => {
@@ -744,12 +771,12 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   }, [filtroContratoGlobal, filtroOSGlobal, filtroDisciplina]);
 
   const contractOptions = React.useMemo(
-    () => getContractOptions(preloadedData?.registro, tableData),
-    [preloadedData?.registro, tableData]
+    () => getContractOptions(registro, tableData),
+    [registro, tableData]
   );
   const osOptionsGlobais = React.useMemo(
-    () => getOsOptions(preloadedData?.registro, tableData, filtrosGlobais.contrato),
-    [preloadedData?.registro, tableData, filtrosGlobais.contrato]
+    () => getOsOptions(registro, tableData, filtrosGlobais.contrato),
+    [registro, tableData, filtrosGlobais.contrato]
   );
   const disciplineOptions = React.useMemo(
     () => ['Todos', ...disciplinasCadastradas.filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'))],
@@ -964,13 +991,13 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
           <FilterField label="Contrato" value={filtrosGlobais.contrato} onChange={(value) => updateFiltroGlobal('contrato', value)}>
             <option value="Todos">Todos os contratos</option>
             {contractOptions.map((item) => (
-              <option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>
+              <option key={item.codigo} value={item.codigo}>{item.nome || item.codigo}</option>
             ))}
           </FilterField>
           <FilterField label="OS" value={filtrosGlobais.os} onChange={(value) => updateFiltroGlobal('os', value)}>
             <option value="Todos">Todas as OS</option>
             {osOptionsGlobais.map((item) => (
-              <option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>
+              <option key={item.codigo} value={item.codigo}>{item.nome || item.codigo}</option>
             ))}
           </FilterField>
           <FilterField label="Disciplina" value={filtrosGlobais.disciplina} onChange={(value) => updateFiltroGlobal('disciplina', value)}>

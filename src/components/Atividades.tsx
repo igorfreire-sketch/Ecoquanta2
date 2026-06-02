@@ -6,13 +6,20 @@ import {
   CheckCircle2,
   Clock,
   ChevronDown,
+  Droplet,
+  Droplets,
   FileText,
+  Fan,
+  House,
   Plus,
+  PlugZap,
   Search,
+  Shovel,
+  Waves,
   X
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { getUserDisciplineList } from '../lib/disciplineCatalog';
+import { DEFAULT_DISCIPLINES, getUserDisciplineList, getUserPrimaryDiscipline } from '../lib/disciplineCatalog';
 
 export type ProductionStatus =
   | 'Não iniciado'
@@ -39,10 +46,12 @@ export type LeaderDifficulty = 'Difícil' | 'Regular' | 'Fácil' | '';
 
 export interface EngineeringActivity {
   id: string;
+  contractCode?: string;
   contratoCodigo: string;
   contratoNome: string;
   osCodigo: string;
   osNome: string;
+  itemCodigo?: string;
   disciplina: string;
   disciplinas: string[];
   subdisciplina: string;
@@ -68,6 +77,7 @@ export interface EngineeringActivity {
   porcentagemAtividade: number | null;
   observacaoLider: string;
   leaderEdited: boolean;
+  sourceType?: 'eap' | 'manual' | 'saved';
 }
 
 interface EapActivity {
@@ -81,6 +91,7 @@ interface EapActivity {
 }
 
 interface EapSourceRow {
+  [key: string]: any;
   code: string;
   name: string;
   progress: number;
@@ -111,6 +122,7 @@ interface AtividadesProps {
   showAllDisciplines?: boolean;
   filtersAlwaysVisible?: boolean;
   disciplineFilterEnabled?: boolean;
+  autoSelectUserDisciplineFilter?: boolean;
 }
 
 const STORAGE_KEY = 'quanta_producao_tecnica_cards';
@@ -705,6 +717,11 @@ const safeSetLocalStorageValue = (key: string, value: string) => {
 
 const parseDate = (value?: string) => {
   if (!value) return new Date(TODAY);
+  if (/^\d{11,13}$/.test(String(value).trim())) {
+    const timestamp = Number(value);
+    const parsedTimestamp = new Date(timestamp);
+    return Number.isNaN(parsedTimestamp.getTime()) ? new Date(TODAY) : parsedTimestamp;
+  }
   const [year, month, day] = value.split('-').map(Number);
   const parsed = new Date(year, (month || 1) - 1, day || 1);
   return Number.isNaN(parsed.getTime()) ? new Date(TODAY) : parsed;
@@ -785,8 +802,202 @@ const splitMultiValue = (value: any) => {
 };
 
 const splitDisciplinas = (value: any) => {
-  const list = splitMultiValue(value);
+  const list = splitMultiValue(value).filter(isMeaningfulDisciplineToken);
   return list.length > 0 ? list : ['Sem disciplina'];
+};
+
+const normalizeDisciplineLabel = (value: any) => {
+  const list = splitMultiValue(value).filter(isMeaningfulDisciplineToken);
+  return list.length > 0 ? list.join(' | ') : '';
+};
+
+const normalizeDisciplineToken = (value: any) => {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+};
+
+const isMeaningfulDisciplineToken = (value: any) => {
+  const normalized = normalizeDisciplineToken(value);
+  if (!normalized || normalized === 'sem disciplina' || normalized === 'ignorado') return false;
+  if (/^\d+([.,]\d+)?$/.test(normalized)) return false;
+  if (/^\d{11,13}$/.test(normalized)) return false;
+  return /[a-z]/i.test(normalized);
+};
+
+const hasExplicitActivityDiscipline = (value: any) => {
+  return splitDisciplinas(value).some(isMeaningfulDisciplineToken);
+};
+
+const addKnownDisciplineToken = (set: Set<string>, value: any) => {
+  const token = normalizeDisciplineToken(value);
+  if (token) set.add(token);
+};
+
+const buildKnownDisciplineTokens = (preloadedData: any, currentUser?: AtividadesProps['currentUser']) => {
+  const registry = getUnifiedRegistryData(preloadedData);
+  const known = new Set<string>();
+
+  DEFAULT_DISCIPLINES.forEach((item) => {
+    addKnownDisciplineToken(known, item.code);
+    addKnownDisciplineToken(known, item.name);
+    addKnownDisciplineToken(known, item.label);
+    item.aliases.forEach((alias) => addKnownDisciplineToken(known, alias));
+  });
+
+  const registryDisciplines = registry?.professionalsByDisciplina && typeof registry.professionalsByDisciplina === 'object'
+    ? Object.keys(registry.professionalsByDisciplina)
+    : [];
+  registryDisciplines.forEach((item) => addKnownDisciplineToken(known, item));
+
+  const registrySettings = Array.isArray((registry as any)?.disciplineSettings)
+    ? (registry as any).disciplineSettings
+    : Array.isArray((registry as any)?.disciplinas)
+      ? (registry as any).disciplinas
+      : [];
+  registrySettings.forEach((item: any) => addKnownDisciplineToken(known, item?.nome || item?.name || item));
+
+  getUserDisciplineList(currentUser || {}).forEach((item) => addKnownDisciplineToken(known, item));
+
+  return known;
+};
+
+const isRecognizedDisciplineToken = (value: any, knownDisciplines: Set<string>) => {
+  const normalized = normalizeDisciplineToken(value);
+  if (!isMeaningfulDisciplineToken(normalized)) return false;
+  return knownDisciplines.size > 0 && knownDisciplines.has(normalized);
+};
+
+const hasRecognizedActivityDiscipline = (value: any, knownDisciplines: Set<string>) => {
+  return splitMultiValue(value).some((item) => isRecognizedDisciplineToken(item, knownDisciplines));
+};
+
+const normalizePlannedDateValue = (value: any) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/^\d{11,13}$/.test(text)) return '';
+
+  const isIso = /^\d{4}-\d{2}-\d{2}$/.test(text);
+  const isBr = /^\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4}$/.test(text);
+  if (!isIso && !isBr) return '';
+
+  const parsed = parseDate(text);
+  if (Number.isNaN(parsed.getTime())) return '';
+
+  const iso = toIsoDate(parsed);
+  if (isIso && iso !== text) return '';
+
+  return iso;
+};
+
+const hasRenderableDateRange = (activity: Pick<EngineeringActivity, 'inicioPlanejado' | 'terminoPlanejado'>) => {
+  const start = normalizePlannedDateValue(activity.inicioPlanejado);
+  const end = normalizePlannedDateValue(activity.terminoPlanejado);
+  if (!start || !end) return false;
+  return parseDate(start).getTime() <= parseDate(end).getTime();
+};
+
+const pickReadableLabel = (...values: any[]) => {
+  for (const value of values) {
+    const candidate = Array.isArray(value)
+      ? value.map((item) => String(item || '').trim()).filter(Boolean).join(' | ').trim()
+      : String(value || '').trim();
+
+    if (!candidate) continue;
+
+    const normalized = normalizeDisciplineToken(candidate);
+    if (!normalized || normalized === 'sem disciplina' || normalized === 'ignorado') continue;
+    if (/^\d+([.,]\d+)?$/.test(normalized)) continue;
+    if (/^\d{11,13}$/.test(normalized)) continue;
+    if (!/[a-z]/i.test(normalized)) continue;
+    return candidate;
+  }
+
+  return '';
+};
+
+const normalizeSheetProgressPercent = (value: unknown) => {
+  const normalized = typeof value === 'number'
+    ? value
+    : Number(String(value || '').trim().replace('%', '').replace(',', '.'));
+
+  if (!Number.isFinite(normalized)) return 0;
+  if (normalized <= 1) return normalized * 100;
+  return normalized;
+};
+
+const getHierarchyCodePrefix = (value: unknown, depth: number) => {
+  const cleaned = String(value || '').trim();
+  if (!cleaned) return '';
+
+  const parts = cleaned.split('.').map((part) => part.trim()).filter(Boolean);
+  if (parts.length <= depth) return cleaned;
+
+  return parts.slice(0, depth).join('.');
+};
+
+const getActivitySourceCode = (activity: Partial<EngineeringActivity> & Record<string, unknown>) => {
+  return String(
+    activity.contratoCodigo ||
+    (activity as any).contractCode ||
+    activity.osCodigo ||
+    (activity as any).osCode ||
+    (activity as any).itemCodigo ||
+    (activity as any).itemCode ||
+    activity.origemItem ||
+    ''
+  ).trim();
+};
+
+const getActivityRenderableCode = (activity: any) => {
+  return String(
+    activity?.itemCodigo ||
+    activity?.itemCode ||
+    activity.origemItem ||
+    ''
+  ).trim();
+};
+
+const isManualActivity = (activity: any) => {
+  return normalizeText(String(activity?.sourceType || '')) === 'manual';
+};
+
+const isLeafActivityCode = (code?: string) => {
+  const cleaned = String(code || '').trim();
+  if (!cleaned) return false;
+  return cleaned.split('.').map((part) => part.trim()).filter(Boolean).length >= 3;
+};
+
+const getActivityContractCode = (activity: Partial<EngineeringActivity> & Record<string, unknown>) => {
+  const sourceCode = getActivitySourceCode(activity);
+  if (!sourceCode) return '';
+
+  return getHierarchyCodePrefix(sourceCode, 1);
+};
+
+const getActivityOsCode = (activity: Partial<EngineeringActivity> & Record<string, unknown>) => {
+  const sourceCode = String(
+    activity.osCodigo ||
+    (activity as any).osCode ||
+    (activity as any).itemCodigo ||
+    (activity as any).itemCode ||
+    activity.origemItem ||
+    activity.contratoCodigo ||
+    (activity as any).contractCode ||
+    ''
+  ).trim();
+
+  if (!sourceCode) return '';
+
+  return getHierarchyCodePrefix(sourceCode, 2);
+};
+
+const sameContractCode = (first?: string, second?: string) => {
+  return normalizeText(first) === normalizeText(second);
 };
 
 const getDisciplineAbbreviation = (value: string) => {
@@ -821,10 +1032,10 @@ const getDisciplineLabel = (value: string) => {
   return label || 'Sem disciplina';
 };
 
-const hasLodToken = (value?: string) => /\bLOD[\s_\-]*\d+/i.test(String(value || ''));
+const hasLodToken = (value?: string) => /\bLOD\b[^0-9]*\d+/i.test(String(value || ''));
 
 const extractLodValue = (value?: string) => {
-  const matches = String(value || '').match(/\bLOD[\s_\-]*([0-9]{2,3})\b/i);
+  const matches = String(value || '').match(/\bLOD\b[^0-9]*([0-9]{2,3})/i);
   const numberValue = matches ? Number(matches[1]) : NaN;
   return LOD_OPTIONS.includes(numberValue as LodLevel) ? (numberValue as LodLevel) : null;
 };
@@ -855,12 +1066,20 @@ const getLeaderStatusLabel = (activity: EngineeringActivity) => {
   return hasLeaderInputs(activity) ? 'Executando' : 'Não iniciado';
 };
 
+const getUnifiedRegistryData = (preloadedData: any) => {
+  return preloadedData?.eap?.data?.registro
+    || preloadedData?.eap?.registro
+    || preloadedData?.registro
+    || preloadedData
+    || {};
+};
+
 const buildProfessionalOptions = (
   preloadedData: any,
   currentUser?: AtividadesProps['currentUser'],
   showAllDisciplines = false,
 ) => {
-  const registro = preloadedData?.registro || preloadedData || {};
+  const registro = getUnifiedRegistryData(preloadedData);
   const professionalsByDisciplina = registro?.professionalsByDisciplina && typeof registro.professionalsByDisciplina === 'object'
     ? registro.professionalsByDisciplina
     : {};
@@ -890,7 +1109,7 @@ const buildProfessionalOptions = (
 };
 
 const buildEapMaps = (preloadedData: any) => {
-  const registro = preloadedData?.registro || preloadedData || {};
+  const registro = getUnifiedRegistryData(preloadedData);
   const contracts = Array.isArray(registro.contracts) ? registro.contracts : [];
   const osOptions = Array.isArray(registro.osOptions) ? registro.osOptions : [];
   const itemOptions = Array.isArray(registro.itemOptions) ? registro.itemOptions : [];
@@ -904,42 +1123,103 @@ const buildEapMaps = (preloadedData: any) => {
   return { contractNameByCode, osNameByCode, itemNameByCode, nodeByCode, hierarchyNodes };
 };
 
+const resolveDisciplineLeaderName = (preloadedData: any, discipline?: string) => {
+  const registry = getUnifiedRegistryData(preloadedData);
+  const professionalsByDisciplina = registry?.professionalsByDisciplina && typeof registry.professionalsByDisciplina === 'object'
+    ? registry.professionalsByDisciplina
+    : {};
+  const target = normalizeText(String(discipline || '').trim());
+  if (!target) return '';
+
+  const matchingEntry = Object.entries(professionalsByDisciplina).find(([key]) => normalizeText(String(key || '')) === target);
+  const professionals = Array.isArray(matchingEntry?.[1]) ? matchingEntry![1] : [];
+  if (professionals.length === 0) return '';
+
+  const leader = professionals.find((item: any) => {
+    const role = normalizeText(String(item?.cargo || item?.role || item?.funcao || ''));
+    return role.includes('lider') || Boolean(item?.isLeader || item?.lider || item?.leader);
+  });
+
+  const candidate = leader || professionals[0];
+  return String(candidate?.nome || candidate?.name || '').trim();
+};
+
 const getUnifiedEapRegistry = (preloadedData: any) => {
-  return preloadedData?.eap?.data?.registro
-    || preloadedData?.eap?.registro
-    || preloadedData?.registro
-    || {};
+  return getUnifiedRegistryData(preloadedData);
 };
 
 const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProps['currentUser']): EngineeringActivity[] => {
-  const { contractNameByCode, osNameByCode, itemNameByCode, nodeByCode } = buildEapMaps(preloadedData);
-  const rawRows = [
+  const { contractNameByCode, osNameByCode, itemNameByCode } = buildEapMaps(preloadedData);
+  const knownDisciplineTokens = buildKnownDisciplineTokens(preloadedData, currentUser);
+  const rowSources = [
+    preloadedData?.eap?.atual,
+    preloadedData?.eap?.data?.atual,
     preloadedData?.cronograma,
-    preloadedData?.eap?.data?.cronograma,
     preloadedData?.eap?.cronograma,
+    preloadedData?.eap?.data?.cronograma,
     preloadedData?.registro?.cronograma,
-  ].find(Array.isArray) || [];
+  ].filter(Array.isArray) as EapSourceRow[][];
 
-  const activities = rawRows
+  const selectedSourceRows = rowSources.find((source) => source.length > 0) || [];
+
+  const readRowValue = (row: EapSourceRow, index: number, keys: string[]) => {
+    if (Array.isArray(row)) {
+      return String(row?.[index] || '').trim();
+    }
+
+    for (const key of keys) {
+      const value = (row as Record<string, unknown>)?.[key];
+      if (value !== undefined && value !== null && String(value).trim()) {
+        return String(value).trim();
+      }
+    }
+
+    return '';
+  };
+
+  const activities = selectedSourceRows
     .map((row: EapSourceRow) => {
-      const code = String(row?.code || '').trim();
-      const rowName = String(row?.name || '').trim();
-      const node = nodeByCode.get(code);
-      const isItem = !node || node.tipo === 'item';
-      if (!code || !rowName || !isItem || !hasLodToken(rowName)) return null;
+      const code = readRowValue(row, 0, ['code', 'codigo', 'itemCodigo', 'itemCode']);
+      const rowName = readRowValue(row, 1, ['name', 'nome', 'itemNome', 'descricao', 'atividade']);
+      const codeParts = code.split('.').filter(Boolean);
+      const disciplinasSource = Array.isArray(row)
+        ? row?.[7] || row?.[9] || ''
+        : String((row as any).disciplina || (row as any).disciplinas || '').trim();
+      const plannedStart = normalizePlannedDateValue(Array.isArray(row) ? row?.[4] : (row as any).plannedStart);
+      const plannedEnd = normalizePlannedDateValue(Array.isArray(row) ? row?.[5] : (row as any).plannedEnd);
+      const hasRenderableStructure = Boolean(
+        code &&
+        rowName &&
+        codeParts.length >= 3 &&
+        plannedStart &&
+        plannedEnd &&
+        parseDate(plannedStart).getTime() <= parseDate(plannedEnd).getTime() &&
+        hasRecognizedActivityDiscipline(disciplinasSource, knownDisciplineTokens)
+      );
+      if (!hasRenderableStructure) return null;
 
-      const lodAtual = extractLodValue(rowName);
-      if (!lodAtual) return null;
+      const disciplinas = splitDisciplinas(disciplinasSource);
+      const disciplineForLeader = disciplinas[0] || '';
 
-      const contractCode = String(node?.contratoCodigo || code.split('.')[0] || '').trim();
-      const osCode = String(node?.osCodigo || code.split('.').slice(0, 2).join('.') || '').trim();
-      const contractNome = contractNameByCode.get(contractCode) || String(node?.contratoNome || contractCode || '').trim();
-      const osNome = osNameByCode.get(osCode) || String(node?.nome || itemNameByCode.get(code) || rowName || '').trim();
-      const disciplinas = splitDisciplinas(row.disciplina || row.disciplinas || node?.disciplina || '');
-      const leaderDisplay = String(currentUser?.nome || '').trim();
+      const progressPercent = Math.max(0, normalizeSheetProgressPercent(Array.isArray(row) ? row?.[2] : row.progress));
+      const percentualRealizado = Math.min(100, Math.floor(progressPercent));
+      const lodAtual = extractLodValue(rowName) || inferCurrentLod(300, progressPercent);
+      const contractCode = getHierarchyCodePrefix(code, 1) || String(Array.isArray(row) ? row?.[11] : (row as any).contractCode || (row as any).contratoCodigo || '').trim() || codeParts[0] || code;
+      const osCode = getHierarchyCodePrefix(code, 2) || String(Array.isArray(row) ? row?.[10] : (row as any).osCode || (row as any).osCodigo || '').trim() || (codeParts.length >= 2 ? codeParts.slice(0, 2).join('.') : contractCode);
+      const contractNome = contractNameByCode.get(contractCode) || String(Array.isArray(row) ? row?.[12] : (row as any).contractName || (row as any).contratoNome || contractCode).trim();
+      const osNome = osNameByCode.get(osCode) || itemNameByCode.get(code) || String(Array.isArray(row) ? row?.[1] : (row as any).osNome || (row as any).name || (row as any).nome || rowName || osCode).trim();
+      const leaderDisplay = resolveDisciplineLeaderName(preloadedData, disciplineForLeader) || 'Não atribuído';
+      const status = progressPercent >= 100
+        ? 'Concluído'
+        : progressPercent > 0
+          ? 'Em execução'
+          : 'Não iniciado';
 
       return {
         id: `eap-${code}`,
+        itemCodigo: code,
+        sourceType: 'eap',
+        contractCode: contractCode || 'Sem contrato',
         contratoCodigo: contractCode || 'Sem contrato',
         contratoNome: contractNome || contractCode || 'Sem contrato',
         osCodigo: osCode || 'Sem OS',
@@ -951,13 +1231,19 @@ const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProp
         etapaTecnica: 'Modelagem',
         lodAtual,
         lodAlvoSemana: getNextLodValue(lodAtual),
-        inicioPlanejado: String(row.plannedStart || row.realStart || getCurrentWeekKey()),
-        terminoPlanejado: String(row.plannedEnd || row.realEnd || getCurrentWeekKey()),
+        inicioPlanejado: plannedStart,
+        terminoPlanejado: plannedEnd,
         prioridade: 'Normal',
-        status: 'Não iniciado',
-        percentualPrevisto: clampPercentage(typeof row.idealProgress === 'number' ? row.idealProgress : row.baselineIdealProgress),
-        percentualRealizado: 0,
-        atividade: rowName,
+        status,
+        percentualPrevisto: clampPercentage(
+          typeof row === 'object' && !Array.isArray(row) && typeof row.idealProgress === 'number'
+            ? row.idealProgress
+            : Array.isArray(row)
+              ? Number(row?.[6] || 0)
+              : row.baselineIdealProgress
+        ),
+        percentualRealizado,
+        atividade: '',
         motivoBloqueio: '',
         proximaAcao: 'Preencher os campos da atividade na abertura do card.',
         observacoes: 'Atividade derivada da EAP unificada.',
@@ -971,10 +1257,24 @@ const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProp
         leaderEdited: false
       } as EngineeringActivity;
     })
-    .filter(Boolean) as EngineeringActivity[];
+    .filter(Boolean)
+    .filter(hasBoardActivityDiscipline) as EngineeringActivity[];
 
   if (activities.length > 0) return activities.sort(compareActivities);
-  return [];
+
+  const registro = preloadedData?.registro || preloadedData || {};
+  const fallbackRows = Array.isArray(registro.activitiesList) && registro.activitiesList.length > 0
+    ? registro.activitiesList
+      : [
+          ...(Array.isArray(registro.activeActivities) ? registro.activeActivities : []),
+          ...(Array.isArray(registro.completedActivities) ? registro.completedActivities : []),
+        ];
+
+  if (fallbackRows.length === 0) return [];
+
+  return normalizeActivityList(fallbackRows, knownDisciplineTokens)
+    .filter(hasBoardActivityDiscipline)
+    .sort(compareActivities);
 };
 
 const normalizeLegacyStatus = (value?: string): ProductionStatus => {
@@ -1025,29 +1325,32 @@ const normalizeActivity = (raw: Partial<EngineeringActivity> & Record<string, un
 
   return {
     id: String(raw.id || `act-${Date.now()}`),
+    contractCode: String(raw.contractCode || raw.contratoCodigo || ''),
     contratoCodigo: String(raw.contratoCodigo || ''),
     contratoNome: String(raw.contratoNome || raw.contratoCodigo || ''),
     osCodigo: String(raw.osCodigo || ''),
     osNome: String(raw.osNome || ''),
-    disciplina: String(raw.disciplina || ''),
-    disciplinas: splitDisciplinas(raw.disciplinas || raw.disciplina || ''),
-    subdisciplina: String(raw.subdisciplina || raw.disciplina || 'Sem subdisciplina'),
+    disciplina: normalizeDisciplineLabel(raw.disciplinas || raw.disciplina || raw.criadoPorDisciplina || ''),
+    disciplinas: splitDisciplinas(raw.disciplinas || raw.disciplina || raw.criadoPorDisciplina || '').filter(isMeaningfulDisciplineToken),
+    subdisciplina: normalizeDisciplineLabel(raw.subdisciplina || ''),
     responsavel: String(raw.responsavel || 'NÃ£o atribuÃ­do'),
     etapaTecnica: (TECHNICAL_STEPS.includes(raw.etapaTecnica as TechnicalStep) ? raw.etapaTecnica : 'Modelagem') as TechnicalStep,
     lodAtual: LOD_OPTIONS.includes(raw.lodAtual as LodLevel) ? (raw.lodAtual as LodLevel) : inferCurrentLod(lodAlvoSemana, percentualRealizado),
     lodAlvoSemana,
-    inicioPlanejado: String(raw.inicioPlanejado || raw.prazo || getCurrentWeekKey()),
-    terminoPlanejado: String(raw.terminoPlanejado || raw.prazo || getCurrentWeekKey()),
+    inicioPlanejado: String(raw.inicioPlanejado || raw.plannedStart || '').trim(),
+    terminoPlanejado: String(raw.terminoPlanejado || raw.plannedEnd || '').trim(),
     prioridade: (PRIORITY_OPTIONS.includes(raw.prioridade as PriorityLevel) ? raw.prioridade : 'Normal') as PriorityLevel,
     status: normalizeLegacyStatus(String(raw.status || '')),
     percentualPrevisto: clampPercentage(typeof raw.percentualPrevisto === 'number' ? raw.percentualPrevisto : percentualRealizado),
     percentualRealizado,
-    atividade: String(raw.atividade || raw.descricao || 'Atividade operacional sem descriÃ§Ã£o detalhada.'),
+    atividade: String(raw.atividade || raw.descricao || '').trim(),
     motivoBloqueio: String(raw.motivoBloqueio || raw.impedimentoMotivo || ''),
     proximaAcao: String(raw.proximaAcao || 'Atualizar frente conforme cronograma da semana.'),
     observacoes: String(raw.observacoes || 'VisualizaÃ§Ã£o operacional derivada do cronograma/EAP.'),
     dataCriacao: String(raw.dataCriacao || getCurrentWeekKey()),
     origemItem: String(raw.origemItem || ''),
+    itemCodigo: String(raw.itemCodigo || raw.itemCode || raw.origemItem || ''),
+    sourceType: normalizeText(String(raw.sourceType || '')) as EngineeringActivity['sourceType'],
     executadoPor: splitMultiValue(raw.executadoPor || raw.profissionais || []),
     statusDaAtividade: String(raw.statusDaAtividade || '') as LeaderActivityStatus,
     dificuldadeAtividade: String(raw.dificuldadeAtividade || '') as LeaderDifficulty,
@@ -1057,9 +1360,20 @@ const normalizeActivity = (raw: Partial<EngineeringActivity> & Record<string, un
   };
 };
 
-const normalizeActivityList = (rawList: unknown) => {
+const normalizeActivityList = (rawList: unknown, knownDisciplineTokens = new Set<string>()) => {
   if (!Array.isArray(rawList)) return [];
-  return rawList.map((item) => normalizeActivity(item as Partial<EngineeringActivity> & Record<string, unknown>));
+  return rawList
+    .map((item) => normalizeActivity(item as Partial<EngineeringActivity> & Record<string, unknown>))
+    .filter((activity) => {
+      const disciplineValue = activity.disciplinas || activity.disciplina;
+      const hasDiscipline = knownDisciplineTokens.size > 0
+        ? hasRecognizedActivityDiscipline(disciplineValue, knownDisciplineTokens)
+        : hasExplicitActivityDiscipline(disciplineValue);
+      if (!hasDiscipline) return false;
+      if (!hasRenderableDateRange(activity)) return false;
+      if (isManualActivity(activity)) return true;
+      return isLeafActivityCode(getActivityRenderableCode(activity));
+    });
 };
 
 const mergeSavedActivitiesWithSource = (savedActivities: EngineeringActivity[], sourceActivities: EngineeringActivity[]) => {
@@ -1077,6 +1391,13 @@ const mergeSavedActivitiesWithSource = (savedActivities: EngineeringActivity[], 
       leaderEdited: Boolean(saved.leaderEdited || activity.leaderEdited)
     };
   });
+};
+
+const hasBoardActivityDiscipline = (activity: EngineeringActivity) => {
+  if (!hasExplicitActivityDiscipline(activity.disciplinas || activity.disciplina)) return false;
+  if (!hasRenderableDateRange(activity)) return false;
+  if (isManualActivity(activity)) return true;
+  return isLeafActivityCode(getActivityRenderableCode(activity));
 };
 
 const getEffectiveStatus = (activity: EngineeringActivity): ProductionStatus => {
@@ -1120,8 +1441,7 @@ const matchesUserDiscipline = (activity: EngineeringActivity, discipline?: strin
   const normalizedDiscipline = getUserDisciplineList({ disciplina: discipline }).map((item) => normalizeText(item)).filter(Boolean);
   if (!normalizedDiscipline.length) return true;
   const activityDisciplinas = splitDisciplinas(activity.disciplinas || activity.disciplina);
-  const hasExplicitDiscipline = activityDisciplinas.some((item) => normalizeText(item) !== 'sem disciplina');
-  if (!hasExplicitDiscipline) return true;
+  if (!hasExplicitActivityDiscipline(activityDisciplinas)) return false;
   return activityDisciplinas.some((item) => normalizedDiscipline.includes(normalizeText(item)));
 };
 
@@ -1168,7 +1488,13 @@ function FilterSelect({
       >
         {options.map((option) => (
           <option key={typeof option === 'string' ? option : option.value} value={typeof option === 'string' ? option : option.value}>
-            {typeof option === 'string' ? option : option.label}
+            {(() => {
+              const optionValue = typeof option === 'string' ? option : option.value;
+              const optionLabel = typeof option === 'string' ? option : option.label;
+              return normalizeText(optionValue) === 'todos' || normalizeText(optionValue) === 'todas'
+                ? 'Selecionar...'
+                : optionLabel;
+            })()}
           </option>
         ))}
       </select>
@@ -1491,6 +1817,179 @@ const assigneeAccentColorMap: Record<string, string> = {
   'NÃ£o atribuÃ­do': '#94A3B8'
 };
 
+function StructuralDisciplineIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M4.5 19.25H19.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M6.25 18.95V10.6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M12 18.95V8.15" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M17.75 18.95V10.6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M6.25 10.6L12 8.15L17.75 10.6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6.25 14.75L12 12.3L17.75 14.75" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9.15 7.55V5.4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M12 5.65V4.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M14.85 7.55V5.4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M10.55 18.95V13.2H13.45V18.95" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function HydroSanitaryDisciplineIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path
+        d="M12 3.2C11.7 3.7 11.2 4.4 10.5 5.4C8.2 8.7 5.9 11.8 5.9 15.1C5.9 18.6 8.7 21.2 12 21.2C15.3 21.2 18.1 18.6 18.1 15.1C18.1 11.8 15.8 8.7 13.5 5.4C12.8 4.4 12.3 3.7 12 3.2Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function AvacDisciplineIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="1.7" fill="currentColor" />
+      <path
+        d="M12 4.1C11.1 4.1 10.6 4.9 10.2 5.8C9.6 7.2 9.7 8.5 10.2 9.2C10.8 10 11.9 10.2 12.8 9.7C13.8 9.2 14.1 8.2 13.8 7.2C13.5 6 12.8 4.1 12 4.1Z"
+        fill="currentColor"
+      />
+      <path
+        d="M4.8 14.2C5.4 13.4 6.6 13.1 7.6 13.5C8.8 14 9.6 15 9.6 16.1C9.6 17 8.9 17.8 7.9 18C6.7 18.2 5.1 17.8 4.8 16.9C4.4 15.8 4.3 14.9 4.8 14.2Z"
+        fill="currentColor"
+      />
+      <path
+        d="M15.2 14.4C15.8 13.5 16.9 13.1 18 13.5C19.2 13.9 20 14.9 20 16C20 16.9 19.4 17.7 18.4 18C17.2 18.3 15.6 17.9 15.2 17C14.8 15.9 14.8 15 15.2 14.4Z"
+        fill="currentColor"
+      />
+      <path
+        d="M14.1 10.6C14.9 10.4 16 10.6 17.1 11.1C18.4 11.7 19.2 12.6 19.2 13.4C19.2 14.2 18.5 14.8 17.4 14.8C16 14.8 14.6 14.2 14.2 13.3C13.8 12.4 13.8 11.1 14.1 10.6Z"
+        fill="currentColor"
+      />
+      <path
+        d="M12 7.2C12.7 7.2 13.3 7.8 13.4 8.6C13.5 9.6 13.1 10.6 12.3 11.1C11.3 11.7 10.2 11.7 9.4 11.1C8.7 10.5 8.5 9.5 8.9 8.7C9.4 7.7 10.5 7.2 12 7.2Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function DrainageDisciplineIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M3.2 8.6C6.8 9 9.6 10.1 12 12.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M3.2 13.2C6.8 13.5 9.8 14.7 12.2 16.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M12 12.2L14.4 13.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M12.2 16.7L14.6 17.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M8.2 6.7C8.9 5.2 9.8 4 10.6 3.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M9.7 4.2C10.5 3.3 11.2 2.7 11.9 2.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M14.1 8.1C14.8 6.7 15.7 5.5 16.5 4.7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M15.7 5.6C16.4 4.7 17.2 4.1 17.8 3.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M12 9.4C11.6 9.8 11.4 10.4 11.5 11C11.6 11.8 12.1 12.5 12.8 12.9C13.7 13.4 14.6 13.3 15.2 12.8C15.9 12.3 16.1 11.4 15.9 10.7C15.7 9.9 15 9.4 14.1 9.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M13.7 10.2C14.6 10.8 15.2 11.8 15.2 12.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M18.4 17.1C17.8 18 17 18.7 16 19.1C15.4 19.3 14.7 19.5 14 19.5C12.8 19.5 11.7 19 10.8 18.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ArchitectureDisciplineIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M5.1 10.7V5.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M4.2 8.2H8.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M5.8 14.9L12 8.7L18.2 14.9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6.7 18.4H17.3V10.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8.3 18.4V15.2H11.4V18.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M7.5 15.9L3.9 12.3L3.9 19.2L10.8 19.2L7.5 15.9Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function WaterproofingDisciplineIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 3.3C11.6 3.9 11.2 4.4 10.8 5.1C10.1 6.2 9.7 7.1 9.7 7.8C9.7 9 10.8 10.1 12 10.1C13.2 10.1 14.3 9 14.3 7.8C14.3 7.1 13.9 6.2 13.2 5.1C12.8 4.4 12.4 3.9 12 3.3Z" fill="currentColor" />
+      <path d="M8.7 6.4C8.4 6.8 8.1 7.2 7.7 7.8C7.2 8.5 6.9 9.1 6.9 9.6C6.9 10.5 7.6 11.2 8.5 11.2C9.4 11.2 10.1 10.5 10.1 9.6C10.1 9.1 9.8 8.5 9.3 7.8C9 7.2 8.8 6.8 8.7 6.4Z" fill="currentColor" />
+      <path d="M15.3 6.4C15.2 6.8 15 7.2 14.7 7.8C14.2 8.5 13.9 9.1 13.9 9.6C13.9 10.5 14.6 11.2 15.5 11.2C16.4 11.2 17.1 10.5 17.1 9.6C17.1 9.1 16.8 8.5 16.3 7.8C15.9 7.2 15.6 6.8 15.3 6.4Z" fill="currentColor" />
+      <path d="M6.1 14.2H17.9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M6.6 15.8H17.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M5 13.1L8.7 10.1L12 13.1L15.3 10.1L19 13.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4.4 17.1H19.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M4.4 18.8H19.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M6.2 16.6H17.8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="0.1 4.2" />
+    </svg>
+  );
+}
+
+const disciplineIconMap: Array<{
+  match: string[];
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  label: string;
+}> = [
+  { match: ['terraplanagem', 'terr', 'topografia', 'movimentacao de terra'], icon: Shovel, label: 'Terraplanagem' },
+  { match: ['estrutural', 'estrutura', 'fundacao', 'fundacoes', 'est'], icon: StructuralDisciplineIcon, label: 'Estrutural' },
+  { match: ['hidrossanitario', 'hidraulica', 'esgoto', 'agua fria', 'agua quente', 'hids'], icon: HydroSanitaryDisciplineIcon, label: 'Hidrossanitário' },
+  { match: ['avac', 'climatizacao', 'ventilacao', 'ar condicionado'], icon: AvacDisciplineIcon, label: 'AVAC' },
+  { match: ['eletrica', 'elet', 'energia', 'spda', 'subestacao', 'subestacao eletrica', 'dados', 'camera', 'cameras', 'som', 'cftv', 'telecom', 'iluminacao'], icon: PlugZap, label: 'Elétrica' },
+  { match: ['drenagem', 'dren', 'pluvial', 'escoamento', 'galeria'], icon: DrainageDisciplineIcon, label: 'Drenagem' },
+  { match: ['arquitetura', 'arq', 'layout', 'interiores', 'arquitetonica'], icon: ArchitectureDisciplineIcon, label: 'Arquitetura' },
+  { match: ['impermeabilizacao', 'impe', 'vedacao', 'waterproof'], icon: WaterproofingDisciplineIcon, label: 'Impermeabilização' }
+];
+
+function getDisciplineIconInfo(value?: string) {
+  const cleaned = String(value || '').trim();
+  const normalized = normalizeText(cleaned);
+  const match = disciplineIconMap.find((entry) => entry.match.some((token) => normalized.includes(normalizeText(token))));
+  return match || { icon: Droplets, label: cleaned || 'Sem disciplina' };
+}
+
 function getAssigneeInitials(name: string) {
   const cleaned = name.trim();
   if (!cleaned) return '--';
@@ -1515,15 +2014,37 @@ function getActivityParticipants(activity: EngineeringActivity) {
   return [];
 }
 
-function getUniqueActivityKey(activity: EngineeringActivity) {
-  return [
-    activity.id,
-    activity.origemItem,
-    activity.osCodigo,
-    activity.atividade,
-    activity.inicioPlanejado,
-    activity.terminoPlanejado
-  ].map((value) => String(value || '').trim()).join('|');
+function getActivityItemKey(activity: EngineeringActivity) {
+  return String(activity.origemItem || (activity as any).itemCodigo || (activity as any).itemCode || activity.id || '').trim();
+}
+
+const CARD_DESIGN_WIDTH = 491;
+const CARD_DESIGN_HEIGHT = 198;
+const BOARD_GAP = 8;
+
+function useResponsiveCardScale() {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const updateScale = () => {
+      const width = host.clientWidth || CARD_DESIGN_WIDTH;
+      const nextScale = Math.min(1, width / CARD_DESIGN_WIDTH);
+      setScale(Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 1);
+    };
+
+    updateScale();
+
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(host);
+
+    return () => observer.disconnect();
+  }, []);
+
+  return { hostRef, scale };
 }
 
 function ProductionCard({
@@ -1533,56 +2054,68 @@ function ProductionCard({
   activity: EngineeringActivity;
   onClick: () => void;
 }) {
+  const { hostRef, scale } = useResponsiveCardScale();
   const leaderPercentual = getLeaderPercentual(activity);
   const isBehind = leaderPercentual < activity.percentualPrevisto;
   const valueTone = isBehind ? 'text-[#EF4444]' : 'text-[#166534]';
   const participants = getActivityParticipants(activity);
-  const disciplineLabel = getDisciplineLabel(activity.disciplina || activity.disciplinas?.[0] || '');
+  const disciplineIcon = getDisciplineIconInfo(activity.disciplina || activity.disciplinas?.[0] || '');
+  const DisciplineIcon = disciplineIcon.icon;
+  const visibleParticipants = participants.slice(0, 2);
+  const extraParticipants = Math.max(0, participants.length - visibleParticipants.length);
+  const displayCode = getActivityRenderableCode(activity) || activity.origemItem || activity.osCodigo;
+  const workFrontText = '';
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="relative block w-full min-h-[252px] overflow-hidden rounded-[24px] border border-[#E7EDF4] bg-white p-3 text-left shadow-[0_8px_24px_rgba(15,76,129,0.06)] transition-all hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_16px_34px_rgba(240,93,40,0.10)] cursor-pointer"
-    >
-      <div
-        className="absolute right-2 top-2 flex flex-col items-center"
-        aria-hidden="true"
+    <div ref={hostRef} className="relative w-full" style={{ height: `${CARD_DESIGN_HEIGHT * scale}px` }}>
+      <button
+        type="button"
+        onClick={onClick}
+        className="absolute left-0 top-0 block overflow-hidden rounded-[22px] border border-[#E7EDF4] bg-white p-3 text-left shadow-[0_8px_20px_rgba(15,76,129,0.06)] transition-all hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.10)] cursor-pointer"
+        style={{
+          width: `${CARD_DESIGN_WIDTH}px`,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left'
+        }}
       >
         <div
-          className="h-5 w-3 rounded-t-[4px]"
-          style={{ backgroundColor: osAccentColorMap[activity.osCodigo] || '#F05D28' }}
-        />
-        <div
-          className="h-0 w-0 border-l-[6px] border-r-[6px] border-t-[7px] border-l-transparent border-r-transparent"
-          style={{ borderTopColor: osAccentColorMap[activity.osCodigo] || '#F05D28' }}
-        />
-      </div>
+          className="absolute right-2 top-2 flex flex-col items-center"
+          aria-hidden="true"
+        >
+          <div
+            className="h-8 w-5 rounded-t-[4px]"
+            style={{ backgroundColor: osAccentColorMap[activity.osCodigo] || '#F05D28' }}
+          />
+          <div
+            className="h-0 w-0 border-l-[10px] border-r-[10px] border-t-[10px] border-l-transparent border-r-transparent"
+            style={{ borderTopColor: osAccentColorMap[activity.osCodigo] || '#F05D28' }}
+          />
+        </div>
 
-      <div className="pr-5">
-        <p className="text-[11px] font-black uppercase tracking-[0.45px] text-[#F05D28] leading-snug">
-          {activity.osCodigo} - <span className="text-[#2D2D2D]">{activity.osNome}</span>
-        </p>
-      </div>
+        <div className="pr-8">
+          <p className="text-[13px] font-black leading-snug text-[#2D2D2D]">
+            <span className="text-[#F05D28]">{displayCode || activity.osCodigo}</span> - {activity.osNome}
+          </p>
+        </div>
 
-      <div className="mt-3 rounded-xl px-2 py-1.5 bg-[#F0FDF4]">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-[10px] font-extrabold uppercase tracking-[0.5px] text-[#166534]">Participantes</p>
-            <p className="mt-0.5 text-[10px] font-black uppercase tracking-[0.45px] text-[#166534]">
-              EXEC <span className="ml-1 text-[12px] leading-none">{leaderPercentual}%</span>
-            </p>
-          </div>
+        <div className="mt-2.5 grid gap-1.5 2xl:grid-cols-[minmax(0,1.45fr)_minmax(220px,0.95fr)]">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-[14px] bg-[#F3F4F6] px-2.5 py-2">
+            <div
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-[#F05D28] bg-white text-[#F05D28] shadow-[0_3px_8px_rgba(240,93,40,0.10)]"
+              title={disciplineIcon.label}
+              aria-label={disciplineIcon.label}
+            >
+              <DisciplineIcon size={20} strokeWidth={2.2} />
+            </div>
 
-          <div className="flex items-center -space-x-2 pl-1">
-            {participants.slice(0, 4).map((person) => {
+            {visibleParticipants.map((person) => {
               const initials = getAssigneeInitials(person);
               const color = getAssigneeColor(person);
               return (
                 <div
                   key={person}
-                  className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-[9px] font-black uppercase text-white shadow-[0_4px_12px_rgba(15,76,129,0.14)]"
-                  style={{ backgroundColor: color }}
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-[#F05D28] bg-white text-[11px] font-black uppercase text-[#F05D28] shadow-[0_3px_8px_rgba(240,93,40,0.10)]"
+                  style={{ boxShadow: `0 4px 12px ${color}20` }}
                   title={person}
                   aria-label={person}
                 >
@@ -1590,48 +2123,53 @@ function ProductionCard({
                 </div>
               );
             })}
-            {participants.length > 4 && (
-              <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-[#E2E8F0] text-[9px] font-black text-[#475569] shadow-[0_4px_12px_rgba(15,76,129,0.10)]">
-                +{participants.length - 4}
+
+            {extraParticipants > 0 && (
+              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[#CBD5E1] bg-white text-[10px] font-black uppercase text-[#64748B] shadow-[0_3px_8px_rgba(100,116,139,0.10)]">
+                +{extraParticipants}
               </div>
             )}
           </div>
-        </div>
-      </div>
 
-      <div className="mt-3 rounded-2xl bg-[#F8FAFC] px-2 py-2 text-[10px] font-semibold text-[#64748B] 2xl:hidden">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="min-w-0">
-            <span className="block font-extrabold uppercase tracking-[0.5px] text-[#94A3B8]">Início:</span>
-            <span className="mt-1 block font-bold text-[#475569]">{formatDatePt(activity.inicioPlanejado)}</span>
-          </div>
-          <div className="min-w-0">
-            <span className="block font-extrabold uppercase tracking-[0.5px] text-[#94A3B8]">Término:</span>
-            <span className="mt-1 block font-bold text-[#475569]">{formatDatePt(activity.terminoPlanejado)}</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-3 hidden rounded-2xl bg-[#F8FAFC] px-2 py-1.5 text-[10px] font-semibold text-[#64748B] 2xl:block">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="min-w-0">
-            <span className="block font-extrabold uppercase tracking-[0.5px] text-[#94A3B8]">Início:</span>
-            <span className="mt-1 block font-bold text-[#475569]">{formatDatePt(activity.inicioPlanejado)}</span>
-          </div>
-          <div className="min-w-0">
-            <span className="block font-extrabold uppercase tracking-[0.5px] text-[#94A3B8]">Término:</span>
-            <span className="mt-1 block font-bold text-[#475569]">{formatDatePt(activity.terminoPlanejado)}</span>
+          <div className="rounded-[14px] bg-[#EAF7EC] px-3 py-2">
+            <div className="grid grid-cols-3 gap-1.5 text-center xl:gap-2">
+              <div className="min-w-0">
+                <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">LOD</p>
+                <p className="mt-0.5 text-[15px] font-black leading-none text-[#2D2D2D]">{activity.lodAlvoSemana}</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">Exec</p>
+                <p className={`mt-0.5 text-[15px] font-black leading-none ${valueTone}`}>{activity.percentualRealizado}%</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">Prev</p>
+                <p className={`mt-0.5 text-[15px] font-black leading-none ${valueTone}`}>{activity.percentualPrevisto}%</p>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="mt-2 flex justify-center">
-        <span className="inline-flex min-w-[92px] items-center justify-center rounded-full border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-1 text-[10px] font-black uppercase tracking-[0.7px] text-[#0F4C81] shadow-sm">
-          {disciplineLabel}
-        </span>
-      </div>
+        <div className="mt-2 rounded-[14px] bg-[#F8FAFC] px-3 py-2.5">
+          <div className="grid gap-2 2xl:grid-cols-[140px_minmax(0,1fr)] 2xl:items-center">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Início</p>
+                <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{formatDatePt(activity.inicioPlanejado)}</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Término</p>
+                <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{formatDatePt(activity.terminoPlanejado)}</p>
+              </div>
+            </div>
 
-    </button>
+            <div className="min-w-0 2xl:border-l 2xl:border-[#E2E8F0] 2xl:pl-4">
+              <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Frente de trabalho</p>
+              <p className="mt-1 text-[12px] font-black leading-snug text-[#111827] break-words">{workFrontText}</p>
+            </div>
+          </div>
+        </div>
+      </button>
+    </div>
   );
 }
 
@@ -1643,22 +2181,37 @@ export default function Atividades({
   showAllDisciplines = false,
   filtersAlwaysVisible = false,
   disciplineFilterEnabled = true,
+  autoSelectUserDisciplineFilter = false,
 }: AtividadesProps) {
   const sourceActivities = useMemo(() => buildActivitiesFromEap(preloadedData, currentUser), [preloadedData, currentUser]);
+  const eapRegistry = useMemo(() => getUnifiedEapRegistry(preloadedData), [preloadedData]);
+  const boardScrollRef = useRef<HTMLDivElement | null>(null);
+  const boardTrackRef = useRef<HTMLDivElement | null>(null);
+  const scrollbarDragRef = useRef(false);
+  const autoScrolledToTodayRef = useRef(false);
+  const [boardScrollLeft, setBoardScrollLeft] = useState(0);
+  const [boardScrollMax, setBoardScrollMax] = useState(0);
+  const [boardTrackWidth, setBoardTrackWidth] = useState(0);
+  const [boardZoomPercent, setBoardZoomPercent] = useState(100);
   const [activities, setActivities] = useState<EngineeringActivity[]>(() => {
     return sourceActivities;
   });
+  const initialDisciplineFilter = useMemo(() => {
+    if (!autoSelectUserDisciplineFilter) return [];
+    const primaryDiscipline = getUserPrimaryDiscipline(currentUser || {});
+    return primaryDiscipline ? [primaryDiscipline] : [];
+  }, [autoSelectUserDisciplineFilter, currentUser?.disciplina, currentUser?.disciplinas]);
 
   const [searchText, setSearchText] = useState('');
   const [filterSemana, setFilterSemana] = useState(getCurrentWeekKey());
   const [filterContrato, setFilterContrato] = useState('Todos');
   const [filterOs, setFilterOs] = useState('Todos');
-  const [filterDisciplinas, setFilterDisciplinas] = useState<string[]>([]);
-  const [filterTerceirizada, setFilterTerceirizada] = useState(false);
+  const [filterDisciplinas, setFilterDisciplinas] = useState<string[]>(() => initialDisciplineFilter);
   const [filterEtapa, setFilterEtapa] = useState('Todos');
   const [filterLod, setFilterLod] = useState('Todos');
   const [filterStatus, setFilterStatus] = useState('Todos');
   const [filterPrioridade, setFilterPrioridade] = useState('Todos');
+  const [filterShowCompleted, setFilterShowCompleted] = useState(true);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedEapIndex, setSelectedEapIndex] = useState<number | null>(null);
@@ -1668,70 +2221,150 @@ export default function Atividades({
   const [importEtapa, setImportEtapa] = useState<TechnicalStep>('Modelagem');
   const [importInicio, setImportInicio] = useState(getCurrentWeekKey());
   const [importTermino, setImportTermino] = useState(getCurrentWeekKey());
+  const knownDisciplineTokens = useMemo(() => buildKnownDisciplineTokens(preloadedData, currentUser), [preloadedData, currentUser]);
+  const activitiesWithDiscipline = useMemo(
+    () => activities.filter((activity) => {
+      const disciplineValue = activity.disciplinas || activity.disciplina;
+      if (!hasRecognizedActivityDiscipline(disciplineValue, knownDisciplineTokens)) return false;
+      if (!hasRenderableDateRange(activity)) return false;
+      if (isManualActivity(activity)) return true;
+      return isLeafActivityCode(getActivityRenderableCode(activity));
+    }),
+    [activities, knownDisciplineTokens]
+  );
 
   const selectedActivity = useMemo(
-    () => activities.find((activity) => activity.id === selectedActivityId) || null,
-    [activities, selectedActivityId]
+    () => activitiesWithDiscipline.find((activity) => activity.id === selectedActivityId) || null,
+    [activitiesWithDiscipline, selectedActivityId]
   );
 
   const disciplineScopedActivities = useMemo(
     () => (showAllDisciplines
-      ? activities
-      : activities.filter((activity) => matchesUserDiscipline(activity, [currentUser?.disciplina, ...(currentUser?.disciplinas || [])].filter(Boolean).join(' | ')))),
-    [activities, currentUser?.disciplina, currentUser?.disciplinas, showAllDisciplines]
+      ? activitiesWithDiscipline
+      : activitiesWithDiscipline.filter((activity) => matchesUserDiscipline(activity, [currentUser?.disciplina, ...(currentUser?.disciplinas || [])].filter(Boolean).join(' | ')))),
+    [activitiesWithDiscipline, currentUser?.disciplina, currentUser?.disciplinas, showAllDisciplines]
   );
+
+  const autoDisciplineFilterAppliedRef = useRef(false);
 
   useEffect(() => {
     setActivities(sourceActivities);
   }, [sourceActivities]);
 
-  const contratosDisponiveis = useMemo(() => {
-    const registry = getUnifiedEapRegistry(preloadedData);
-    const contracts = Array.isArray(registry.contracts) ? registry.contracts : [];
-    const options = contracts
-      .map((item: any) => ({
-        value: String(item?.codigo || '').trim(),
-        label: item?.codigo && item?.nome && String(item.nome).trim() !== String(item.codigo).trim()
-          ? `${String(item.codigo).trim()} - ${String(item.nome).trim()}`
-          : String(item?.nome || item?.codigo || '').trim(),
-      }))
-      .filter((item: { value: string; label: string }) => Boolean(item.value));
+  useEffect(() => {
+    autoDisciplineFilterAppliedRef.current = false;
+  }, [currentUser?.email, currentUser?.disciplina, currentUser?.disciplinas, autoSelectUserDisciplineFilter]);
 
-    if (options.length > 0) return ['Todos', ...options];
-    return ['Todos', ...Array.from(new Set(activities.map((activity) => activity.contratoCodigo))).filter(Boolean)];
-  }, [activities, preloadedData]);
+  useEffect(() => {
+    if (!autoSelectUserDisciplineFilter) return;
+    if (!initialDisciplineFilter.length) return;
+    if (autoDisciplineFilterAppliedRef.current) return;
+
+    setFilterDisciplinas(initialDisciplineFilter);
+    autoDisciplineFilterAppliedRef.current = true;
+  }, [autoSelectUserDisciplineFilter, initialDisciplineFilter]);
+
+  useEffect(() => {
+    if (filterContrato !== 'Todos' && filterOs !== 'Todos') {
+      setFilterOs('Todos');
+    }
+  }, [filterContrato, filterOs]);
+
+  const contratosDisponiveis = useMemo(() => {
+    const contractMap = new Map<string, { value: string; label: string; count: number }>();
+    const registryContracts = Array.isArray(eapRegistry.contracts) ? eapRegistry.contracts : [];
+
+    if (registryContracts.length > 0) {
+      registryContracts.forEach((item: any) => {
+        const value = String(item?.codigo || '').trim();
+        if (!value) return;
+        const label = String(item?.nome || item?.codigo || '').trim();
+        const key = normalizeText(value);
+        const current = contractMap.get(key);
+        contractMap.set(key, {
+          value,
+          label: label || value,
+          count: (current?.count || 0) + 1,
+        });
+      });
+    } else {
+      activitiesWithDiscipline.forEach((activity) => {
+        const contractCode = getActivityContractCode(activity);
+        if (!contractCode) return;
+        const key = normalizeText(contractCode);
+        const current = contractMap.get(key);
+        contractMap.set(key, {
+          value: contractCode,
+          label: contractCode,
+          count: (current?.count || 0) + 1,
+        });
+      });
+    }
+
+    const options = Array.from(contractMap.values())
+      .sort((first, second) => first.value.localeCompare(second.value))
+      .map((item) => ({
+        value: item.value,
+        label: item.label,
+      }));
+
+    return ['Todos', ...options];
+  }, [activitiesWithDiscipline, eapRegistry.contracts]);
 
   const osDisponiveis = useMemo(() => {
-    const registry = getUnifiedEapRegistry(preloadedData);
-    const osOptions = Array.isArray(registry.osOptions) ? registry.osOptions : [];
-    const source = filterContrato === 'Todos'
-      ? osOptions
-      : osOptions.filter((item: any) => String(item?.contratoCodigo || '').trim() === filterContrato);
+    const osMap = new Map<string, { value: string; label: string; count: number }>();
+    const registryOsOptions = Array.isArray(eapRegistry.osOptions) ? eapRegistry.osOptions : [];
 
-    const options = source
-      .map((item: any) => ({
-        value: String(item?.codigo || '').trim(),
-        label: item?.codigo && item?.nome && String(item.nome).trim() !== String(item.codigo).trim()
-          ? `${String(item.codigo).trim()} - ${String(item.nome).trim()}`
-          : String(item?.nome || item?.codigo || '').trim(),
-      }))
-      .filter((item: { value: string; label: string }) => Boolean(item.value));
+    if (registryOsOptions.length > 0) {
+      registryOsOptions
+        .filter((item: any) => filterContrato === 'Todos' || String(item?.contratoCodigo || '').trim() === filterContrato)
+        .forEach((item: any) => {
+          const value = String(item?.codigo || '').trim();
+          if (!value) return;
+          const label = String(item?.nome || item?.codigo || '').trim();
+          const key = normalizeText(value);
+          const current = osMap.get(key);
+          osMap.set(key, {
+            value,
+            label: label || value,
+            count: (current?.count || 0) + 1,
+          });
+        });
+    } else {
+      const sourceActivities = filterContrato === 'Todos'
+        ? activitiesWithDiscipline
+        : activitiesWithDiscipline.filter((activity) => sameContractCode(getActivityContractCode(activity), filterContrato));
 
-    if (options.length > 0) return ['Todos', ...options];
+      sourceActivities.forEach((activity) => {
+        const osCode = getActivityOsCode(activity);
+        if (!osCode) return;
+        const key = normalizeText(osCode);
+        const current = osMap.get(key);
+        osMap.set(key, {
+          value: osCode,
+          label: osCode,
+          count: (current?.count || 0) + 1,
+        });
+      });
+    }
 
-    const fallbackActivities = filterContrato === 'Todos'
-      ? activities
-      : activities.filter((activity) => activity.contratoCodigo === filterContrato);
-    return ['Todos', ...Array.from(new Set(fallbackActivities.map((activity) => activity.osCodigo))).filter(Boolean)];
-  }, [activities, filterContrato, preloadedData]);
+    const options = Array.from(osMap.values())
+      .sort((first, second) => first.value.localeCompare(second.value))
+      .map((item) => ({
+        value: item.value,
+        label: item.label,
+      }));
+
+    return ['Todos', ...options];
+  }, [activitiesWithDiscipline, eapRegistry.osOptions, filterContrato]);
 
   const disciplinasDisponiveis = useMemo(() => {
     const collected = new Set<string>();
-    activities.forEach((activity) => {
+    activitiesWithDiscipline.forEach((activity) => {
       splitDisciplinas(activity.disciplinas || activity.disciplina).forEach((item) => collected.add(item));
     });
     return Array.from(collected);
-  }, [activities]);
+  }, [activitiesWithDiscipline]);
 
   const etapasDisponiveis = useMemo(() => ['Todos', ...TECHNICAL_STEPS], []);
   const lodsDisponiveis = useMemo(() => ['Todos', ...LOD_OPTIONS.map(String)], []);
@@ -1740,12 +2373,12 @@ export default function Atividades({
 
   const weekOptions = useMemo(() => {
     const keys = new Set<string>([getCurrentWeekKey()]);
-    activities.forEach((activity) => keys.add(getWeekKeyFromActivity(activity)));
+    activitiesWithDiscipline.forEach((activity) => keys.add(getWeekKeyFromActivity(activity)));
 
     return Array.from(keys)
       .sort((first, second) => parseDate(first).getTime() - parseDate(second).getTime())
       .map((key) => ({ value: key, label: `${key} | ${formatWeekLabel(key)}` }));
-  }, [activities]);
+  }, [activitiesWithDiscipline]);
 
   const weekStart = useMemo(() => parseDate(filterSemana), [filterSemana]);
   const weekEnd = useMemo(() => addDays(weekStart, 4), [weekStart]);
@@ -1763,28 +2396,28 @@ export default function Atividades({
           activity.responsavel.toLowerCase().includes(normalizedSearch) ||
           activity.origemItem?.toLowerCase().includes(normalizedSearch);
 
-        const matchesContrato = filterContrato === 'Todos' || activity.contratoCodigo === filterContrato;
+        const matchesContrato = filterContrato === 'Todos' || sameContractCode(getActivityContractCode(activity), filterContrato);
         const matchesOs = filterOs === 'Todos' || activity.osCodigo === filterOs;
         const activityDisciplinas = splitDisciplinas(activity.disciplinas || activity.disciplina);
         const matchesDisciplina = !disciplineFilterEnabled
           || filterDisciplinas.length === 0
           || filterDisciplinas.some((discipline) => activityDisciplinas.includes(discipline));
-        const matchesTerceirizada = !filterTerceirizada || isThirdPartyActivity(activity);
         const matchesEtapa = filterEtapa === 'Todos' || activity.etapaTecnica === filterEtapa;
         const matchesLod = filterLod === 'Todos' || String(activity.lodAtual) === filterLod || String(activity.lodAlvoSemana) === filterLod;
         const matchesStatus = filterStatus === 'Todos' || getEffectiveStatus(activity) === filterStatus;
         const matchesPrioridade = filterPrioridade === 'Todos' || activity.prioridade === filterPrioridade;
+        const matchesCompleted = filterShowCompleted || Number(activity.percentualRealizado || 0) < 100;
 
         return (
           matchesSearch &&
           matchesContrato &&
           matchesOs &&
           matchesDisciplina &&
-          matchesTerceirizada &&
           matchesEtapa &&
           matchesLod &&
           matchesStatus &&
-          matchesPrioridade
+          matchesPrioridade &&
+          matchesCompleted
         );
       })
       .sort(compareActivities);
@@ -1797,15 +2430,15 @@ export default function Atividades({
     filterPrioridade,
     filterStatus,
     filterDisciplinas,
-    filterTerceirizada,
     disciplineFilterEnabled,
+    filterShowCompleted,
     searchText,
   ]);
 
   const boardActivities = useMemo(() => {
     const seen = new Set<string>();
     return filteredActivities.filter((activity) => {
-      const key = getUniqueActivityKey(activity);
+      const key = getActivityItemKey(activity);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -1838,16 +2471,29 @@ export default function Atividades({
       dayStart.setHours(0, 0, 0, 0);
       const dayEnd = new Date(column.date);
       dayEnd.setHours(23, 59, 59, 999);
+      const seen = new Set<string>();
 
       column.activities = filteredActivities.filter((activity) => {
         const activityStart = parseDate(activity.inicioPlanejado);
         const activityEnd = parseDate(activity.terminoPlanejado);
-        return activityStart <= dayEnd && activityEnd >= dayStart;
+        const overlapsDay = activityStart <= dayEnd && activityEnd >= dayStart;
+        if (!overlapsDay) return false;
+
+        const key = getActivityItemKey(activity);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
       });
     });
 
     return columns;
   }, [filteredActivities, weekStart]);
+
+  const todayIso = toIsoDate(TODAY);
+  const isCurrentWeekBoard = filterSemana === getCurrentWeekKey();
+  const boardZoomScale = boardZoomPercent / 100;
+  const boardColumnMinWidth = Math.max(240, Math.round((CARD_DESIGN_WIDTH + 16) * boardZoomScale));
+  const boardMinWidth = (boardColumnMinWidth * 5) + (BOARD_GAP * 4) + 20;
 
   const handleResetBoard = () => {
     if (window.confirm('Redefinir o quadro semanal para os dados padrão? As alterações locais serão perdidas.')) {
@@ -1860,10 +2506,13 @@ export default function Atividades({
     if (selectedEapIndex === null) return;
 
     const selectedItem = EAP_UNASSIGNED_ACTIVITIES[selectedEapIndex];
-    const newActivity: EngineeringActivity = {
-      id: `act-imported-${Date.now()}`,
-      contratoCodigo: selectedItem.contrato,
-      contratoNome: selectedItem.contrato,
+  const newActivity: EngineeringActivity = {
+    id: `act-imported-${Date.now()}`,
+    itemCodigo: selectedItem.item,
+    sourceType: 'manual',
+    contractCode: selectedItem.contrato,
+    contratoCodigo: selectedItem.contrato,
+    contratoNome: selectedItem.contrato,
       osCodigo: selectedItem.os,
       osNome: selectedItem.nome,
       disciplina: selectedItem.disciplina,
@@ -1924,6 +2573,119 @@ export default function Atividades({
     }));
   };
 
+  useEffect(() => {
+    autoScrolledToTodayRef.current = false;
+  }, [filterSemana]);
+
+  useEffect(() => {
+    const el = boardScrollRef.current;
+    if (!el) return;
+
+    const syncScrollMetrics = () => {
+      setBoardScrollLeft(el.scrollLeft);
+      setBoardScrollMax(Math.max(0, el.scrollWidth - el.clientWidth));
+      setBoardTrackWidth(boardTrackRef.current?.clientWidth || 0);
+    };
+
+    syncScrollMetrics();
+
+    const onScroll = () => setBoardScrollLeft(el.scrollLeft);
+    el.addEventListener('scroll', onScroll, { passive: true });
+
+    const observer = new ResizeObserver(syncScrollMetrics);
+    observer.observe(el);
+    if (boardTrackRef.current) observer.observe(boardTrackRef.current);
+
+    const board = el.firstElementChild as HTMLElement | null;
+    if (board) observer.observe(board);
+
+    window.addEventListener('resize', syncScrollMetrics);
+
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      observer.disconnect();
+      window.removeEventListener('resize', syncScrollMetrics);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isCurrentWeekBoard || autoScrolledToTodayRef.current || boardScrollMax <= 0) return;
+
+    const el = boardScrollRef.current;
+    if (!el) return;
+
+    const board = el.firstElementChild as HTMLElement | null;
+    if (!board) return;
+
+    const todayIndex = Math.max(0, Math.min(boardColumns.length - 1, TODAY.getDay() - 1));
+    const column = board.children.item(todayIndex) as HTMLElement | null;
+    if (!column) return;
+
+    const raf = window.requestAnimationFrame(() => {
+      const targetLeft = Math.max(
+        0,
+        Math.min(
+          boardScrollMax,
+          column.offsetLeft - ((el.clientWidth - column.clientWidth) / 2)
+        )
+      );
+
+      el.scrollLeft = targetLeft;
+      setBoardScrollLeft(targetLeft);
+      autoScrolledToTodayRef.current = true;
+    });
+
+    return () => window.cancelAnimationFrame(raf);
+  }, [boardColumns, boardScrollMax, isCurrentWeekBoard]);
+
+  const scrollBoardTo = (nextScrollLeft: number) => {
+    const el = boardScrollRef.current;
+    if (!el) return;
+
+    const clamped = Math.max(0, Math.min(boardScrollMax, nextScrollLeft));
+    el.scrollLeft = clamped;
+    setBoardScrollLeft(clamped);
+  };
+
+  const updateScrollFromClientX = (clientX: number) => {
+    const track = boardTrackRef.current;
+    if (!track || boardScrollMax <= 0) return;
+
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return;
+
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    scrollBoardTo(boardScrollMax * ratio);
+  };
+
+  const handleScrollbarPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    scrollbarDragRef.current = true;
+    (event.currentTarget as HTMLDivElement).setPointerCapture(event.pointerId);
+    updateScrollFromClientX(event.clientX);
+    event.preventDefault();
+  };
+
+  const handleScrollbarPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!scrollbarDragRef.current) return;
+    updateScrollFromClientX(event.clientX);
+  };
+
+  const handleScrollbarPointerUp = () => {
+    scrollbarDragRef.current = false;
+  };
+
+  const getScrollbarThumbWidth = () => {
+    if (!boardScrollRef.current || boardTrackWidth <= 0) return 56;
+    const el = boardScrollRef.current;
+    const ratio = el.clientWidth / Math.max(el.scrollWidth, 1);
+    return Math.max(56, Math.min(boardTrackWidth, boardTrackWidth * ratio));
+  };
+
+  const scrollbarThumbWidth = getScrollbarThumbWidth();
+  const scrollbarThumbLeft = boardScrollMax > 0 && boardTrackWidth > scrollbarThumbWidth
+    ? ((boardTrackWidth - scrollbarThumbWidth) * boardScrollLeft) / boardScrollMax
+    : 0;
+
   return (
     <div className="flex w-full flex-col gap-3 font-['Montserrat'] animate-in fade-in duration-500">
       {(filtersAlwaysVisible || isHeaderFiltersOpen) && (
@@ -1938,7 +2700,7 @@ export default function Atividades({
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
               <p className="text-[11px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Filtros</p>
-              <p className="mt-1 text-[13px] font-semibold text-[#475569]">Busca rápida, semana, contrato, OS, disciplina e terceirizada.</p>
+              <p className="mt-1 text-[13px] font-semibold text-[#475569]">Busca rápida, semana, contrato, OS, disciplina, concluídos e terceirizada.</p>
             </div>
             {!filtersAlwaysVisible && (
               <button
@@ -1969,68 +2731,124 @@ export default function Atividades({
             <FilterSelect label="Semana" value={filterSemana} onChange={setFilterSemana} options={weekOptions} />
             <FilterSelect label="Contrato" value={filterContrato} onChange={setFilterContrato} options={contratosDisponiveis} />
             <FilterSelect label="OS" value={filterOs} onChange={setFilterOs} options={osDisponiveis} />
+            <label className="flex h-full cursor-pointer items-center gap-3 rounded-xl border border-[#E5E7EB] bg-white px-3 py-2 text-[13px] font-semibold text-[#334155] transition-colors hover:border-[#F7C7B7]">
+              <input
+                type="checkbox"
+                checked={filterShowCompleted}
+                onChange={(event) => setFilterShowCompleted(event.target.checked)}
+                className="h-4 w-4 rounded border-[#CBD5E1] text-[#F05D28] focus:ring-[#F05D28]"
+              />
+              <span>Marcar concluidos</span>
+            </label>
             {disciplineFilterEnabled && (
               <FilterMultiSelectDropdown
                 label="Disciplina"
                 value={filterDisciplinas}
                 options={disciplinasDisponiveis}
-                placeholder="Todas"
+                placeholder="Selecionar..."
                 onChange={setFilterDisciplinas}
               />
             )}
-            <div className="flex items-end">
-              <label className={`inline-flex h-11 w-full items-center gap-3 rounded-xl border px-4 py-2.5 text-[12px] font-semibold transition-colors ${
-                filterTerceirizada
-                  ? 'border-[#F05D28] bg-[#FFF7ED] text-[#C2410C]'
-                  : 'border-[#E5E7EB] bg-white text-[#2D2D2D]'
-              }`}>
-                <input
-                  type="checkbox"
-                  checked={filterTerceirizada}
-                  onChange={(event) => setFilterTerceirizada(event.target.checked)}
-                  className="h-4 w-4 accent-[#F05D28]"
-                />
-                Terceirizada
-              </label>
-            </div>
           </div>
         </motion.section>
       )}
 
-      <section className="rounded-[34px] border border-[#E5E7EB] bg-[linear-gradient(180deg,#FFFFFF_0%,#F8FAFC_100%)] p-2.5 shadow-sm">
+      <section className="overflow-hidden rounded-[34px] border border-[#E5E7EB] bg-[linear-gradient(180deg,#FFFFFF_0%,#F8FAFC_100%)] p-2.5 shadow-sm">
         <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-          <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 md:grid-cols-3 xl:max-w-[760px] xl:grid-cols-[1.35fr_0.75fr_0.75fr_0.75fr_0.75fr]">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 md:grid-cols-3 xl:max-w-[900px] xl:grid-cols-[1.35fr_0.75fr_0.75fr_0.75fr_0.75fr_0.95fr]">
             <CompactStat icon={<Calendar size={14} />} label="Semana" value={formatWeekLabel(filterSemana)} tone="border-[#E5E7EB]" valueClassName="whitespace-nowrap" />
             <CompactStat icon={<Activity size={14} />} label="Atividades" value={kpis.total} tone="border-[#C9E1F7]" />
             <CompactStat icon={<Clock size={14} />} label="Em execução" value={kpis.emExecucao} tone="border-[#DBEAFE]" />
             <CompactStat icon={<AlertTriangle size={14} />} label="Bloqueadas" value={kpis.bloqueadas} tone="border-[#F7C7B7]" />
             <CompactStat icon={<CheckCircle2 size={14} />} label="Concluídas" value={kpis.concluidas} tone="border-[#BBF7D0]" />
+            <div className="inline-flex min-w-0 items-center gap-2 rounded-[20px] border border-[#F7C7B7] bg-white px-2 py-1.5 shadow-sm">
+              <div className="text-[#F05D28]">
+                <Activity size={14} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Escala</p>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="text-[13px] font-black text-[#2D2D2D] whitespace-nowrap">{boardZoomPercent}%</span>
+                  <input
+                    type="range"
+                    min={80}
+                    max={200}
+                    step={5}
+                    value={boardZoomPercent}
+                    onChange={(event) => setBoardZoomPercent(Number(event.target.value))}
+                    className="h-1.5 w-full cursor-pointer accent-[#F05D28]"
+                    aria-label="Escala dos cards"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
           <div className="inline-flex items-center gap-2 self-start rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-[11px] font-semibold text-[#64748B] xl:shrink-0 xl:self-center">
             <span>Clique no cartão para abrir os detalhes</span>
           </div>
         </div>
 
-        <div className="w-full">
-          <div className="grid w-full gap-2 lg:grid-cols-5">
+        <div className="mb-3">
+          <div
+            ref={boardTrackRef}
+            className="relative h-2 rounded-full bg-[#E5E7EB]"
+            role="scrollbar"
+            aria-label="Rolar quadro para os lados"
+            aria-valuemin={0}
+            aria-valuemax={boardScrollMax}
+            aria-valuenow={boardScrollLeft}
+            aria-orientation="horizontal"
+            onPointerDown={handleScrollbarPointerDown}
+            onPointerMove={handleScrollbarPointerMove}
+            onPointerUp={handleScrollbarPointerUp}
+            onPointerCancel={handleScrollbarPointerUp}
+            style={{ touchAction: 'none', cursor: 'ew-resize' }}
+          >
+            <div
+              data-scrollbar-thumb="true"
+              className="absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-[#94A3B8]"
+              style={{
+                left: `${scrollbarThumbLeft}px`,
+                width: `${scrollbarThumbWidth}px`,
+                cursor: 'ew-resize'
+              }}
+            />
+          </div>
+        </div>
+
+        <div ref={boardScrollRef} className="w-full overflow-x-auto pb-2">
+          <div
+            className="grid w-max gap-2"
+            style={{ gridTemplateColumns: `repeat(5, minmax(${boardColumnMinWidth}px, 1fr))`, minWidth: `${boardMinWidth}px` }}
+          >
             {boardColumns.map((column) => (
               <div
                 key={column.shortLabel}
-                className="rounded-[28px] border border-[#E5E7EB] bg-[linear-gradient(180deg,#F9FBFD_0%,#FFFFFF_100%)] p-2"
+                data-board-day-index={column.index}
+                data-board-is-today={toIsoDate(column.date) === todayIso ? 'true' : undefined}
+                className={`rounded-[28px] border p-2 transition-colors ${
+                  toIsoDate(column.date) === todayIso
+                    ? 'border-[#F7C7B7] bg-[linear-gradient(180deg,#FFF7F3_0%,#FFFFFF_100%)] shadow-[0_8px_22px_rgba(240,93,40,0.06)]'
+                    : 'border-[#E5E7EB] bg-[linear-gradient(180deg,#F9FBFD_0%,#FFFFFF_100%)]'
+                }`}
               >
-                <div className="rounded-[22px] border border-[#E7EEF6] bg-white px-3.5 py-3 shadow-sm">
+                <div className={`rounded-[22px] border px-3.5 py-3 shadow-sm ${
+                  toIsoDate(column.date) === todayIso
+                    ? 'border-[#F7C7B7] bg-[#FFFDFB]'
+                    : 'border-[#E7EEF6] bg-white'
+                }`}>
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-[16px] font-black text-[#2D2D2D]">{column.label}</h3>
+                      <h3 className={`text-[16px] font-black ${toIsoDate(column.date) === todayIso ? 'text-[#D15B2C]' : 'text-[#2D2D2D]'}`}>{column.label}</h3>
                     </div>
                     <div className="text-right">
-                      <p className="text-[11px] font-bold text-[#0F4C81]">{column.date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}</p>
+                      <p className={`text-[11px] font-bold ${toIsoDate(column.date) === todayIso ? 'text-[#D15B2C]' : 'text-[#0F4C81]'}`}>{column.date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}</p>
                       <p className="mt-1 text-[10px] font-semibold text-[#94A3B8]">{column.activities.length} card(s)</p>
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-2 space-y-2">
+                <div className="mt-2 space-y-0">
                   {column.activities.length === 0 ? (
                     <div className="flex min-h-[220px] items-center justify-center rounded-[24px] border border-dashed border-[#D5DFEA] bg-[#FCFDFE] px-4 py-8 text-center">
                       <p className="max-w-[180px] text-[12px] font-semibold leading-relaxed text-[#94A3B8]">
@@ -2176,8 +2994,8 @@ export default function Atividades({
                 )}
 
                 <div className="grid grid-cols-2 gap-3">
-                  <DetailField label="OS" value={selectedActivity.osCodigo} />
-                  <DetailField label="Contrato" value={selectedActivity.contratoCodigo} />
+                  <DetailField label="OS" value={selectedActivity.osNome || selectedActivity.osCodigo} />
+                  <DetailField label="Contrato" value={selectedActivity.contratoNome || selectedActivity.contratoCodigo} />
                   <DetailField label="Projeto / Objeto" value={selectedActivity.osNome} />
                   <DetailField label="Disciplina" value={selectedActivity.disciplina} />
                   <DetailField label="Subdisciplina" value={selectedActivity.subdisciplina} />
@@ -2187,9 +3005,6 @@ export default function Atividades({
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <DetailField label="LOD atual" value={<span className="text-[22px] font-black text-[#0F766E]">{selectedActivity.lodAtual}</span>} />
-                  <DetailField label="LOD alvo" value={<span className="text-[22px] font-black text-[#D15B2C]">{selectedActivity.lodAlvoSemana}</span>} />
-                  <DetailField label="Status LOD" value={getLodStatus(selectedActivity)} />
                   <DetailField
                     label="Status atual"
                     value={
@@ -2200,7 +3015,7 @@ export default function Atividades({
                   />
                 </div>
 
-                <DetailField label="Atividade completa" value={<p className="leading-relaxed text-[#334155]">{selectedActivity.atividade}</p>} />
+                <DetailField label="Atividade completa" value={<p className="leading-relaxed text-[#334155]">{isManualActivity(selectedActivity) ? selectedActivity.atividade : ''}</p>} />
 
                 <div className="grid grid-cols-2 gap-3">
                   <DetailField label="Início planejado" value={formatDatePt(selectedActivity.inicioPlanejado)} />

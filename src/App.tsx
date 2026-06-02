@@ -38,11 +38,13 @@ import {
 } from './lib/disciplineCatalog';
 import {
   fetchBootstrapDataFromFirebase,
+  fetchFirebaseAppData,
   fetchCronogramaDataFromFirebase,
   fetchEapDataFromFirebase,
   fetchFirebaseCollection,
   fetchRegistroDataFromFirebase,
   isFirebaseConfigured,
+  hashPasswordLikeAppsScript,
   upsertFirebaseAppData,
 } from './lib/firebaseDb';
 
@@ -165,8 +167,52 @@ function normalizeEapCode(value: any) {
   return String(value || '').trim();
 }
 
+function getHierarchyPrefix(value: any, depth: number) {
+  const cleaned = normalizeEapCode(value);
+  if (!cleaned) return '';
+  const parts = cleaned.split('.').map((part) => normalizeEapCode(part)).filter(Boolean);
+  if (parts.length <= depth) return cleaned;
+  return parts.slice(0, depth).join('.');
+}
+
+function resolveContractCodeFromRegistry(contractValue: string, registryContracts: any[]) {
+  const target = normalizeEapCode(contractValue);
+  if (!target) return '';
+
+  const contracts = Array.isArray(registryContracts) ? registryContracts : [];
+  const directMatch = contracts.find((item: any) => normalizeEapCode(item?.codigo || '') === target);
+  if (directMatch) return normalizeEapCode(directMatch.codigo || '');
+
+  const nameMatch = contracts.find((item: any) => normalizeUserText(item?.nome || '') === normalizeUserText(target));
+  if (nameMatch) return normalizeEapCode(nameMatch.codigo || '');
+
+  const prefixMatch = contracts.find((item: any) => normalizeEapCode(item?.codigo || '').startsWith(`${target}.`));
+  if (prefixMatch) return getHierarchyPrefix(prefixMatch.codigo, 1);
+
+  return '';
+}
+
+function pickFirstNonEmptyArray(...sources: any[]) {
+  for (const source of sources) {
+    if (Array.isArray(source) && source.length > 0) return source;
+  }
+
+  return sources.find(Array.isArray) || [];
+}
+
 function getEapRows(eapData: any) {
-  return Array.isArray(eapData?.atual) ? eapData.atual.filter((row: any) => normalizeEapCode(row?.[0])) : [];
+  const source = pickFirstNonEmptyArray(
+    eapData?.cronograma,
+    eapData?.atual,
+    eapData?.data?.cronograma,
+    eapData?.data?.atual,
+  );
+  return source.filter((row: any) => {
+    const code = Array.isArray(row)
+      ? row?.[0]
+      : row?.code || row?.codigo || row?.itemCodigo || row?.itemCode;
+    return Boolean(normalizeEapCode(code));
+  });
 }
 
 function isEapOsName(value: any) {
@@ -194,51 +240,39 @@ function buildRegistroDataFromEapRows(eapData: any) {
     childrenByParent[parent].push(node);
   };
 
-  rows.forEach((row: any[]) => {
-    const codigo = normalizeEapCode(row?.[0]);
-    const nome = normalizeEapCode(row?.[1] || codigo);
-    if (!codigo) return;
-
-    const level = (codigo.match(/\./g) || []).length;
-    if (level === 0) {
-      contracts.push({ codigo, nome });
-      rootCodes.push(codigo);
-      addNode({ codigo, nome, tipo: 'contrato', nivel: 0, parentCodigo: '', contratoCodigo: codigo, osCodigo: '' });
-    }
-  });
-
-  rows.forEach((row: any[]) => {
-    const codigo = normalizeEapCode(row?.[0]);
-    const nome = normalizeEapCode(row?.[1] || codigo);
+  rows.forEach((row: any) => {
+    const codigo = normalizeEapCode(Array.isArray(row)
+      ? row?.[0]
+      : row?.code || row?.codigo || row?.itemCodigo || row?.itemCode || '');
+    const nome = normalizeEapCode(Array.isArray(row)
+      ? row?.[1] || codigo
+      : row?.name || row?.nome || row?.itemNome || codigo);
     if (!codigo) return;
 
     const parts = codigo.split('.');
     const level = parts.length - 1;
-    if (level === 1 && isEapOsName(nome)) {
-      const contratoCodigo = parts[0];
+    if (level === 0) {
+      contracts.push({ codigo, nome });
+      rootCodes.push(codigo);
+      addNode({ codigo, nome, tipo: 'contrato', nivel: level, parentCodigo: '', contratoCodigo: codigo, osCodigo: '' });
+      return;
+    }
+
+    if (level === 1) {
+      const contratoCodigo = parts[0] || '';
       osOptions.push({ codigo, nome, contratoCodigo });
       addNode({ codigo, nome, tipo: 'os', nivel: level, parentCodigo: contratoCodigo, contratoCodigo, osCodigo: codigo });
+      return;
     }
-  });
 
-  const osCodes = new Set(osOptions.map((os) => os.codigo));
-  rows.forEach((row: any[]) => {
-    const codigo = normalizeEapCode(row?.[0]);
-    const nome = normalizeEapCode(row?.[1] || codigo);
-    if (!codigo) return;
-
-    const osCodigo = Array.from(osCodes)
-      .filter((candidate) => codigo.startsWith(`${candidate}.`))
-      .sort((a, b) => b.length - a.length)[0];
-    if (!osCodigo) return;
-
-    const contratoCodigo = osCodigo.split('.')[0] || '';
+    const osCodigo = parts.slice(0, parts.length - 1).join('.');
+    const contratoCodigo = parts[0] || '';
     itemOptions.push({ codigo, nome, osCodigo });
     addNode({
       codigo,
       nome,
       tipo: 'item',
-      nivel: (codigo.match(/\./g) || []).length,
+      nivel: level,
       parentCodigo: osCodigo,
       contratoCodigo,
       osCodigo,
@@ -350,25 +384,56 @@ function hasAnyGlobalData(data: GlobalData) {
 function applyUnifiedEapData(data: GlobalData, eapData: any): GlobalData {
   if (!eapData || typeof eapData !== 'object') return data;
 
-  const next: GlobalData = {
-    ...data,
-    eap: eapData,
+  const normalizedAtual = pickFirstNonEmptyArray(
+    eapData.atual,
+    eapData.cronograma,
+    eapData.data?.atual,
+    eapData.data?.cronograma,
+  );
+  const normalizedCronograma = pickFirstNonEmptyArray(
+    eapData.cronograma,
+    eapData.data?.cronograma,
+    eapData.atual,
+    eapData.data?.atual,
+  );
+  const normalizedEapData = {
+    ...eapData,
+    atual: normalizedAtual,
+    cronograma: normalizedCronograma,
+    data: eapData.data && typeof eapData.data === 'object'
+      ? {
+          ...eapData.data,
+          atual: normalizedAtual,
+          cronograma: normalizedCronograma,
+        }
+      : eapData.data,
   };
 
-  if (eapData.registro && typeof eapData.registro === 'object') {
+  const next: GlobalData = {
+    ...data,
+    eap: normalizedEapData,
+  };
+
+  const eapRegistro = normalizedEapData.registro && typeof normalizedEapData.registro === 'object'
+    ? normalizedEapData.registro
+    : normalizedEapData.data?.registro && typeof normalizedEapData.data.registro === 'object'
+      ? normalizedEapData.data.registro
+      : null;
+
+  if (eapRegistro) {
     next.registro = {
       ...(next.registro || {}),
-      contracts: hasNonEmptyArray(eapData.registro.contracts) ? eapData.registro.contracts : next.registro?.contracts,
-      osOptions: hasNonEmptyArray(eapData.registro.osOptions) ? eapData.registro.osOptions : next.registro?.osOptions,
-      itemOptions: hasNonEmptyArray(eapData.registro.itemOptions) ? eapData.registro.itemOptions : next.registro?.itemOptions,
-      hierarchyNodes: hasNonEmptyArray(eapData.registro.hierarchyNodes) ? eapData.registro.hierarchyNodes : next.registro?.hierarchyNodes,
-      childrenByParent: eapData.registro.childrenByParent && typeof eapData.registro.childrenByParent === 'object' && Object.keys(eapData.registro.childrenByParent).length > 0 ? eapData.registro.childrenByParent : next.registro?.childrenByParent,
-      rootCodes: hasNonEmptyArray(eapData.registro.rootCodes) ? eapData.registro.rootCodes : next.registro?.rootCodes,
+      contracts: hasNonEmptyArray(eapRegistro.contracts) ? eapRegistro.contracts : next.registro?.contracts,
+      osOptions: hasNonEmptyArray(eapRegistro.osOptions) ? eapRegistro.osOptions : next.registro?.osOptions,
+      itemOptions: hasNonEmptyArray(eapRegistro.itemOptions) ? eapRegistro.itemOptions : next.registro?.itemOptions,
+      hierarchyNodes: hasNonEmptyArray(eapRegistro.hierarchyNodes) ? eapRegistro.hierarchyNodes : next.registro?.hierarchyNodes,
+      childrenByParent: eapRegistro.childrenByParent && typeof eapRegistro.childrenByParent === 'object' && Object.keys(eapRegistro.childrenByParent).length > 0 ? eapRegistro.childrenByParent : next.registro?.childrenByParent,
+      rootCodes: hasNonEmptyArray(eapRegistro.rootCodes) ? eapRegistro.rootCodes : next.registro?.rootCodes,
     };
   }
 
   if (!hasRegistroHierarchy(next.registro)) {
-    const derivedRegistro = buildRegistroDataFromEapRows(eapData);
+    const derivedRegistro = buildRegistroDataFromEapRows(normalizedEapData);
     if (derivedRegistro.contracts.length > 0 || derivedRegistro.osOptions.length > 0 || derivedRegistro.itemOptions.length > 0) {
       next.registro = {
         ...(next.registro || {}),
@@ -382,8 +447,13 @@ function applyUnifiedEapData(data: GlobalData, eapData: any): GlobalData {
     }
   }
 
-  if (Array.isArray(eapData.cronograma)) {
-    next.cronograma = eapData.cronograma;
+  const unifiedCronograma = pickFirstNonEmptyArray(
+    normalizedEapData.cronograma,
+    normalizedEapData.data?.cronograma,
+  );
+
+  if (Array.isArray(unifiedCronograma) && unifiedCronograma.length > 0) {
+    next.cronograma = unifiedCronograma;
   }
 
   return next;
@@ -420,6 +490,7 @@ function clearSession() {
 
 async function postToAppsScript<T>(payload: Record<string, unknown>): Promise<T> {
   const allowedActions = new Set([
+    'heartbeat',
     'authUser',
     'registerUser',
     'forgotPassword',
@@ -675,25 +746,25 @@ function filterRowsByContract(rows: any[], contractCode: string) {
   return (Array.isArray(rows) ? rows : []).filter((row: any) => {
     const arrayCode = Array.isArray(row) ? String(row[0] || '').trim() : '';
     const code = String(row?.code || row?.codigo || arrayCode).trim();
-    const rowContract = String(row?.contractCode || row?.contratoCodigo || (arrayCode ? arrayCode.split('.')[0] : '')).trim();
-    return code === target || code.startsWith(`${target}.`) || rowContract === target;
+    const rowContractSource = String(row?.contractCode || row?.contratoCodigo || code || arrayCode).trim();
+    const rowContract = getHierarchyPrefix(rowContractSource, 1);
+    const derivedFromCode = getHierarchyPrefix(code || arrayCode, 1);
+    return code === target || code.startsWith(`${target}.`) || rowContract === target || derivedFromCode === target;
   });
 }
 
 function getActivityContractCodeForFilter(activity: any) {
   const explicitContract = String(activity?.contratoCodigo || activity?.contractCode || '').trim();
-  if (explicitContract) return explicitContract;
+  if (explicitContract) return getHierarchyPrefix(explicitContract, 1);
 
   const osCode = String(activity?.osCodigo || activity?.osCode || '').trim();
   if (osCode) {
-    const osParts = osCode.split('.');
-    if (osParts[0]) return osParts[0];
+    return getHierarchyPrefix(osCode, 1);
   }
 
-  const itemCode = String(activity?.itemCodigo || activity?.itemCode || '').trim();
+  const itemCode = String(activity?.itemCodigo || activity?.itemCode || activity?.origemItem || '').trim();
   if (itemCode) {
-    const itemParts = itemCode.split('.');
-    if (itemParts[0]) return itemParts[0];
+    return getHierarchyPrefix(itemCode, 1);
   }
 
   return '';
@@ -702,6 +773,7 @@ function getActivityContractCodeForFilter(activity: any) {
 function filterGlobalDataByContract(data: GlobalData, contractCode: string): GlobalData {
   const target = String(contractCode || '').trim();
   if (!target) return data;
+  const keepOriginalIfEmpty = <T,>(filtered: T[], original: T[] = []) => (Array.isArray(filtered) && filtered.length > 0 ? filtered : original);
 
   const next: GlobalData = {
     ...data,
@@ -711,26 +783,48 @@ function filterGlobalDataByContract(data: GlobalData, contractCode: string): Glo
   };
 
   if (next.registro && typeof next.registro === 'object') {
-    next.registro.contracts = (Array.isArray(next.registro.contracts) ? next.registro.contracts : []).filter((item: any) => String(item?.codigo || '').trim() === target);
-    next.registro.osOptions = (Array.isArray(next.registro.osOptions) ? next.registro.osOptions : []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target);
-    next.registro.itemOptions = (Array.isArray(next.registro.itemOptions) ? next.registro.itemOptions : []).filter((item: any) => String(item?.osCodigo || '').trim().startsWith(`${target}.`));
-    next.registro.hierarchyNodes = (Array.isArray(next.registro.hierarchyNodes) ? next.registro.hierarchyNodes : []).filter((item: any) => {
+    const originalContracts = Array.isArray(next.registro.contracts) ? next.registro.contracts : [];
+    const originalOsOptions = Array.isArray(next.registro.osOptions) ? next.registro.osOptions : [];
+    const originalItemOptions = Array.isArray(next.registro.itemOptions) ? next.registro.itemOptions : [];
+    const originalHierarchyNodes = Array.isArray(next.registro.hierarchyNodes) ? next.registro.hierarchyNodes : [];
+    const originalRootCodes = Array.isArray(next.registro.rootCodes) ? next.registro.rootCodes : [];
+    const originalActivitiesList = Array.isArray(next.registro.activitiesList) ? next.registro.activitiesList : [];
+    const originalActiveActivities = Array.isArray(next.registro.activeActivities) ? next.registro.activeActivities : [];
+    const originalCompletedActivities = Array.isArray(next.registro.completedActivities) ? next.registro.completedActivities : [];
+
+    next.registro.contracts = keepOriginalIfEmpty(
+      originalContracts.filter((item: any) => getHierarchyPrefix(String(item?.codigo || ''), 1) === target),
+      originalContracts,
+    );
+    next.registro.osOptions = keepOriginalIfEmpty(originalOsOptions.filter((item: any) => {
+      const osCode = String(item?.codigo || '').trim();
+      const contractSource = String(item?.contratoCodigo || osCode || '').trim();
+      return getHierarchyPrefix(contractSource, 1) === target;
+    }), originalOsOptions);
+    next.registro.itemOptions = keepOriginalIfEmpty(originalItemOptions.filter((item: any) => {
+      const itemCode = String(item?.codigo || '').trim();
+      return itemCode === target || itemCode.startsWith(`${target}.`);
+    }), originalItemOptions);
+    next.registro.hierarchyNodes = keepOriginalIfEmpty(originalHierarchyNodes.filter((item: any) => {
       const codigo = String(item?.codigo || '').trim();
       const contratoCodigo = String(item?.contratoCodigo || '').trim();
-      return codigo === target || codigo.startsWith(`${target}.`) || contratoCodigo === target;
-    });
-    next.registro.rootCodes = (Array.isArray(next.registro.rootCodes) ? next.registro.rootCodes : []).filter((code: any) => String(code || '').trim() === target);
-    next.registro.childrenByParent = Object.fromEntries(
-      Object.entries(next.registro.childrenByParent && typeof next.registro.childrenByParent === 'object' ? next.registro.childrenByParent : {})
+      return codigo === target || codigo.startsWith(`${target}.`) || getHierarchyPrefix(contratoCodigo, 1) === target;
+    }), originalHierarchyNodes);
+    next.registro.rootCodes = keepOriginalIfEmpty(originalRootCodes.filter((code: any) => String(code || '').trim() === target), originalRootCodes);
+
+    const originalChildrenByParent = next.registro.childrenByParent && typeof next.registro.childrenByParent === 'object' ? next.registro.childrenByParent : {};
+    const filteredChildrenByParent = Object.fromEntries(
+      Object.entries(originalChildrenByParent)
         .filter(([key]) => key === 'ROOT' || String(key).trim() === target || String(key).trim().startsWith(`${target}.`))
         .map(([key, value]) => [key, (Array.isArray(value) ? value : []).filter((item: any) => String(item?.codigo || '').trim() === target || String(item?.codigo || '').trim().startsWith(`${target}.`))])
     );
-    next.registro.activitiesList = (Array.isArray(next.registro.activitiesList) ? next.registro.activitiesList : []).filter((item: any) => getActivityContractCodeForFilter(item) === target);
-    next.registro.activeActivities = (Array.isArray(next.registro.activeActivities) ? next.registro.activeActivities : []).filter((item: any) => getActivityContractCodeForFilter(item) === target);
-    next.registro.completedActivities = (Array.isArray(next.registro.completedActivities) ? next.registro.completedActivities : []).filter((item: any) => getActivityContractCodeForFilter(item) === target);
+    next.registro.childrenByParent = Object.keys(filteredChildrenByParent).length > 0 ? filteredChildrenByParent : originalChildrenByParent;
+    next.registro.activitiesList = keepOriginalIfEmpty(originalActivitiesList.filter((item: any) => getActivityContractCodeForFilter(item) === target), originalActivitiesList);
+    next.registro.activeActivities = keepOriginalIfEmpty(originalActiveActivities.filter((item: any) => getActivityContractCodeForFilter(item) === target), originalActiveActivities);
+    next.registro.completedActivities = keepOriginalIfEmpty(originalCompletedActivities.filter((item: any) => getActivityContractCodeForFilter(item) === target), originalCompletedActivities);
   }
 
-  next.cronograma = filterRowsByContract(data.cronograma as any[], target);
+  next.cronograma = keepOriginalIfEmpty(filterRowsByContract(data.cronograma as any[], target), Array.isArray(data.cronograma) ? data.cronograma : []);
 
   if (next.eap && typeof next.eap === 'object') {
     const eapData = next.eap.data && typeof next.eap.data === 'object' ? { ...next.eap.data } : null;
@@ -738,16 +832,24 @@ function filterGlobalDataByContract(data: GlobalData, contractCode: string): Glo
     targetEap.registro = targetEap.registro && typeof targetEap.registro === 'object'
       ? {
           ...targetEap.registro,
-          contracts: (Array.isArray(targetEap.registro.contracts) ? targetEap.registro.contracts : []).filter((item: any) => String(item?.codigo || '').trim() === target),
-          osOptions: (Array.isArray(targetEap.registro.osOptions) ? targetEap.registro.osOptions : []).filter((item: any) => String(item?.contratoCodigo || '').trim() === target),
+          contracts: keepOriginalIfEmpty(
+            (Array.isArray(targetEap.registro.contracts) ? targetEap.registro.contracts : []).filter((item: any) => getHierarchyPrefix(String(item?.codigo || ''), 1) === target),
+            Array.isArray(targetEap.registro.contracts) ? targetEap.registro.contracts : [],
+          ),
+          osOptions: keepOriginalIfEmpty(
+            (Array.isArray(targetEap.registro.osOptions) ? targetEap.registro.osOptions : []).filter((item: any) => getHierarchyPrefix(String(item?.contratoCodigo || item?.codigo || ''), 1) === target),
+            Array.isArray(targetEap.registro.osOptions) ? targetEap.registro.osOptions : [],
+          ),
         }
       : targetEap.registro;
-    targetEap.atual = filterRowsByContract(targetEap.atual as any[], target);
+    targetEap.atual = keepOriginalIfEmpty(filterRowsByContract(targetEap.atual as any[], target), Array.isArray(targetEap.atual) ? targetEap.atual : []);
     if (targetEap.timeline && typeof targetEap.timeline === 'object') {
-      targetEap.timeline = Object.fromEntries(Object.entries(targetEap.timeline).filter(([key]) => String(key).trim().startsWith(`${target}.`)));
+      const filteredTimeline = Object.fromEntries(Object.entries(targetEap.timeline).filter(([key]) => String(key).trim().startsWith(`${target}.`)));
+      if (Object.keys(filteredTimeline).length > 0) targetEap.timeline = filteredTimeline;
     }
     if (Array.isArray(targetEap.reajustado)) {
-      targetEap.reajustado = filterRowsByContract(targetEap.reajustado, target);
+      const filteredReajustado = filterRowsByContract(targetEap.reajustado, target);
+      if (filteredReajustado.length > 0) targetEap.reajustado = filteredReajustado;
     }
     if (eapData) next.eap = { ...next.eap, data: targetEap };
     else next.eap = targetEap;
@@ -1097,11 +1199,17 @@ export default function App() {
   const [filtrosAtivos, setFiltrosAtivos] = React.useState({ contrato: 'Todos', os: 'Todos', disciplina: 'Todos' });
   const effectiveGlobalData = React.useMemo(() => {
     const withAdminRegistro = applyAdminDataToRegistro(globalData, currentUser);
-    return augmentGlobalDataWithLocalTestActivities(withAdminRegistro, currentUser);
+    return withAdminRegistro;
   }, [globalData, currentUser]);
   const lockedContractCode = React.useMemo(
-    () => (shouldLockUserToContract(currentUser) ? String(currentUser?.contrato || '').trim() : ''),
-    [currentUser]
+    () => {
+      if (!shouldLockUserToContract(currentUser)) return '';
+      return resolveContractCodeFromRegistry(
+        String(currentUser?.contrato || '').trim(),
+        effectiveGlobalData.registro?.contracts || [],
+      );
+    },
+    [currentUser, effectiveGlobalData.registro?.contracts]
   );
 
   const contratos = React.useMemo(() => {
@@ -1160,10 +1268,67 @@ export default function App() {
     };
   }, [adminTerceirizadas, alocacoes, cargos, databaseLinks, disciplineSettings, roleTabPermissions, usuarios]);
 
+  const buildAuthFirebaseSnapshot = useCallback((sourceUsers?: UserAccessRecord[], existingAuth?: any) => {
+    const users = sourceUsers || usuarios;
+    const existingUsers = Array.isArray(existingAuth?.users)
+      ? existingAuth.users
+      : existingAuth?.usersByEmail && typeof existingAuth.usersByEmail === 'object'
+        ? Object.values(existingAuth.usersByEmail)
+        : [];
+    const existingByEmail = new Map(existingUsers.map((item: any) => [normalizeUserText(item?.email), item]));
+
+    const mappedUsers = users.map((user) => {
+      const existing = existingByEmail.get(normalizeUserText(user.email)) || {};
+      return {
+        id: user.id,
+        nome: user.nome,
+        email: user.email,
+        role: user.cargo,
+        cargo: user.cargo,
+        disciplina: user.disciplina,
+        disciplinas: Array.isArray((user as any).disciplinas) && (user as any).disciplinas.length > 0
+          ? (user as any).disciplinas
+          : splitDisciplineValues(user.disciplina),
+        contrato: user.contrato,
+        contract: user.contrato,
+        status: user.status,
+        alocacao: user.alocacao,
+        allowedTabs: user.allowedTabs,
+        abas: user.allowedTabs,
+        isAdmin: user.isAdmin,
+        online: user.online,
+        onlyThirdParty: user.onlyThirdParty,
+        showInCharts: user.showInCharts !== false,
+        sessionVersion: String((existing as any).sessionVersion || user.sessionVersion || ''),
+        passwordHash: String((existing as any).passwordHash || (existing as any).passwordhash || ''),
+        resetCode: String((existing as any).resetCode || (existing as any).resetcode || ''),
+        resetExpires: (existing as any).resetExpires || (existing as any).resetexpires || '',
+        lastSeen: (existing as any).lastSeen || (existing as any).lastseen || '',
+      };
+    });
+
+    const usersByEmail = Object.fromEntries(
+      mappedUsers.map((item) => [normalizeUserText(item.email), item]),
+    );
+
+    return {
+      users: mappedUsers,
+      usersByEmail,
+      publishedAt: new Date().toISOString(),
+      source: 'EcoQuanta-Web',
+    };
+  }, [usuarios]);
+
   const syncAdminSnapshotToFirebase = useCallback(async (overrides?: Parameters<typeof buildAdminFirebaseSnapshot>[0]) => {
     if (!isFirebaseConfigured()) return;
     await upsertFirebaseAppData('admin', buildAdminFirebaseSnapshot(overrides));
   }, [buildAdminFirebaseSnapshot]);
+
+  const syncAuthSnapshotToFirebase = useCallback(async (overrideUsers?: UserAccessRecord[]) => {
+    if (!isFirebaseConfigured()) return;
+    const existingAuth = await fetchFirebaseAppData<any>('auth');
+    await upsertFirebaseAppData('auth', buildAuthFirebaseSnapshot(overrideUsers, existingAuth));
+  }, [buildAuthFirebaseSnapshot]);
 
   const applyLoadedGlobalData = useCallback((fullData: GlobalData) => {
     const normalizedData = fullData.admin
@@ -1225,10 +1390,10 @@ export default function App() {
         ...collaboration,
       }), eap);
 
-      const scopedData = filterGlobalDataByContract(
-        mergedData,
-        shouldLockUserToContract(user) ? user.contrato || '' : '',
-      );
+      const scopedContract = shouldLockUserToContract(user)
+        ? resolveContractCodeFromRegistry(String(user.contrato || '').trim(), mergedData.registro?.contracts || [])
+        : '';
+      const scopedData = filterGlobalDataByContract(mergedData, scopedContract);
 
       if (scopedData.admin) scopedData.admin.users = normalizeAdminUsers(scopedData);
       applyLoadedGlobalData(scopedData);
@@ -1312,7 +1477,10 @@ export default function App() {
         fullData = {};
       }
 
-      fullData = filterGlobalDataByContract(fullData, shouldLockUserToContract(user) ? user.contrato || '' : '');
+      const scopedContract = shouldLockUserToContract(user)
+        ? resolveContractCodeFromRegistry(String(user.contrato || '').trim(), fullData.registro?.contracts || [])
+        : '';
+      fullData = filterGlobalDataByContract(fullData, scopedContract);
         
         // Converte o índice por e-mail do JSON público de volta para o array esperado pelo app
         if (fullData.admin) fullData.admin.users = normalizeAdminUsers(fullData);
@@ -1401,7 +1569,10 @@ export default function App() {
       (activeTab === 'nc2' && nc2SubTab === 'cronograma');
 
     const wantsEap =
-      activeTab === 'controle' && subTab === 'curva-s';
+      (activeTab === 'controle' && subTab === 'curva-s') ||
+      (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ||
+      (activeTab === 'planejamento' && planejamentoSubTab === 'atividades') ||
+      (activeTab === 'contrato' && contratoSubTab === 'atividades');
     const wantsRegistro =
       activeTab === 'registro' ||
       activeTab === 'controle' ||
@@ -1463,10 +1634,78 @@ export default function App() {
   }, [activeTab, currentUser?.isAdmin, disciplinas.length, loadAdminData, usuarios.length]);
 
   const handleLogin = async (email: string, password: string, rememberMe: boolean) => {
-    const response = await postToAppsScript<AuthResponse>({ action: 'authUser', email, password });
-    if (!response.success || !response.user) throw new Error(response.error || 'E-mail ou senha incorretos.');
+    if (!isFirebaseConfigured()) {
+      throw new Error('Firebase indisponivel para autenticar. Verifique a configuracao do ambiente.');
+    }
 
-    const user = normalizeUser(response.user);
+    const normalizedEmail = normalizeUserText(email);
+    let matchedUser: any = null;
+    let authErrorMessage = '';
+
+    try {
+      const authData = await fetchFirebaseAppData<any>('auth');
+      const authUsers = Array.isArray(authData?.users)
+        ? authData.users
+        : authData?.usersByEmail && typeof authData.usersByEmail === 'object'
+          ? Object.values(authData.usersByEmail)
+          : [];
+      matchedUser = authUsers.find((item: any) => normalizeUserText(item?.email) === normalizedEmail) || null;
+
+      if (matchedUser) {
+        const storedHash = String(matchedUser.passwordHash || matchedUser.passwordhash || '').trim();
+        if (storedHash) {
+          const typedHash = await hashPasswordLikeAppsScript(password);
+          if (typedHash === storedHash) {
+            const status = normalizeUserText(matchedUser.status || '');
+            if (status === 'pending') {
+              throw new Error('Seu cadastro ainda esta aguardando aprovacao do administrador.');
+            }
+
+            if (status === 'blocked') {
+              throw new Error('Seu acesso esta bloqueado. Procure um administrador.');
+            }
+
+            const user = normalizeUser({
+              ...matchedUser,
+              abas: matchedUser.allowedTabs || matchedUser.abas || [],
+              cargo: matchedUser.role || matchedUser.cargo || '',
+              role: matchedUser.role || matchedUser.cargo || '',
+              disciplinas: matchedUser.disciplinas || matchedUser.disciplina || '',
+              disciplina: matchedUser.disciplina || '',
+            });
+            saveSession(user, rememberMe);
+            setCurrentUser(user);
+            await loadGlobalEnvironment(user, false);
+
+            const firstTab = getFirstAccessibleTab(user, roleTabPermissions);
+            if (firstTab) setActiveTab(firstTab);
+            return;
+          }
+        }
+      }
+      authErrorMessage = 'E-mail ou senha incorretos.';
+    } catch (error) {
+      authErrorMessage = error instanceof Error ? error.message : 'E-mail ou senha incorretos.';
+    }
+
+    const fallbackResponse = await postToAppsScript<GenericResponse & { user?: any }>({
+      action: 'authUser',
+      email,
+      password,
+    });
+
+    if (!fallbackResponse.success || !fallbackResponse.user) {
+      throw new Error(fallbackResponse.error || authErrorMessage || 'E-mail ou senha incorretos.');
+    }
+
+    const user = normalizeUser({
+      ...fallbackResponse.user,
+      abas: fallbackResponse.user.allowedTabs || fallbackResponse.user.abas || [],
+      cargo: fallbackResponse.user.role || fallbackResponse.user.cargo || '',
+      role: fallbackResponse.user.role || fallbackResponse.user.cargo || '',
+      disciplinas: fallbackResponse.user.disciplinas || fallbackResponse.user.disciplina || '',
+      disciplina: fallbackResponse.user.disciplina || '',
+    });
     saveSession(user, rememberMe);
     setCurrentUser(user);
     await loadGlobalEnvironment(user, false);
@@ -1501,34 +1740,17 @@ export default function App() {
 
   // Admin Hooks (abbreviated wrapper functions saving directly)
   const persistUser = useCallback(async (user: UserAccessRecord) => {
-    setUsuarios((prev) => prev.map((item) => item.id === user.id ? user : item));
+    const nextUsers = usuarios.map((item) => item.id === user.id ? user : item);
+    setUsuarios(nextUsers);
     try {
-      const userDisciplines = Array.isArray((user as any).disciplinas) && (user as any).disciplinas.length > 0
-        ? (user as any).disciplinas
-        : splitDisciplineValues(user.disciplina);
-      const response = await postToAppsScript<GenericResponse>({
-        action: 'saveUserAccess',
-        email: user.email,
-        name: user.nome,
-        role: user.cargo,
-        discipline: userDisciplines,
-        allocation: user.alocacao,
-        contract: user.contrato,
-        isAdmin: user.isAdmin,
-        status: user.status,
-        allowedTabs: user.allowedTabs,
-        onlyThirdParty: user.onlyThirdParty,
-      });
-      assertSuccess(response);
-      await syncAdminSnapshotToFirebase({
-        usuarios: usuarios.map((item) => item.id === user.id ? user : item),
-      });
+      await syncAdminSnapshotToFirebase({ usuarios: nextUsers });
+      await syncAuthSnapshotToFirebase(nextUsers);
       await loadAdminData();
     } catch (error) {
       await loadAdminData();
       throw error;
     }
-  }, [loadAdminData, syncAdminSnapshotToFirebase, usuarios]);
+  }, [loadAdminData, syncAdminSnapshotToFirebase, syncAuthSnapshotToFirebase, usuarios]);
 
   const applyRolePresetTabs = useCallback((cargo: string) => {
     const roleTabs = roleTabPermissions[cargo] || [];
@@ -1606,8 +1828,6 @@ export default function App() {
     setAlocacoes(nextAlocacoes);
     if (nextDisciplineSettings) setDisciplineSettings(nextDisciplineSettings);
     try {
-      const response = await postToAppsScript<GenericResponse>({ action: 'saveConfigOptions', cargos: nextCargos, disciplinas: nextDisciplinas, alocacoes: nextAlocacoes });
-      assertSuccess(response);
       await syncAdminSnapshotToFirebase({
         cargos: nextCargos,
         alocacoes: nextAlocacoes,
@@ -1623,8 +1843,6 @@ export default function App() {
   const saveRoleTabPermissions = useCallback(async (nextPermissions: RoleTabPermissions) => {
     setRoleTabPermissions(nextPermissions);
     try {
-      const response = await postToAppsScript<GenericResponse>({ action: 'saveRoleTabPermissions', roleTabPermissions: nextPermissions });
-      assertSuccess(response);
       await syncAdminSnapshotToFirebase({ roleTabPermissions: nextPermissions });
       await loadAdminData();
     } catch (error) {
@@ -1680,23 +1898,15 @@ export default function App() {
   const removeCargo = useCallback(async (value: string) => {
     const nextPermissions = { ...roleTabPermissions };
     delete nextPermissions[value];
-    const configResponse = await postToAppsScript<GenericResponse>({
-      action: 'saveConfigOptions',
-      cargos: cargos.filter((item) => item !== value),
-      disciplinas,
-      alocacoes,
-    });
-    assertSuccess(configResponse);
-    const permissionsResponse = await postToAppsScript<GenericResponse>({ action: 'saveRoleTabPermissions', roleTabPermissions: nextPermissions });
-    assertSuccess(permissionsResponse);
-    setCargos((prev) => prev.filter((item) => item !== value));
+    const nextCargos = cargos.filter((item) => item !== value);
+    setCargos(nextCargos);
     setRoleTabPermissions(nextPermissions);
     await syncAdminSnapshotToFirebase({
-      cargos: cargos.filter((item) => item !== value),
+      cargos: nextCargos,
       roleTabPermissions: nextPermissions,
     });
     await loadAdminData();
-  }, [alocacoes, cargos, disciplinas, loadAdminData, roleTabPermissions, syncAdminSnapshotToFirebase]);
+  }, [cargos, loadAdminData, roleTabPermissions, syncAdminSnapshotToFirebase]);
 
   const toggleRoleTabPermission = useCallback(async (cargo: string, tab: AppTabKey) => {
     const currentTabs = roleTabPermissions[cargo] || [];
@@ -1711,8 +1921,6 @@ export default function App() {
   }, [roleTabPermissions, saveRoleTabPermissions]);
 
   const saveDatabaseLink = useCallback(async (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => {
-    const response = await postToAppsScript<GenericResponse>({ action: 'saveDatabaseLink', ...payload });
-    assertSuccess(response);
     const nextDatabaseLinks = payload.id
       ? databaseLinks.map((item) => item.id === payload.id ? { ...item, ...payload } : item)
       : [...databaseLinks, { id: payload.id || createDraftId('db-link'), ...payload }];
@@ -1721,10 +1929,9 @@ export default function App() {
   }, [databaseLinks, loadAdminData, syncAdminSnapshotToFirebase]);
 
   const deleteDatabaseLink = useCallback(async (id: string) => {
-    const response = await postToAppsScript<GenericResponse>({ action: 'deleteDatabaseLink', id });
-    assertSuccess(response);
-    setDatabaseLinks((prev) => prev.filter((item) => item.id !== id));
-    await syncAdminSnapshotToFirebase({ databaseLinks: databaseLinks.filter((item) => item.id !== id) });
+    const nextDatabaseLinks = databaseLinks.filter((item) => item.id !== id);
+    setDatabaseLinks(nextDatabaseLinks);
+    await syncAdminSnapshotToFirebase({ databaseLinks: nextDatabaseLinks });
     await loadAdminData();
   }, [databaseLinks, loadAdminData, syncAdminSnapshotToFirebase]);
 
@@ -1770,31 +1977,23 @@ export default function App() {
   const acceptUser = useCallback(async (userId: string) => {
     const user = usuarios.find((item) => item.id === userId);
     if (!user) return;
-    const response = await postToAppsScript<GenericResponse>({
-      action: 'approveUser',
-      email: user.email,
-      name: user.nome,
-      role: user.cargo,
-      discipline: user.disciplina,
-      allocation: user.alocacao,
-      contract: user.contrato,
-      isAdmin: user.isAdmin,
-      allowedTabs: user.allowedTabs,
-    });
-    assertSuccess(response);
-    setUsuarios((prev) => prev.map((item) => item.id === userId ? { ...item, status: 'approved' } : item));
+    const nextUsers = usuarios.map((item) => item.id === userId ? { ...item, status: 'approved' } : item);
+    setUsuarios(nextUsers);
     setDirtyUserIds((prev) => prev.filter((id) => id !== userId));
+    await syncAdminSnapshotToFirebase({ usuarios: nextUsers });
+    await syncAuthSnapshotToFirebase(nextUsers);
     await loadAdminData();
-  }, [loadAdminData, usuarios]);
+  }, [loadAdminData, syncAdminSnapshotToFirebase, syncAuthSnapshotToFirebase, usuarios]);
 
   const blockUser = useCallback(async (userId: string) => {
     const user = usuarios.find((item) => item.id === userId);
     if (!user) return;
-    const response = await postToAppsScript<GenericResponse>({ action: 'blockUser', email: user.email });
-    assertSuccess(response);
-    setUsuarios((prev) => prev.map((item) => item.id === userId ? { ...item, status: 'blocked', online: false } : item));
+    const nextUsers = usuarios.map((item) => item.id === userId ? { ...item, status: 'blocked', online: false } : item);
+    setUsuarios(nextUsers);
+    await syncAdminSnapshotToFirebase({ usuarios: nextUsers });
+    await syncAuthSnapshotToFirebase(nextUsers);
     await loadAdminData();
-  }, [loadAdminData, usuarios]);
+  }, [loadAdminData, syncAdminSnapshotToFirebase, syncAuthSnapshotToFirebase, usuarios]);
 
   const resetUserPassword = useCallback(async (user: UserAccessRecord) => {
     const response = await postToAppsScript<GenericResponse>({ action: 'adminResetPassword', email: user.email });
@@ -1995,7 +2194,7 @@ export default function App() {
             <React.Suspense fallback={<TabLoadingFallback />}>
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'atividades'
-                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} isHeaderFiltersOpen={showFilters} onCloseHeaderFilters={() => setShowFilters(false)} disciplineFilterEnabled />
+                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines autoSelectUserDisciplineFilter isHeaderFiltersOpen={showFilters} onCloseHeaderFilters={() => setShowFilters(false)} disciplineFilterEnabled />
                   : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />}
@@ -2003,7 +2202,7 @@ export default function App() {
                 planejamentoSubTab === 'dashboard'
                   ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="dashboard" activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                   : planejamentoSubTab === 'atividades'
-                    ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines filtersAlwaysVisible disciplineFilterEnabled={false} />
+                    ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines filtersAlwaysVisible disciplineFilterEnabled />
                     : planejamentoSubTab === 'cronograma'
                       ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
                       : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />

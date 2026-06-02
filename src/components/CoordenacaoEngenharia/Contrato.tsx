@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ClipboardList,
+  Filter,
   FileWarning,
   GitBranch,
   PencilLine,
@@ -290,18 +291,16 @@ function getOsOptions(preloadedData?: ContratoProps['preloadedData'], activities
   const osFromRegistro = Array.isArray(preloadedData?.registro?.osOptions)
     ? preloadedData.registro.osOptions
         .filter((os: any) => !targetContract || [os?.contratoCodigo, os?.contratoNome, os?.contrato].some((value: any) => normalizeText(String(value || '')) === targetContract))
-        .filter((os: any) => isOsLabel(cleanDisplayLabel(os?.nome, os?.codigo, '')) || isOsLabel(cleanDisplayLabel(os?.codigo, os?.nome, '')))
         .map((os: any) => ({
-          codigo: cleanDisplayLabel(os?.codigo, os?.nome, ''),
+          codigo: String(os?.codigo || '').trim(),
           nome: cleanDisplayLabel(os?.nome, os?.codigo, ''),
         }))
     : [];
 
   const osFromActivities = activities
     .filter((activity) => matchesContract(activity, selectedContract))
-    .filter((activity) => isOsLabel(activity.osNome) || isOsLabel(activity.osCodigo))
     .map((activity) => ({
-      codigo: cleanDisplayLabel(activity.osCodigo, activity.osNome, ''),
+      codigo: String(activity.osCodigo || '').trim(),
       nome: cleanDisplayLabel(activity.osNome, activity.osCodigo, ''),
     }));
 
@@ -572,6 +571,7 @@ export default function Contrato({
   const [selectedOs, setSelectedOs] = useState('Todas');
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [showAtividadesFilters, setShowAtividadesFilters] = useState(false);
   const deferredSearch = useDeferredValue(search);
   const monthlyPriorityCycle = useMemo(() => getMonthlyPriorityCycleKey(), []);
   const monthlyPriorityCycleLabel = useMemo(() => formatMonthlyCycleLabel(monthlyPriorityCycle), [monthlyPriorityCycle]);
@@ -710,7 +710,7 @@ export default function Contrato({
                 {!locked && <option value="Todos">Todos os contratos</option>}
                 {contracts.map((contract) => (
                   <option key={contract.id} value={contract.id}>
-                    {contract.id && contract.nome && contract.nome !== contract.id ? `${contract.id} - ${contract.nome}` : contract.nome || contract.id}
+                    {contract.nome || contract.id}
                   </option>
                 ))}
               </select>
@@ -726,7 +726,7 @@ export default function Contrato({
                 <option value="Todas">Todas as OS</option>
                 {osOptions.map((os) => (
                   <option key={os.codigo} value={os.codigo}>
-                    {os.codigo && os.nome && os.nome !== os.codigo ? `${os.codigo} - ${os.nome}` : os.nome || os.codigo}
+                    {os.nome || os.codigo}
                   </option>
                 ))}
               </select>
@@ -749,7 +749,29 @@ export default function Contrato({
       )}
 
       {activeView === 'atividades' ? (
-        <Atividades currentUser={_currentUser} preloadedData={preloadedData} showAllDisciplines filtersAlwaysVisible disciplineFilterEnabled={false} />
+        <div className="space-y-3">
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => setShowAtividadesFilters((prev) => !prev)}
+              className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-bold transition-all ${
+                showAtividadesFilters
+                  ? 'border-[#F05D28] bg-[#F05D28] text-white'
+                  : 'border-[#E5E7EB] bg-white text-[#757575] hover:bg-[#F9FAFB]'
+              }`}
+            >
+              <Filter size={18} /> Filtros
+            </button>
+          </div>
+          <Atividades
+            currentUser={_currentUser}
+            preloadedData={preloadedData}
+            showAllDisciplines
+            isHeaderFiltersOpen={showAtividadesFilters}
+            onCloseHeaderFilters={() => setShowAtividadesFilters(false)}
+            disciplineFilterEnabled
+          />
+        </div>
       ) : (activeView === 'dashboard' || activeView === 'prioridades') && (
         <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
           <ActivitiesList

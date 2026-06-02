@@ -1,0 +1,130 @@
+Relatorio de alteracoes
+
+Hoje
+
+- A area da Curva S foi ajustada para ficar mais pratica no uso.
+- Foi adicionada a seta de expandir e retrair no canto do card.
+- A expansao por hover foi removida.
+- O seletor de ordem de servico passou a mostrar "Selecione..." e abrir ao clicar.
+- A lista recolhe automaticamente depois de selecionar.
+- Foi removido o bloco vazio que aparecia abaixo do seletor.
+- O eixo de datas foi ajustado para ganhar espaco, com rotacao e deslocamento para nao entrar no grafico.
+- O card voltou ao tamanho normal, sem encolher o grafico.
+- A logica foi deixada para manter o grafico limpo e reduzir sobreposicao visual.
+
+- A aba Atividades recebeu um ajuste mais profundo de comportamento.
+- O quadro passou a funcionar melhor como painel operacional por disciplina.
+- Atividades sem disciplina definida passam a aparecer para todas as disciplinas.
+- O indicador de LOD foi removido do card.
+- No lugar dele, entraram os participantes da atividade, com exibicao visual em avatares.
+- O bloco de datas do card foi corrigido para mostrar Inicio e Termino em posicoes coerentes.
+- O contador de Atividades foi corrigido para contar somente os cards unicos, sem somar repeticoes.
+- O contador de Concluidas foi ajustado para refletir as atividades que estao em 100%.
+- A logica foi ajustada para melhorar leitura do quadro, evitar duplicidade de contagem e deixar o card mais util para operacao diaria.
+
+Atividades
+
+- A tela de Atividades foi reestruturada como um quadro de operacao por dia.
+- A exibicao passou a considerar a disciplina do usuario.
+- Quando a atividade nao tem disciplina preenchida, ela aparece para todas as disciplinas.
+- A logica de exibicao foi pensada para que o usuario entre no sistema e veja o que precisa executar naquele dia.
+- As atividades foram organizadas para repeticao ao longo dos dias da semana, respeitando o contexto do quadro.
+- A contagem dos cards foi separada da contagem de repeticoes exibidas em cada coluna.
+- A leitura da situacao da atividade passou a considerar o percentual de conclusao e a presenca de atividades filhas.
+- Os participantes da atividade passaram a ser exibidos no proprio card, substituindo o antigo bloco de LOD.
+- O layout das datas foi ajustado para ficar mais claro, com inicio e termino alinhados corretamente.
+
+Curva S
+
+- O card da Curva S recebeu comportamento de expandir e recolher.
+- A interacao por hover foi removida para evitar abertura involuntaria.
+- A lista de OS passou a abrir apenas quando o usuario clica.
+- O texto padrao "Selecione..." foi adotado para deixar o estado fechado mais claro.
+- A lista agora recolhe sozinha depois da selecao.
+- Foi removida a area vazia que aparecia abaixo do seletor.
+- As datas do eixo X foram encurtadas para reduzir uso de espaco.
+- O ano foi reduzido para os dois ultimos digitos.
+- A inclinacao dos rótulos foi ajustada para nao invadir o grafico.
+- O eixo recebeu deslocamento para as datas ficarem abaixo da area util do grafico.
+- A logica foi voltada a preservar a leitura do grafico sem comprimir a area principal.
+
+App e navegacao
+
+- O arquivo principal da aplicacao recebeu ajustes de fluxo e roteamento.
+- A estrutura do app foi refinada para integrar melhor as areas de operacao.
+- Houve reorganizacao de componentes e pontos de entrada para deixar o sistema mais coeso.
+- O fluxo de telas foi sendo adaptado conforme os modulos foram evoluindo.
+
+Firebase e dados
+
+- A camada de acesso ao Firebase recebeu varias revisoes.
+- A logica de leitura e escrita de dados foi reorganizada.
+- Foi criado/ajustado o fluxo de publicacao e sincronizacao de dados em JSON.
+- A separacao entre dados internos e dados publicados ficou mais clara.
+- A estrutura passou a suportar melhor os modulos que gravam e leem informacoes do sistema.
+- As regras do Firestore foram revisadas e permaneceram adequadas para o uso atual, sem necessidade imediata de bloqueio por disciplina no backend.
+- A logica geral foi orientada a manter o sistema funcional com autenticacao e persistencia consistentes.
+
+Cronograma e engenharia
+
+- O Cronograma recebeu ajustes de interface e de comportamento.
+- Os componentes da area de Coordenacao de Engenharia foram atualizados.
+- Alertas, contrato e dashboard de engenharia passaram por refinamentos.
+- A logica dos graficos e dos indicadores de priorizacao foi revisada.
+- A area ficou mais pronta para uso operacional e acompanhamento visual.
+
+Nao conformidade
+
+- Foi criada e evoluida a estrutura da Nao Conformidade.
+- As telas de Conformidade, Preenchimento e Revisoes receberam trabalho funcional.
+- O armazenamento local de NC foi ajustado para suportar o fluxo da area.
+- A logica foi voltada a cadastro, acompanhamento e revisao dos registros.
+
+Registro de atividade e hibernacao
+
+- O modulo de Registro de Atividade foi reorganizado.
+- Houve movimentacao de arquivos para uma estrutura de Hibernacao.
+- A logica do registro foi ajustada para suportar melhor o fluxo de operacao e consolidacao dos dados.
+
+Planejamento e EAP
+
+- O arquivo de Planejamento Tecnico foi removido da estrutura principal.
+- A EAP Unificada recebeu ajustes no script de geracao e publicacao.
+- A logica passou a ficar mais alinhada com a base atual do sistema e com os modulos publicados.
+
+Publicacao e sincronizacao
+
+- Varios arquivos JSON da pasta Publica foram atualizados ao longo do periodo.
+- Isso incluiu app-registro, app-administracao, app-cronograma, app-controle, app-contrato, app-nc, registrodeatividades, registro-atividades e eap-unificada.
+- A logica desses arquivos foi manter a publicacao refletindo o estado mais recente dos modulos do sistema.
+- Houve tambem atualizacoes em scripts de integracao como code.gs ligados aos fluxos de publicacao e dados.
+
+Estrutura tecnica
+
+- O package.json e o package-lock.json receberam ajustes pontuais de dependencias.
+- O vite.config.ts foi atualizado para acompanhar a estrutura nova do projeto.
+- O aplicativo recebeu uma base tecnica mais consolidada para suportar as telas e os fluxos que foram sendo adicionados.
+
+Resumo do projeto
+
+- Este projeto é uma plataforma operacional para acompanhar, organizar e registrar atividades de engenharia, administracao, cronograma, nao conformidade e areas relacionadas.
+- Ele funciona como um painel unico onde o usuario entra, visualiza os dados da sua area, acompanha o que esta pendente e registra ou consulta informacoes conforme o modulo que estiver usando.
+- O sistema foi construido para trabalhar com dados publicados e dados operacionais, mantendo a interface organizada por modulos e com foco em uso diario.
+- A logica geral privilegia leitura rapida, filtro por contexto, exibicao por disciplina e atualizacao constante das informacoes para o usuario final.
+
+Explicacao simples para uma diretora
+
+- Este sistema funciona como um painel de controle da operacao.
+- Ele junta, em um so lugar, as informacoes que a equipe precisa para acompanhar atividades, prazos, andamento de trabalhos, nao conformidades e outras rotinas da empresa.
+- Em vez de procurar dados em varias planilhas ou telas separadas, a pessoa entra no sistema e ve o que precisa fazer, o que esta em andamento e o que ja foi concluido.
+- O objetivo e dar mais organizacao, agilidade e visibilidade para a operacao do dia a dia.
+
+- Em termos de seguranca, o acesso nao e aberto para qualquer pessoa.
+- O usuario precisa estar autenticado para usar o sistema, o que ajuda a evitar acesso indevido.
+- As permissoes foram pensadas para mostrar cada informacao no contexto certo, evitando que a tela fique poluida com dados que nao pertencem aquele usuario ou area.
+- Os dados sao atualizados de forma centralizada, o que reduz erro manual e ajuda a manter tudo sincronizado.
+- Quando nao existe uma classificacao especifica, o sistema trata a informacao de forma mais ampla para nao esconder tarefas importantes.
+
+- Resumindo de forma bem simples: e como se fosse um quadro digital da empresa, onde cada area enxerga suas responsabilidades, acompanha o que esta pendente e trabalha com mais clareza.
+- O nivel de seguranca e adequado para uso operacional interno, com controle de acesso e organizacao de dados por perfil e contexto.
+- Para uma diretora, a melhor forma de entender e: o sistema organiza a operacao, mostra o que importa para cada area e protege o acesso para que so pessoas autorizadas vejam e usem as informacoes.

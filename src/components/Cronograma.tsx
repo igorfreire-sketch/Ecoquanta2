@@ -15,6 +15,7 @@ interface CronogramaRow {
   realStart?: string;
   realEnd?: string;
   baselineIdealProgress?: number;
+  sourceLine?: number;
 }
 
 interface CronogramaProps {
@@ -186,6 +187,12 @@ function sameDay(a: Date, b: Date) {
   return startOfDay(a).getTime() === startOfDay(b).getTime();
 }
 
+function getTodayInSaoPaulo() {
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  return startOfDay(new Date(utc - (3 * 60 * 60000)));
+}
+
 function parsePredecessors(value?: string | string[]) {
   if (Array.isArray(value)) {
     return value
@@ -275,7 +282,7 @@ function getCronogramaSourceRows(preloadedData?: CronogramaProps['preloadedData'
   });
 
   const seen = new Set<string>();
-  return normalized.filter((row) => {
+  const deduped = normalized.filter((row) => {
     const key = normalizeCode(row.code);
     if (!key) return false;
     const signature = `${key}::${normalizeText(row.name)}`;
@@ -283,6 +290,12 @@ function getCronogramaSourceRows(preloadedData?: CronogramaProps['preloadedData'
     seen.add(signature);
     return true;
   });
+
+  deduped.forEach((row, index) => {
+    row.sourceLine = index + 2;
+  });
+
+  return deduped;
 }
 
 function formatDateBR(value?: string) {
@@ -424,7 +437,7 @@ function estimateDurationDays(row: CronogramaRow, start: Date | null, end: Date 
 
 function buildGanttTimelineBounds(tasks: Array<{ start: Date | null; end: Date | null }>) {
   const dates = tasks.flatMap((task) => [task.start, task.end]).filter((date): date is Date => Boolean(date && !Number.isNaN(date.getTime())));
-  const today = startOfDay(new Date());
+  const today = getTodayInSaoPaulo();
   if (!dates.length) {
     return { start: today, end: addDays(today, 14) };
   }
@@ -608,11 +621,42 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
     issues.push(`Codigo duplicado encontrado no cronograma: ${code}.`);
   });
 
+  const lineCodeMap = new Map<number, string>();
+  rowMap.forEach((row, code) => {
+    if (typeof row.sourceLine === 'number' && Number.isFinite(row.sourceLine)) {
+      lineCodeMap.set(row.sourceLine, code);
+    }
+  });
+
+  const resolvePredecessorCodes = (tokens: string[]) => {
+    const resolved: string[] = [];
+
+    tokens.forEach((token) => {
+      const direct = normalizeCode(token);
+      if (!direct) return;
+      if (rowMap.has(direct)) {
+        resolved.push(direct);
+        return;
+      }
+
+      if (/^\d+$/.test(direct)) {
+        const sourceLine = Number(direct) + 2;
+        const mappedCode = lineCodeMap.get(sourceLine);
+        if (mappedCode) {
+          resolved.push(mappedCode);
+        }
+      }
+    });
+
+    return Array.from(new Set(resolved));
+  };
+
   const tasksBase = Array.from(rowMap.entries()).map(([code, row]) => {
     const predecessors = parsePredecessors(row.predecessor);
+    const resolvedPredecessors = resolvePredecessorCodes(predecessors);
     const inferredPredecessor = incrementTrailingNumericCode(code);
-    const dependencyCodes = predecessors.length > 0
-      ? predecessors
+    const dependencyCodes = resolvedPredecessors.length > 0
+      ? resolvedPredecessors
       : inferredPredecessor && rowMap.has(inferredPredecessor)
         ? [inferredPredecessor]
         : [];
@@ -647,7 +691,8 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
       task.issues.push('Data de termino anterior ao inicio.');
     }
 
-    task.predecessors.forEach((predecessorCode) => {
+    const validationPredecessors = task.dependencyCodes.length > 0 ? task.dependencyCodes : task.predecessors;
+    validationPredecessors.forEach((predecessorCode) => {
       if (predecessorCode === task.code) {
         task.issues.push('Auto-dependencia identificada.');
         return;
@@ -666,7 +711,8 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
   });
 
   taskMap.forEach((task, code) => {
-    task.predecessors.forEach((predecessorCode) => {
+    const dependencyList = task.dependencyCodes.length > 0 ? task.dependencyCodes : task.predecessors;
+    dependencyList.forEach((predecessorCode) => {
       if (!taskMap.has(predecessorCode)) return;
       indegree.set(code, (indegree.get(code) || 0) + 1);
       adjacency.get(predecessorCode)?.push(code);
@@ -770,7 +816,8 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
 
   orderedTasks.forEach((task) => {
     if (!task.start || !task.end) return;
-    task.dependencyCodes.forEach((predecessorCode) => {
+    const dependencyList = task.dependencyCodes.length > 0 ? task.dependencyCodes : task.predecessors;
+    dependencyList.forEach((predecessorCode) => {
       const predecessor = taskMap.get(predecessorCode);
       if (!predecessor || !predecessor.end) return;
       if (task.start && predecessor.end && task.start.getTime() < addDays(predecessor.end, 1).getTime()) {
@@ -1263,7 +1310,13 @@ export default function Cronograma({
     const leftWidth = 460;
     const timelineWidth = Math.max(ganttModel.unitCount * ganttModel.unitPx, 720);
     const chartHeight = headerHeight + ganttVisibleTasks.length * rowHeight + 24;
-    const todayLineX = Math.max(0, Math.min(timelineWidth, getGanttScaleTimelinePosition(ganttModel, startOfDay(new Date()))));
+    const ganttToday = getTodayInSaoPaulo();
+    const todayLineX = Math.max(0, Math.min(timelineWidth, getGanttScaleTimelinePosition(ganttModel, ganttToday)));
+    const ganttViewportWidth = ganttRightScrollRef.current?.clientWidth || timelineWidth;
+    const todayMarkerX = Math.min(
+      Math.max(todayLineX - ganttRightScrollLeft, 16),
+      Math.max(16, ganttViewportWidth - 16),
+    );
 
     const syncGanttScroll = (source: 'left' | 'right') => (event: React.UIEvent<HTMLDivElement>) => {
       const otherRef = source === 'left' ? ganttRightScrollRef : ganttLeftScrollRef;
@@ -1427,9 +1480,9 @@ export default function Cronograma({
                                 <p className="mt-1 text-[11px] text-slate-500">
                                   {formatDateBR(task.row.plannedStart)} a {formatDateBR(task.row.plannedEnd)}
                                 </p>
-                                {task.predecessors.length > 0 && (
+                                {(task.dependencyCodes.length > 0 || task.predecessors.length > 0) && (
                                   <p className="mt-1 truncate text-[10px] text-slate-400">
-                                    Predecessora(s): {task.predecessors.join(', ')}
+                                    Predecessora(s): {(task.dependencyCodes.length > 0 ? task.dependencyCodes : task.predecessors).join(', ')}
                                   </p>
                                 )}
                                 {issueCount > 0 && (
@@ -1467,11 +1520,24 @@ export default function Cronograma({
               </div>
             </div>
 
-            <div
-              ref={ganttRightScrollRef}
-              className="min-w-0 flex-1 overflow-auto bg-white"
-              onScroll={syncGanttScroll('right')}
-            >
+            <div className="relative min-w-0 flex-1">
+              <div className="pointer-events-none absolute left-0 right-0 top-[72px] bottom-0 z-30 overflow-hidden">
+                <div
+                  className="absolute top-0 h-full"
+                  style={{ left: `${todayMarkerX}px` }}
+                >
+                  <div className="absolute left-0 top-0 h-full w-px bg-rose-500/80" />
+                  <div className="absolute left-0 top-2 -translate-x-1/2 rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-[1px] text-white shadow-sm">
+                    Hoje
+                  </div>
+                </div>
+              </div>
+
+              <div
+                ref={ganttRightScrollRef}
+                className="min-w-0 h-full overflow-auto bg-white"
+                onScroll={syncGanttScroll('right')}
+              >
               <div
                 className="relative"
                 style={{
@@ -1491,16 +1557,6 @@ export default function Cronograma({
                       {index % ganttModel.labelStep === 0 ? getGanttUnitLabel(ganttModel, index) : ''}
                     </div>
                   ))}
-                </div>
-
-                <div
-                  className="pointer-events-none absolute left-0 top-0 z-30 h-full"
-                  style={{ transform: `translateX(${Math.max(0, todayLineX - ganttRightScrollLeft)}px)` }}
-                >
-                  <div className="absolute left-0 top-0 h-full w-px bg-rose-500/80" />
-                  <div className="absolute left-0 top-2 -translate-x-1/2 rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-[1px] text-white shadow-sm">
-                    Hoje
-                  </div>
                 </div>
 
                 <svg
@@ -1603,6 +1659,7 @@ export default function Cronograma({
                     );
                   })}
                 </div>
+              </div>
               </div>
             </div>
           </div>
@@ -1768,7 +1825,7 @@ export default function Cronograma({
                 {!normalizeText(lockedContractCode) && <option value="Todos">Todos</option>}
                 {contracts.map((contract) => (
                   <option key={contract.code} value={contract.code}>
-                    {contract.code} - {contract.name}
+                    {contract.name || contract.code}
                   </option>
                 ))}
               </select>
@@ -1789,7 +1846,7 @@ export default function Cronograma({
                   .filter((os) => contractFilter === 'Todos' || os.contractCode === contractFilter)
                   .map((os) => (
                     <option key={os.code} value={os.code}>
-                      {os.code} - {os.name}
+                      {os.name || os.code}
                     </option>
                   ))}
               </select>
@@ -1896,7 +1953,7 @@ export default function Cronograma({
                   {!normalizeText(lockedContractCode) && <option value="Todos">Todos</option>}
                   {contracts.map((contract) => (
                     <option key={contract.code} value={contract.code}>
-                      {contract.code} - {contract.name}
+                      {contract.name || contract.code}
                     </option>
                   ))}
                 </select>
@@ -1917,7 +1974,7 @@ export default function Cronograma({
                     .filter((os) => contractFilter === 'Todos' || os.contractCode === contractFilter)
                     .map((os) => (
                       <option key={os.code} value={os.code}>
-                        {os.code} - {os.name}
+                        {os.name || os.code}
                       </option>
                     ))}
                 </select>

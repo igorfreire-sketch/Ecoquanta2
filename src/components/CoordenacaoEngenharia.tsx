@@ -2,6 +2,7 @@ import React from 'react';
 import {
   CalendarClock,
   ChevronRight,
+  Filter,
 } from 'lucide-react';
 import Atividades from './Atividades';
 import DashboardEngenharia from './CoordenacaoEngenharia/DashboardEngenharia';
@@ -77,6 +78,7 @@ function getLatestEapDisplayDate(eap?: any) {
 }
 
 export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
+  const [showPlanejamentoFilters, setShowPlanejamentoFilters] = React.useState(false);
   const effectiveSubTab = subTab === 'alertas' ? 'dashboard' : subTab;
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
@@ -99,17 +101,43 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
           </div>
         </div>
 
-        <div className="inline-flex w-fit items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
-          <CalendarClock size={14} className="text-[#F05D28]" />
-          <span>EAP atualizada em</span>
-          <span className="text-[#2D2D2D]">{latestEapDate}</span>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <div className="inline-flex w-fit items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
+            <CalendarClock size={14} className="text-[#F05D28]" />
+            <span>EAP atualizada em</span>
+            <span className="text-[#2D2D2D]">{latestEapDate}</span>
+          </div>
+          {effectiveSubTab === 'planejamento' && (
+            <button
+              type="button"
+              onClick={() => setShowPlanejamentoFilters((prev) => !prev)}
+              className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-bold transition-all ${
+                showPlanejamentoFilters
+                  ? 'border-[#F05D28] bg-[#F05D28] text-white'
+                  : 'border-[#E5E7EB] bg-white text-[#757575] hover:bg-[#F9FAFB]'
+              }`}
+            >
+              <Filter size={18} /> Filtros
+            </button>
+          )}
         </div>
       </div>
 
       <div className="pb-10">
         {effectiveSubTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="dashboard" activeContractCode={activeContractCode} />}
         {effectiveSubTab === 'profissionais' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="profissionais" activeContractCode={activeContractCode} />}
-        {effectiveSubTab === 'planejamento' && <Atividades currentUser={currentUser} preloadedData={preloadedData} showAllDisciplines filtersAlwaysVisible disciplineFilterEnabled={false} />}
+        {effectiveSubTab === 'planejamento' && (
+          <div className="space-y-3">
+            <Atividades
+              currentUser={currentUser}
+              preloadedData={preloadedData}
+              showAllDisciplines
+              isHeaderFiltersOpen={showPlanejamentoFilters}
+              onCloseHeaderFilters={() => setShowPlanejamentoFilters(false)}
+              disciplineFilterEnabled
+            />
+          </div>
+        )}
         {effectiveSubTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
         {effectiveSubTab === 'cronograma' && <Cronograma preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
       </div>

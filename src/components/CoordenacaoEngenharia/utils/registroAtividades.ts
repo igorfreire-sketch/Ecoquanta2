@@ -34,7 +34,16 @@ export function getRegistroActivities(registro: any) {
   const activitiesList = Array.isArray(registro?.activitiesList) ? registro.activitiesList : [];
   const activeActivities = Array.isArray(registro?.activeActivities) ? registro.activeActivities : [];
   const completedActivities = Array.isArray(registro?.completedActivities) ? registro.completedActivities : [];
-  const source = activitiesList.length > 0 ? activitiesList : [...activeActivities, ...completedActivities];
+  const alternateActivities = Array.isArray(registro?.activities)
+    ? registro.activities
+    : Array.isArray(registro?.atividades)
+      ? registro.atividades
+      : [];
+  const source = activitiesList.length > 0
+    ? activitiesList
+    : activeActivities.length + completedActivities.length > 0
+      ? [...activeActivities, ...completedActivities]
+      : alternateActivities;
 
   const seen = new Set<string>();
   return source.filter((activity: any, index: number) => {
@@ -132,7 +141,8 @@ export function extractParticipantAssignments(activity: any, maps: DisciplineMap
 }
 
 export function getRegistroContractOptions(registro: any) {
-  const fromRegistro = Array.isArray(registro?.contracts) ? registro.contracts : [];
+  const sourceRegistro = registro?.eap?.data?.registro || registro?.eap?.registro || registro || {};
+  const fromRegistro = Array.isArray(sourceRegistro?.contracts) ? sourceRegistro.contracts : [];
   const map = new Map<string, { codigo: string; nome: string }>();
 
   fromRegistro.forEach((item: any) => {
@@ -147,7 +157,8 @@ export function getRegistroContractOptions(registro: any) {
 export function getRegistroOsOptions(registro: any, contrato: string) {
   const target = normalizeText(contrato);
   const map = new Map<string, string>();
-  const fromRegistro = Array.isArray(registro?.osOptions) ? registro.osOptions : [];
+  const sourceRegistro = registro?.eap?.data?.registro || registro?.eap?.registro || registro || {};
+  const fromRegistro = Array.isArray(sourceRegistro?.osOptions) ? sourceRegistro.osOptions : [];
 
   fromRegistro
     .filter((item: any) => {

@@ -117,6 +117,82 @@ function buildSectorOptions(preloadedData: EmergenciaCenterProps['preloadedData'
   return Array.from(new Set([...fromAdmin, ...fromActivities, ...fromUser].map((item) => String(item || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 }
 
+function compareHierarchyCodes(a: string, b: string) {
+  const aParts = String(a || '').split('.').map((part) => Number(part.replace(/\D/g, '')) || 0);
+  const bParts = String(b || '').split('.').map((part) => Number(part.replace(/\D/g, '')) || 0);
+  const maxLength = Math.max(aParts.length, bParts.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const diff = (aParts[index] || 0) - (bParts[index] || 0);
+    if (diff !== 0) return diff;
+  }
+
+  return a.localeCompare(b, 'pt-BR');
+}
+
+function buildContractOptions(preloadedData: EmergenciaCenterProps['preloadedData'], activities: ActiveActivity[]) {
+  const map = new Map<string, { codigo: string; nome: string }>();
+  const registryContracts = Array.isArray(preloadedData?.registro?.contracts) ? preloadedData.registro.contracts : [];
+
+  registryContracts.forEach((item: any) => {
+    const codigo = String(item?.codigo || item?.code || item?.id || '').trim();
+    if (!codigo) return;
+    const nome = String(item?.nome || item?.name || codigo).trim();
+    const key = normalizeText(codigo);
+    if (!map.has(key)) {
+      map.set(key, { codigo, nome: nome || codigo });
+    }
+  });
+
+  if (map.size === 0) {
+    activities.forEach((item) => {
+      const codigo = String(item.contratoCodigo || '').trim();
+      if (!codigo) return;
+      const nome = String(item.contratoNome || codigo).trim();
+      const key = normalizeText(codigo);
+      if (!map.has(key)) {
+        map.set(key, { codigo, nome: nome || codigo });
+      }
+    });
+  }
+
+  return Array.from(map.values()).sort((first, second) => compareHierarchyCodes(first.codigo, second.codigo));
+}
+
+function buildOsOptions(preloadedData: EmergenciaCenterProps['preloadedData'], activities: ActiveActivity[], selectedContract: string) {
+  const targetContract = normalizeText(selectedContract);
+  const map = new Map<string, { codigo: string; nome: string }>();
+  const registryOsOptions = Array.isArray(preloadedData?.registro?.osOptions) ? preloadedData.registro.osOptions : [];
+
+  registryOsOptions
+    .filter((item: any) => !selectedContract || normalizeText(String(item?.contratoCodigo || item?.contractCode || '')) === targetContract)
+    .forEach((item: any) => {
+      const codigo = String(item?.codigo || item?.code || item?.id || '').trim();
+      if (!codigo) return;
+      const nome = String(item?.nome || item?.name || codigo).trim();
+      const key = normalizeText(codigo);
+      if (!map.has(key)) {
+        map.set(key, { codigo, nome: nome || codigo });
+      }
+    });
+
+  if (map.size === 0) {
+    activities
+      .filter((item) => !selectedContract || item.contratoCodigo === selectedContract)
+      .forEach((item) => {
+        const codigo = String(item.osCodigo || '').trim();
+        if (!codigo) return;
+        const nome = String(item.osNome || codigo).trim();
+        const key = normalizeText(codigo);
+        if (!map.has(key)) {
+          map.set(key, { codigo, nome: nome || codigo });
+        }
+      });
+  }
+
+  return Array.from(map.values()).sort((first, second) => compareHierarchyCodes(first.codigo, second.codigo));
+}
+
 function getUnreadEmergencyIds(data: EmergencyPayload, sector: string) {
   return data.emergencies
     .filter((item) => isEmergencyUnreadForSector(item, data.readMarkers, sector))
@@ -157,6 +233,10 @@ export default function EmergenciaCenter({
   const sectorOptions = useMemo(
     () => buildSectorOptions(preloadedData, currentUser, activities),
     [activities, currentUser, preloadedData]
+  );
+  const contractOptions = useMemo(
+    () => buildContractOptions(preloadedData, activities),
+    [activities, preloadedData]
   );
 
   useEffect(() => {
@@ -203,14 +283,10 @@ export default function EmergenciaCenter({
     });
   }, [activities, searchText, selectedContract, selectedOs, selectedDisciplina]);
 
-  const osOptions = useMemo(() => {
-    return Array.from(new Set(
-      activities
-        .filter((item) => !selectedContract || item.contratoCodigo === selectedContract)
-        .map((item) => item.osCodigo)
-        .filter(Boolean)
-    ));
-  }, [activities, selectedContract]);
+  const osOptions = useMemo(
+    () => buildOsOptions(preloadedData, activities, selectedContract),
+    [activities, preloadedData, selectedContract]
+  );
 
   const disciplinaOptions = useMemo(() => {
     return Array.from<string>(new Set(activities.map((item) => String(item.disciplina || '')).filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -343,14 +419,11 @@ export default function EmergenciaCenter({
                 className="h-11 rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] px-4 text-[13px] outline-none focus:border-[#F05D28] disabled:bg-[#F3F4F6]"
               >
                 <option value="">Todos os contratos</option>
-                {Array.from(new Set(activities.map((item) => item.contratoCodigo))).filter(Boolean).map((contractCode) => {
-                  const activity = activities.find((item) => item.contratoCodigo === contractCode);
-                  return (
-                    <option key={contractCode} value={contractCode}>
-                      {contractCode} - {activity?.contratoNome || contractCode}
-                    </option>
-                  );
-                })}
+                {contractOptions.map((contract) => (
+                  <option key={contract.codigo} value={contract.codigo}>
+                    {contract.nome || contract.codigo}
+                  </option>
+                ))}
               </select>
               <select
                 value={selectedOs}
@@ -358,14 +431,11 @@ export default function EmergenciaCenter({
                 className="h-11 rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] px-4 text-[13px] outline-none focus:border-[#F05D28]"
               >
                 <option value="">Todas as OS</option>
-                {osOptions.map((osCode) => {
-                  const activity = activities.find((item) => item.osCodigo === osCode);
-                  return (
-                    <option key={osCode} value={osCode}>
-                      {osCode} - {activity?.osNome || osCode}
-                    </option>
-                  );
-                })}
+                {osOptions.map((os) => (
+                  <option key={os.codigo} value={os.codigo}>
+                    {os.nome || os.codigo}
+                  </option>
+                ))}
               </select>
               <select
                 value={selectedDisciplina}

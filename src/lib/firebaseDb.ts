@@ -50,6 +50,7 @@ interface RegistroDataResponse {
   contracts: any[];
   osOptions: any[];
   itemOptions: any[];
+  lodOptions?: any[];
   hierarchyNodes?: any[];
   childrenByParent?: Record<string, any[]>;
   rootCodes?: string[];
@@ -61,7 +62,9 @@ interface RegistroDataResponse {
 }
 
 interface NewActivityDraftLike {
-  contratoCodigo: string;
+  contratoCodigo?: string;
+  contractCode?: string;
+  osCode?: string;
   contratoNome: string;
   osCodigo: string;
   osNome: string;
@@ -98,6 +101,7 @@ const EMPTY_REGISTRO_RESPONSE: RegistroDataResponse = {
   contracts: [],
   osOptions: [],
   itemOptions: [],
+  lodOptions: [],
   hierarchyNodes: [],
   childrenByParent: {},
   rootCodes: [],
@@ -250,11 +254,26 @@ function isLeadershipOrAdmin(user: AuthUserLike) {
   return ['lider', 'coorden', 'geren', 'diretor', 'gestor', 'supervisor'].some((keyword) => role.includes(keyword));
 }
 
+function getHierarchyPrefix(value: any, depth: number) {
+  const cleaned = String(value || '').trim();
+  if (!cleaned) return '';
+  const parts = cleaned.split('.').map((part) => String(part || '').trim()).filter(Boolean);
+  if (parts.length <= depth) return cleaned;
+  return parts.slice(0, depth).join('.');
+}
+
+function isLeafActivityCode(value: any) {
+  const cleaned = String(value || '').trim();
+  if (!cleaned) return false;
+  return cleaned.split('.').map((part) => String(part || '').trim()).filter(Boolean).length >= 3;
+}
+
 function activityMatchesUser(activity: any, user: AuthUserLike, professionals: any[]) {
   if (isLeadershipOrAdmin(user)) return true;
 
-  const userContract = String(user.contrato || '').trim();
-  if (userContract && String(activity?.contratoCodigo || '').trim() !== userContract) return false;
+  const userContract = getHierarchyPrefix(user.contrato || '', 1);
+  const activityContract = getHierarchyPrefix(activity?.contratoCodigo || activity?.contractCode || activity?.osCodigo || activity?.itemCodigo || activity?.origemItem || '', 1);
+  if (userContract && activityContract !== userContract) return false;
 
   const userDisciplines = getUserDisciplineList(user).map((item) => normalizeDiscipline(item)).filter(Boolean);
   if (!userDisciplines.length) return true;
@@ -304,6 +323,18 @@ async function getAppDataDoc<T>(dbRef: Firestore, name: string): Promise<T | nul
     return JSON.parse(payload.dataJson) as T;
   }
   return ((payload.data && typeof payload.data === 'object') ? payload.data : payload) as T;
+}
+
+export async function fetchFirebaseAppData<T = any>(name: string): Promise<T | null> {
+  try {
+    if (!isFirebaseConfigured()) return null;
+    await ensureFirebaseAuth();
+    const dbRef = getDb();
+    return await getAppDataDoc<T>(dbRef, name);
+  } catch (error) {
+    console.error(`❌ Erro ao fetch appData/${name}:`, error);
+    return null;
+  }
 }
 
 async function readChunkedAppData(dbRef: Firestore, name: string, chunkCount: number) {
@@ -434,8 +465,15 @@ export async function fetchEapDataFromFirebase(): Promise<any> {
     if (!isFirebaseConfigured()) return null;
     await ensureFirebaseAuth();
     const dbRef = getDb();
-    const eapData = await getAppDataDoc<any>(dbRef, 'eap');
-    return eapData || null;
+    const [eapData, curvaSReajustado] = await Promise.all([
+      getAppDataDoc<any>(dbRef, 'eap'),
+      getAppDataDoc<any>(dbRef, 'curvaSReajustado'),
+    ]);
+    if (!eapData) return null;
+
+    return Array.isArray(curvaSReajustado?.reajustado)
+      ? { ...eapData, reajustado: curvaSReajustado.reajustado }
+      : eapData;
   } catch (error) {
     console.error('❌ Erro ao fetch EAP data:', error);
     return null;
@@ -527,7 +565,13 @@ export async function registerActivitiesInFirebase(user: AuthUserLike, activitie
   await ensureFirebaseAuth();
   const dbRef = getDb();
   const validActivities = activities.filter((item) => (
-    item.contratoCodigo && item.osCodigo && item.itemCodigo && item.descricao && item.descricao.length >= 50 && item.profissionaisEmails?.length
+    (item.contratoCodigo || item.contractCode) &&
+    item.osCodigo &&
+    item.itemCodigo &&
+    isLeafActivityCode(item.itemCodigo) &&
+    item.descricao &&
+    item.descricao.length >= 50 &&
+    item.profissionaisEmails?.length
   ));
 
   if (!validActivities.length) return { success: false, error: 'Nenhuma atividade valida para registrar.' };
@@ -551,6 +595,8 @@ export async function registerActivitiesInFirebase(user: AuthUserLike, activitie
     const nowStr = nowPtBr();
     const avancoInicial = Math.max(0, Math.min(100, Number(item.avancoInicial || 0)));
     const status = avancoInicial === 100 ? 'aguardando_conclusao' : 'em_andamento';
+    const contractCode = getHierarchyPrefix(item.contratoCodigo || item.contractCode || '', 1);
+    const osCode = getHierarchyPrefix(item.osCodigo || item.osCode || '', 2);
 
     rowsToSave.push({
       activityId,
@@ -559,9 +605,9 @@ export async function registerActivitiesInFirebase(user: AuthUserLike, activitie
       criadoPorEmail: normalizeEmail(user.email),
       criadoPorRole: user.role || '',
       criadoPorDisciplina: user.disciplina || '',
-      contratoCodigo: item.contratoCodigo,
+      contratoCodigo: contractCode,
       contratoNome: item.contratoNome,
-      osCodigo: item.osCodigo,
+      osCodigo: osCode,
       osNome: item.osNome,
       itemCodigo,
       itemNome: item.itemNome,
@@ -698,6 +744,21 @@ export async function upsertFirebaseAppData(name: string, data: any) {
     data,
     updatedAt: serverTimestamp(),
   }, { merge: true });
+}
+
+export async function hashPasswordLikeAppsScript(password: string) {
+  const normalized = String(password || '');
+  const encoder = new TextEncoder();
+  const buffer = encoder.encode(normalized);
+
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('Criptografia indisponivel no navegador.');
+  }
+
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);
+  const bytes = Array.from(new Uint8Array(digest));
+  const hex = bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `sha256:${hex}`;
 }
 
 export async function updateFirebaseRegistroActivity(activityId: string, patch: Record<string, unknown>) {

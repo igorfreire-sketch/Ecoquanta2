@@ -11,6 +11,7 @@ function clearOutdatedClientCaches() {
   try {
     localStorage.removeItem('quanta_global_data_cache');
     localStorage.removeItem('curvasAppData');
+    sessionStorage.removeItem('curvasAppData');
 
     Object.keys(localStorage).forEach((key) => {
       if (key.startsWith('quanta_registro_atividade_cache_')) {

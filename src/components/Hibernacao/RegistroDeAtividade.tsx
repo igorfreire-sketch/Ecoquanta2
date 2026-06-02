@@ -1188,7 +1188,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
               <label className="bentham-label">1. CONTRATO</label>
               <select className="bentham-select" value={formData.contratoCodigo} disabled={Boolean(String(currentUser.contrato || '').trim())} onChange={(e) => setFormData((prev) => ({ ...prev, contratoCodigo: e.target.value, osCodigo: '', itemCodigo: '', todoId: '' }))}>
                 <option value="">{String(currentUser.contrato || '').trim() ? 'Contrato fixo' : 'Selecione...'}</option>
-                {contracts.map((item) => (<option key={item.codigo} value={item.codigo}>{item.codigo} - {item.nome}</option>))}
+                {contracts.map((item) => (<option key={item.codigo} value={item.codigo}>{item.nome || item.codigo}</option>))}
               </select>
             </div>
 

@@ -191,9 +191,76 @@ function publishCompressedDataToFirebaseNow() {
   var version = updateVersion_();
   var publishedAt = new Date().toISOString();
   data.latestEapPublishedAt = publishedAt;
+  firestoreCleanupAppData_("menu", buildEapMenuData_(data, publishedAt));
+  firestoreCleanupAppData_("eap", data);
   firestoreSetAppData_("menu", buildEapMenuData_(data, publishedAt));
   firestoreSetAppData_("eap", data);
+  try {
+    publishLoginDataToFirebaseNow();
+  } catch (err) {
+    logAuth_(ss, 'ERROR', 'publishLoginDataToFirebaseNow falhou', String(err));
+  }
   return "EAP publicada no Firebase. Versao: " + version;
+}
+
+function buildLoginFirebaseData_(ss) {
+  var sheet = getOrCreateLoginSheet_(ss);
+  var header = getHeaderMapSafe_(sheet);
+  var values = sheet.getDataRange().getValues();
+  var users = [];
+  var usersByEmail = {};
+
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    var user = normalizeUserResponse_(row, header);
+    var email = normalizeEmail_(user.email);
+    if (!email) continue;
+
+    var passwordHash = String(row[header.passwordhash] || '').trim();
+    var resetCode = String(row[header.resetcode] || '').trim();
+    var resetExpires = Number(row[header.resetexpires] || 0);
+    var lastSeen = Number(row[header.lastseen] || 0);
+
+    var authUser = {
+      id: email,
+      nome: user.nome,
+      email: user.email,
+      cargo: user.cargo,
+      role: user.role,
+      disciplina: user.disciplina,
+      disciplinas: user.disciplinas,
+      contrato: user.contrato,
+      contract: user.contract,
+      status: user.status,
+      alocacao: user.alocacao,
+      allowedTabs: user.allowedTabs,
+      abas: user.abas,
+      isAdmin: user.isAdmin,
+      online: user.online,
+      sessionVersion: user.sessionVersion,
+      passwordHash: passwordHash,
+      resetCode: resetCode,
+      resetExpires: resetExpires,
+      lastSeen: lastSeen,
+      onlyThirdParty: false,
+      showInCharts: true
+    };
+
+    users.push(authUser);
+    usersByEmail[email] = authUser;
+  }
+
+  return {
+    source: "EAPunificada",
+    publishedAt: new Date().toISOString(),
+    users: users,
+    usersByEmail: usersByEmail
+  };
+}
+
+function publishLoginDataToFirebaseNow() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  firestoreSetAppData_("auth", buildLoginFirebaseData_(ss));
 }
 
 function syncAllPublicJsonNow() {
@@ -428,8 +495,376 @@ function doPost(e) {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var payload = JSON.parse(e.postData.contents);
+    var action = String(payload.action || '').trim();
 
-    if (payload.action === 'scheduleCompressedDataPublicJson') {
+    if (action === 'heartbeat') {
+      var hbEmail = normalizeEmail_(payload.email);
+      if (!hbEmail) {
+        return json_({
+          success: false,
+          error: 'E-mail invalido.'
+        });
+      }
+
+      var hbSheet = getOrCreateLoginSheet_(ss);
+      var hbHeader = getHeaderMapSafe_(hbSheet);
+      var hbValues = hbSheet.getDataRange().getValues();
+      var hbIndex = findUserRowByEmail_(hbValues, hbHeader, hbEmail);
+
+      if (hbIndex >= 0) {
+        setLoginRowPatch_(hbSheet, hbIndex + 1, hbHeader, {
+          lastseen: Date.now()
+        });
+        publishLoginDataToFirebaseNow();
+      }
+
+      return json_({
+        success: true,
+        sessionVersion: hbIndex >= 0 ? String(hbValues[hbIndex][hbHeader.sessionversion] || '') : ''
+      });
+    }
+
+    if (action === 'registerUser') {
+      var regName = String(payload.name || '').trim();
+      var regEmail = normalizeEmail_(payload.email);
+      var regPassword = String(payload.password || '');
+      var regSheet = getOrCreateLoginSheet_(ss);
+      var regHeader = getHeaderMapSafe_(regSheet);
+      var regValues = regSheet.getDataRange().getValues();
+
+      if (!regName) {
+        return json_({ success: false, error: 'Informe o nome.' });
+      }
+
+      if (!regEmail) {
+        return json_({ success: false, error: 'E-mail invalido.' });
+      }
+
+      if (regPassword.length < 6) {
+        return json_({ success: false, error: 'Senha muito curta (min. 6).' });
+      }
+
+      if (findUserRowByEmail_(regValues, regHeader, regEmail) >= 0) {
+        return json_({ success: false, error: 'Este e-mail ja esta cadastrado.' });
+      }
+
+      var regRow = newEmptyLoginRow_(regHeader);
+      var regApproved = isCorporateEmail_(regEmail);
+
+      regRow[regHeader.data] = new Date().toLocaleString('pt-BR');
+      regRow[regHeader.nome] = regName;
+      regRow[regHeader.email] = regEmail;
+      regRow[regHeader.role] = '';
+      regRow[regHeader.disciplina] = '';
+      regRow[regHeader.status] = regApproved ? 'approved' : 'pending';
+      regRow[regHeader.alocacao] = '';
+      regRow[regHeader.contrato] = '';
+      regRow[regHeader.abas] = '';
+      regRow[regHeader.passwordhash] = makePasswordHash_(regPassword);
+      regRow[regHeader.resetcode] = '';
+      regRow[regHeader.resetexpires] = '';
+      regRow[regHeader.isadmin] = 'false';
+      regRow[regHeader.lastseen] = '';
+      regRow[regHeader.sessionversion] = newSessionVersion_();
+
+      regSheet.appendRow(regRow);
+      publishLoginDataToFirebaseNow();
+      logAuth_(ss, 'INFO', 'registerUser ok', regEmail);
+      return json_({
+        success: true,
+        message: regApproved
+          ? 'Acesso liberado! Entre com suas credenciais.'
+          : 'Cadastro realizado com sucesso. Aguarde aprovacao.'
+      });
+    }
+
+    if (action === 'authUser') {
+      var authEmail = normalizeEmail_(payload.email);
+      var authPassword = String(payload.password || '');
+      var authSheet = getOrCreateLoginSheet_(ss);
+      var authHeader = getHeaderMapSafe_(authSheet);
+      var authValues = authSheet.getDataRange().getValues();
+
+      if (!authEmail || !authPassword) {
+        return json_({ success: false, error: 'Informe e-mail e senha.' });
+      }
+
+      var authIndex = findUserRowByEmail_(authValues, authHeader, authEmail);
+      if (authIndex < 0) {
+        logAuth_(ss, 'WARN', 'authUser email nao encontrado', authEmail);
+        return json_({ success: false, error: 'E-mail ou senha invalidos.' });
+      }
+
+      var authRow = authValues[authIndex];
+      var storedHash = String(authRow[authHeader.passwordhash] || '').trim();
+      var authStatus = String(authRow[authHeader.status] || '').trim().toLowerCase();
+
+      if (!storedHash) {
+        logAuth_(ss, 'ERROR', 'authUser sem PasswordHash', authEmail);
+        return json_({ success: false, error: 'Conta invalida (senha nao cadastrada).' });
+      }
+
+      if (!verifyPassword_(authPassword, storedHash)) {
+        logAuth_(ss, 'WARN', 'authUser senha invalida', authEmail);
+        return json_({ success: false, error: 'E-mail ou senha invalidos.' });
+      }
+
+      if (authStatus === 'pending') {
+        return json_({ success: false, error: 'Seu cadastro ainda esta aguardando aprovacao do administrador.' });
+      }
+
+      if (authStatus === 'blocked') {
+        return json_({ success: false, error: 'Seu acesso esta bloqueado. Procure um administrador.' });
+      }
+
+      var authSessionVersion = String(authRow[authHeader.sessionversion] || '').trim();
+      if (!authSessionVersion) {
+        authSessionVersion = newSessionVersion_();
+        setLoginRowPatch_(authSheet, authIndex + 1, authHeader, {
+          sessionversion: authSessionVersion
+        });
+        authRow[authHeader.sessionversion] = authSessionVersion;
+      }
+
+      setLoginRowPatch_(authSheet, authIndex + 1, authHeader, {
+        lastseen: Date.now()
+      });
+      publishLoginDataToFirebaseNow();
+
+      var user = normalizeUserResponse_(authRow, authHeader);
+      logAuth_(ss, 'INFO', 'authUser ok', authEmail);
+      return json_({
+        success: true,
+        user: user
+      });
+    }
+
+    if (action === 'forgotPassword') {
+      var forgotEmail = normalizeEmail_(payload.email);
+      if (!forgotEmail) {
+        return json_({ success: false, error: 'E-mail invalido.' });
+      }
+
+      var forgotSheet = getOrCreateLoginSheet_(ss);
+      var forgotHeader = getHeaderMapSafe_(forgotSheet);
+      var forgotValues = forgotSheet.getDataRange().getValues();
+      var forgotIndex = findUserRowByEmail_(forgotValues, forgotHeader, forgotEmail);
+
+      if (forgotIndex < 0) {
+        return json_({ success: true });
+      }
+
+      var resetCode = randomCode_(6);
+      var resetExpires = Date.now() + 15 * 60 * 1000;
+      setLoginRowPatch_(forgotSheet, forgotIndex + 1, forgotHeader, {
+        resetcode: resetCode,
+        resetexpires: resetExpires
+      });
+      publishLoginDataToFirebaseNow();
+
+      try {
+        sendResetCodeEmail_(forgotEmail, resetCode, 15);
+      } catch (mailErr) {
+        logAuth_(ss, 'ERROR', 'forgotPassword falha MailApp', String(mailErr));
+        return json_({
+          success: false,
+          error: 'Falha ao enviar e-mail. Verifique as permissoes do Apps Script.'
+        });
+      }
+
+      logAuth_(ss, 'INFO', 'forgotPassword code enviado', forgotEmail);
+      return json_({ success: true });
+    }
+
+    if (action === 'resetPassword') {
+      var resetEmail = normalizeEmail_(payload.email);
+      var resetCodeIn = String(payload.code || '').trim();
+      var resetNewPassword = String(payload.newPassword || '');
+      var resetSheet = getOrCreateLoginSheet_(ss);
+      var resetHeader = getHeaderMapSafe_(resetSheet);
+      var resetValues = resetSheet.getDataRange().getValues();
+      var resetIndex = findUserRowByEmail_(resetValues, resetHeader, resetEmail);
+
+      if (!resetEmail) {
+        return json_({ success: false, error: 'E-mail invalido.' });
+      }
+
+      if (!resetCodeIn) {
+        return json_({ success: false, error: 'Informe o codigo.' });
+      }
+
+      if (resetNewPassword.length < 6) {
+        return json_({ success: false, error: 'Senha muito curta (min. 6).' });
+      }
+
+      if (resetIndex < 0) {
+        return json_({ success: false, error: 'Codigo invalido.' });
+      }
+
+      var resetRow = resetValues[resetIndex];
+      var codeStored = String(resetRow[resetHeader.resetcode] || '').trim();
+      var expiresStored = Number(resetRow[resetHeader.resetexpires] || 0);
+
+      if (!codeStored || codeStored !== resetCodeIn) {
+        return json_({ success: false, error: 'Codigo invalido.' });
+      }
+
+      if (!expiresStored || Date.now() > expiresStored) {
+        return json_({ success: false, error: 'Codigo expirado.' });
+      }
+
+      setLoginRowPatch_(resetSheet, resetIndex + 1, resetHeader, {
+        passwordhash: makePasswordHash_(resetNewPassword),
+        resetcode: '',
+        resetexpires: '',
+        lastseen: '',
+        sessionversion: newSessionVersion_()
+      });
+      publishLoginDataToFirebaseNow();
+
+      logAuth_(ss, 'INFO', 'resetPassword ok', resetEmail);
+      return json_({ success: true, message: 'Senha redefinida com sucesso.' });
+    }
+
+    if (action === 'approveUser') {
+      var approveEmail = normalizeEmail_(payload.email);
+      var approveSheet = getOrCreateLoginSheet_(ss);
+      var approveHeader = getHeaderMapSafe_(approveSheet);
+      var approveValues = approveSheet.getDataRange().getValues();
+      var approveIndex = findUserRowByEmail_(approveValues, approveHeader, approveEmail);
+
+      if (!approveEmail) {
+        return json_({ success: false, error: 'E-mail invalido.' });
+      }
+
+      if (approveIndex < 0) {
+        return json_({ success: false, error: 'Usuario nao encontrado.' });
+      }
+
+      var approvePatch = {
+        status: 'approved',
+        lastseen: '',
+        sessionversion: newSessionVersion_()
+      };
+
+      if (payload.name !== undefined) approvePatch.nome = String(payload.name || '');
+      if (payload.role !== undefined) approvePatch.role = String(payload.role || '');
+      if (payload.discipline !== undefined) approvePatch.disciplina = normalizeUserDisciplines_(payload.discipline).join(' | ');
+      if (payload.allowedTabs !== undefined) approvePatch.abas = normalizeAllowedTabs_(payload.allowedTabs);
+      if (payload.allocation !== undefined) approvePatch.alocacao = String(payload.allocation || '');
+      if (payload.contract !== undefined) approvePatch.contrato = String(payload.contract || '');
+      if (payload.isAdmin !== undefined) approvePatch.isadmin = boolToSheet_(payload.isAdmin);
+
+      setLoginRowPatch_(approveSheet, approveIndex + 1, approveHeader, approvePatch);
+      publishLoginDataToFirebaseNow();
+      logAuth_(ss, 'INFO', 'approveUser ok', approveEmail);
+      return json_({ success: true });
+    }
+
+    if (action === 'blockUser') {
+      var blockEmail = normalizeEmail_(payload.email);
+      var blockSheet = getOrCreateLoginSheet_(ss);
+      var blockHeader = getHeaderMapSafe_(blockSheet);
+      var blockValues = blockSheet.getDataRange().getValues();
+      var blockIndex = findUserRowByEmail_(blockValues, blockHeader, blockEmail);
+
+      if (!blockEmail) {
+        return json_({ success: false, error: 'E-mail invalido.' });
+      }
+
+      if (blockIndex < 0) {
+        return json_({ success: false, error: 'Usuario nao encontrado.' });
+      }
+
+      setLoginRowPatch_(blockSheet, blockIndex + 1, blockHeader, {
+        status: 'blocked',
+        lastseen: '',
+        sessionversion: newSessionVersion_()
+      });
+
+      publishLoginDataToFirebaseNow();
+      logAuth_(ss, 'INFO', 'blockUser ok', blockEmail);
+      return json_({ success: true });
+    }
+
+    if (action === 'saveUserAccess') {
+      var saveEmail = normalizeEmail_(payload.email);
+      var saveSheet = getOrCreateLoginSheet_(ss);
+      var saveHeader = getHeaderMapSafe_(saveSheet);
+      var saveValues = saveSheet.getDataRange().getValues();
+      var saveIndex = findUserRowByEmail_(saveValues, saveHeader, saveEmail);
+
+      if (!saveEmail) {
+        return json_({ success: false, error: 'E-mail invalido.' });
+      }
+
+      if (saveIndex < 0) {
+        return json_({ success: false, error: 'Usuario nao encontrado.' });
+      }
+
+      var savePatch = {
+        lastseen: '',
+        sessionversion: newSessionVersion_()
+      };
+
+      if (payload.name !== undefined) savePatch.nome = String(payload.name || '');
+      if (payload.role !== undefined) savePatch.role = String(payload.role || '');
+      if (payload.discipline !== undefined) savePatch.disciplina = normalizeUserDisciplines_(payload.discipline).join(' | ');
+      if (payload.allowedTabs !== undefined) savePatch.abas = normalizeAllowedTabs_(payload.allowedTabs);
+      if (payload.allocation !== undefined) savePatch.alocacao = String(payload.allocation || '');
+      if (payload.contract !== undefined) savePatch.contrato = String(payload.contract || '');
+      if (payload.isAdmin !== undefined) savePatch.isadmin = boolToSheet_(payload.isAdmin);
+      if (payload.status !== undefined) savePatch.status = String(payload.status || 'pending');
+
+      setLoginRowPatch_(saveSheet, saveIndex + 1, saveHeader, savePatch);
+      publishLoginDataToFirebaseNow();
+      logAuth_(ss, 'INFO', 'saveUserAccess ok', saveEmail);
+      return json_({ success: true });
+    }
+
+    if (action === 'adminResetPassword') {
+      var adminResetEmail = normalizeEmail_(payload.email);
+      var adminResetSheet = getOrCreateLoginSheet_(ss);
+      var adminResetHeader = getHeaderMapSafe_(adminResetSheet);
+      var adminResetValues = adminResetSheet.getDataRange().getValues();
+      var adminResetIndex = findUserRowByEmail_(adminResetValues, adminResetHeader, adminResetEmail);
+
+      if (!adminResetEmail) {
+        return json_({ success: false, error: 'E-mail invalido.' });
+      }
+
+      if (adminResetIndex < 0) {
+        return json_({ success: false, error: 'Usuario nao encontrado.' });
+      }
+
+      var tempPassword = randomTemporaryPassword_();
+      setLoginRowPatch_(adminResetSheet, adminResetIndex + 1, adminResetHeader, {
+        passwordhash: makePasswordHash_(tempPassword),
+        resetcode: '',
+        resetexpires: '',
+        lastseen: '',
+        sessionversion: newSessionVersion_()
+      });
+
+      try {
+        sendAdminTemporaryPasswordEmail_(adminResetEmail, tempPassword);
+      } catch (mailErr2) {
+        logAuth_(ss, 'ERROR', 'adminResetPassword falha MailApp', String(mailErr2));
+        return json_({
+          success: false,
+          error: 'Falha ao enviar senha temporaria por e-mail.'
+        });
+      }
+
+      publishLoginDataToFirebaseNow();
+      logAuth_(ss, 'INFO', 'adminResetPassword ok', adminResetEmail);
+      return json_({
+        success: true,
+        message: 'Senha temporaria enviada por e-mail.'
+      });
+    }
+
+    if (action === 'scheduleCompressedDataPublicJson') {
       scheduleCompressedDataPublicJson();
       return json_({
         success: true,
@@ -523,6 +958,11 @@ function getCompressedData_(ss) {
       mode: 'rle-ranges',
       repeatedMonths: 'stored_as_single_range_and_expanded_by_site'
     },
+    curvaS: {
+      atual: [],
+      dates: [],
+      timeline: {}
+    },
     reajustado: [],
     latestEapSheet: '',
     latestEapDate: '',
@@ -531,6 +971,7 @@ function getCompressedData_(ss) {
       contracts: [],
       osOptions: [],
       itemOptions: [],
+      lodOptions: [],
       hierarchyNodes: [],
       childrenByParent: {},
       rootCodes: []
@@ -552,26 +993,45 @@ function getCompressedData_(ss) {
       var values = sh.getDataRange().getValues();
       var displayValues = sh.getDataRange().getDisplayValues();
 
-      for (var r = 1; r < values.length; r++) {
-        var itemCode = String(displayValues[r][3] || values[r][3] || '').trim(); // Coluna D
-        var itemName = String(displayValues[r][4] || values[r][4] || '').trim(); // Coluna E
+    for (var r = 1; r < values.length; r++) {
+      var itemCode = String(displayValues[r][3] || values[r][3] || '').trim(); // Coluna D
+      var itemName = String(displayValues[r][4] || values[r][4] || '').trim(); // Coluna E
+      var itemDiscipline = String(displayValues[r][14] || values[r][14] || '').trim(); // Coluna O
+      var itemPlannedStart = normalizeSheetDate_(values[r][11]); // Coluna L - Inicio
+      var itemPlannedEnd = normalizeSheetDate_(values[r][12]); // Coluna M - Término
+      if (isLodItemName_(itemName) && !hasExplicitDiscipline_(splitDisciplines_(itemDiscipline))) {
+        itemDiscipline = 'Ignorado';
+      }
 
-        if (!itemCode || !isOsItemName_(itemName)) {
-          continue;
-        }
+      if (itemCode && isOsItemName_(itemName)) {
+        out.curvaS.atual.push([
+          itemCode,
+          itemName,
+          values[r][2],
+          values[r][5],
+          formatIfDate_(values[r][6]),
+          formatIfDate_(values[r][7]),
+          values[r][9],
+          formatIfDate_(values[r][11]),
+          formatIfDate_(values[r][12])
+        ]);
+      }
+
+      if (!itemCode || !isLodItemName_(itemName) || !hasExplicitDiscipline_(splitDisciplines_(itemDiscipline)) || !itemPlannedStart || !itemPlannedEnd || itemPlannedStart > itemPlannedEnd) {
+        continue;
+      }
 
         // Estrutura compacta mantida para o app:
-        // [code, name, progress, duration, pStart, pEnd, idealProg, lDate, mDate]
+        // [code, name, progress, duration, start, end, idealProg, discipline]
         out.atual.push([
           itemCode,
           itemName,
           values[r][2],                 // Coluna C - Real / Progresso atual
           values[r][5],                 // Coluna F - Duracao
-          formatIfDate_(values[r][6]),  // Coluna G - Inicio planejado
-          formatIfDate_(values[r][7]),  // Coluna H - Fim planejado
-          values[r][9],                 // Coluna J - Ideal
-          formatIfDate_(values[r][11]), // Coluna L
-          formatIfDate_(values[r][12])  // Coluna M
+          itemPlannedStart,             // Coluna L - Inicio
+          itemPlannedEnd,               // Coluna M - Término
+          values[r][13],                // Coluna N - Porcentagem ideal
+          itemDiscipline // Coluna O - Disciplina
         ]);
       }
     }
@@ -579,6 +1039,7 @@ function getCompressedData_(ss) {
     else if (isDateSheetName_(name)) {
       snapshotSheets.push({
         name: name,
+        date: normalizeSheetNameDate_(name),
         sheet: sh
       });
     }
@@ -600,6 +1061,32 @@ function getCompressedData_(ss) {
 
   // Se a aba "Atual" nao existir ou nao tiver OS validas, usa o snapshot mais recente
   // como base para montar a lista principal da Curva S.
+  if (out.curvaS.atual.length === 0 && snapshotSheets.length > 0) {
+    var latestCurvaValues = snapshotSheets[snapshotSheets.length - 1].sheet.getDataRange().getValues();
+    var latestCurvaDisplayValues = snapshotSheets[snapshotSheets.length - 1].sheet.getDataRange().getDisplayValues();
+
+    for (var cr = 1; cr < latestCurvaValues.length; cr++) {
+      var latestOsCode = String(latestCurvaDisplayValues[cr][3] || latestCurvaValues[cr][3] || '').trim();
+      var latestOsName = String(latestCurvaDisplayValues[cr][4] || latestCurvaValues[cr][4] || '').trim();
+
+      if (!latestOsCode || !isOsItemName_(latestOsName)) {
+        continue;
+      }
+
+      out.curvaS.atual.push([
+        latestOsCode,
+        latestOsName,
+        latestCurvaValues[cr][2],
+        latestCurvaValues[cr][5],
+        formatIfDate_(latestCurvaValues[cr][6]),
+        formatIfDate_(latestCurvaValues[cr][7]),
+        latestCurvaValues[cr][9],
+        formatIfDate_(latestCurvaValues[cr][11]),
+        formatIfDate_(latestCurvaValues[cr][12])
+      ]);
+    }
+  }
+
   if (out.atual.length === 0 && snapshotSheets.length > 0) {
     var latestValues = snapshotSheets[snapshotSheets.length - 1].sheet.getDataRange().getValues();
     var latestDisplayValues = snapshotSheets[snapshotSheets.length - 1].sheet.getDataRange().getDisplayValues();
@@ -607,8 +1094,14 @@ function getCompressedData_(ss) {
     for (var ar = 1; ar < latestValues.length; ar++) {
       var latestItemCode = String(latestDisplayValues[ar][3] || latestValues[ar][3] || '').trim(); // Coluna D
       var latestItemName = String(latestDisplayValues[ar][4] || latestValues[ar][4] || '').trim(); // Coluna E
+      var latestItemDiscipline = String(latestDisplayValues[ar][14] || latestValues[ar][14] || '').trim(); // Coluna O
+      var latestItemPlannedStart = normalizeSheetDate_(latestValues[ar][11]); // Coluna L - Inicio
+      var latestItemPlannedEnd = normalizeSheetDate_(latestValues[ar][12]); // Coluna M - Término
+      if (isLodItemName_(latestItemName) && !hasExplicitDiscipline_(splitDisciplines_(latestItemDiscipline))) {
+        latestItemDiscipline = 'Ignorado';
+      }
 
-      if (!latestItemCode || !isOsItemName_(latestItemName)) {
+      if (!latestItemCode || !isLodItemName_(latestItemName) || !hasExplicitDiscipline_(splitDisciplines_(latestItemDiscipline)) || !latestItemPlannedStart || !latestItemPlannedEnd || latestItemPlannedStart > latestItemPlannedEnd) {
         continue;
       }
 
@@ -617,21 +1110,21 @@ function getCompressedData_(ss) {
         latestItemName,
         latestValues[ar][2],                 // Coluna C - Real / Progresso atual
         latestValues[ar][5],                 // Coluna F - Duracao
-        formatIfDate_(latestValues[ar][6]),  // Coluna G - Inicio planejado
-        formatIfDate_(latestValues[ar][7]),  // Coluna H - Fim planejado
-        latestValues[ar][9],                 // Coluna J - Ideal
-        formatIfDate_(latestValues[ar][11]), // Coluna L
-        formatIfDate_(latestValues[ar][12])  // Coluna M
+        latestItemPlannedStart,              // Coluna L - Inicio
+        latestItemPlannedEnd,                // Coluna M - Término
+        latestValues[ar][13],                // Coluna N - Porcentagem ideal
+        latestItemDiscipline // Coluna O - Disciplina
       ]);
     }
   }
 
   var dates = [];
   var tempMap = {};
+  var curvaSTempMap = {};
 
   // Cada aba com nome de data representa um snapshot da Curva S.
   for (var s = 0; s < snapshotSheets.length; s++) {
-    dates.push(snapshotSheets[s].name);
+    dates.push(snapshotSheets[s].date);
 
     var sValues = snapshotSheets[s].sheet.getDataRange().getValues();
     var sDisplayValues = snapshotSheets[s].sheet.getDataRange().getDisplayValues();
@@ -640,7 +1133,18 @@ function getCompressedData_(ss) {
       var osCode = String(sDisplayValues[rs][3] || sValues[rs][3] || '').trim(); // Coluna D
       var osName = String(sDisplayValues[rs][4] || sValues[rs][4] || '').trim(); // Coluna E
 
-      if (!osCode || !isOsItemName_(osName)) {
+      if (osCode && isOsItemName_(osName)) {
+        if (!curvaSTempMap[osCode]) {
+          curvaSTempMap[osCode] = [];
+        }
+
+        curvaSTempMap[osCode][s] = {
+          r: sValues[rs][2],
+          i: sValues[rs][9]
+        };
+      }
+
+      if (!osCode || !isLodItemName_(osName)) {
         continue;
       }
 
@@ -650,12 +1154,13 @@ function getCompressedData_(ss) {
 
       tempMap[osCode][s] = {
         r: sValues[rs][2], // Coluna C - Real
-        i: sValues[rs][9]  // Coluna J - Ideal
+        i: sValues[rs][13]  // Coluna N - Ideal
       };
     }
   }
 
   out.dates = dates;
+  out.curvaS.dates = dates;
 
   // Compactacao RLE:
   // Se Real e Ideal forem iguais em datas consecutivas,
@@ -696,7 +1201,31 @@ function getCompressedData_(ss) {
     }
   }
 
+  out.curvaS.timeline = buildSnapshotTimelineMap_(curvaSTempMap, dates);
+
   return out;
+}
+
+// A Curva S precisa manter uma fotografia explicita por aba datada.
+// Nao compactamos pontos iguais: o nome de cada aba representa a data-base.
+function buildSnapshotTimelineMap_(tempMap, dates) {
+  var timeline = {};
+
+  for (var code in tempMap) {
+    var runs = [];
+
+    for (var d = 0; d < dates.length; d++) {
+      var pt = tempMap[code][d];
+      if (!pt) continue;
+      runs.push([d, d, pt.r, pt.i]);
+    }
+
+    if (runs.length > 0) {
+      timeline[code] = runs;
+    }
+  }
+
+  return timeline;
 }
 
 function buildEapMenuData_(data, publishedAt) {
@@ -716,6 +1245,7 @@ function buildEapMenuData_(data, publishedAt) {
       contracts: Array.isArray(registro.contracts) ? registro.contracts : [],
       osOptions: Array.isArray(registro.osOptions) ? registro.osOptions : [],
       itemOptions: Array.isArray(registro.itemOptions) ? registro.itemOptions : [],
+      lodOptions: Array.isArray(registro.lodOptions) ? registro.lodOptions : [],
       hierarchyNodes: Array.isArray(registro.hierarchyNodes) ? registro.hierarchyNodes : [],
       childrenByParent: registro.childrenByParent || {},
       rootCodes: Array.isArray(registro.rootCodes) ? registro.rootCodes : []
@@ -724,11 +1254,21 @@ function buildEapMenuData_(data, publishedAt) {
 }
 
 function getLatestEapSheet_(ss, snapshotSheets) {
-  if (snapshotSheets.length > 0) {
-    return snapshotSheets[snapshotSheets.length - 1].sheet;
+  var sheets = snapshotSheets || [];
+  if (sheets.length === 0) return null;
+
+  var latestSheet = null;
+  var latestDate = -1;
+
+  for (var i = 0; i < sheets.length; i++) {
+    var sheetDate = parseSimpleDate_(sheets[i].name);
+    if (sheetDate >= latestDate) {
+      latestDate = sheetDate;
+      latestSheet = sheets[i].sheet;
+    }
   }
 
-  return null;
+  return latestSheet;
 }
 
 function getLatestPublishedEapSheet_(ss) {
@@ -847,25 +1387,75 @@ function getRawEapRows_(sheet) {
     var nome = String(displayValues[i][4] || values[i][4] || '').trim();
     if (!codigo || !nome) continue;
     var disciplinas = splitDisciplines_(displayValues[i][14] || values[i][14] || '');
+    var isLod = isLodItemName_(nome);
+    var isGeneralLod = isLod && !hasExplicitDiscipline_(disciplinas);
+    var plannedStart = normalizeSheetDate_(values[i][11]);
+    var plannedEnd = normalizeSheetDate_(values[i][12]);
+    if (!plannedStart || !plannedEnd || plannedStart > plannedEnd) continue;
+    if (isGeneralLod) continue;
 
     rows.push({
       progress: toNumberSafe_(values[i][2]),
       code: codigo,
       name: nome,
       duration: toNumberSafe_(values[i][5]),
-      plannedStart: normalizeSheetDate_(values[i][6]),
-      plannedEnd: normalizeSheetDate_(values[i][7]),
+      plannedStart: plannedStart,
+      plannedEnd: plannedEnd,
       predecessor: String(displayValues[i][8] || values[i][8] || '').trim(),
-      idealProgress: toNumberSafe_(values[i][9]),
-      realStart: normalizeSheetDate_(values[i][11]),
-      realEnd: normalizeSheetDate_(values[i][12]),
+      idealProgress: toNumberSafe_(values[i][13]),
+      realStart: plannedStart,
+      realEnd: plannedEnd,
       baselineIdealProgress: toNumberSafe_(values[i][13]),
       disciplina: disciplinas.join(' | '),
-      disciplinas: disciplinas
+      disciplinas: disciplinas,
+      isLod: isLod,
+      isGeneralLod: isGeneralLod
     });
   }
 
   return rows;
+}
+
+function hasExplicitDiscipline_(disciplinas) {
+  if (!Array.isArray(disciplinas) || disciplinas.length === 0) return false;
+
+  for (var i = 0; i < disciplinas.length; i++) {
+    var item = String(disciplinas[i] || '')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .trim();
+    if (!item) continue;
+
+    var normalized = item.normalize
+      ? item.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+      : item.toLowerCase();
+
+    if (!normalized || normalized === 'sem disciplina' || normalized === 'ignorado') continue;
+    if (/^\d+([.,]\d+)?$/.test(normalized)) continue;
+    if (/^\d{11,13}$/.test(normalized)) continue;
+    if (!/[a-z]/i.test(normalized)) continue;
+    return true;
+  }
+
+  return false;
+}
+
+function isLodItemName_(value) {
+  var text = String(value || '').trim();
+  if (!text) return false;
+  return Boolean(getLodNumberFromName_(text));
+}
+
+function getLodNumberFromName_(value) {
+  var text = String(value || '').trim();
+  if (!text) return null;
+
+  var match = text.match(/\bLOD\b[^0-9]*([0-9]{2,3})/i);
+  if (!match) return null;
+
+  var lod = parseInt(match[1], 10);
+  if ([100, 200, 300, 350, 400].indexOf(lod) === -1) return null;
+
+  return lod;
 }
 
 function splitDisciplines_(value) {
@@ -883,6 +1473,7 @@ function getEapStructuredDataFromRows_(rows) {
   var contracts = [];
   var osOptions = [];
   var itemOptions = [];
+  var lodOptions = [];
 
   for (var i = 0; i < hierarchy.nodes.length; i++) {
     var node = hierarchy.nodes[i];
@@ -893,22 +1484,33 @@ function getEapStructuredDataFromRows_(rows) {
 
   for (var os = 0; os < hierarchy.nodes.length; os++) {
     var osNode = hierarchy.nodes[os];
-    if (osNode.tipo === 'os' && osNode.contratoCodigo) {
+    if (osNode.tipo === 'os' && osNode.contratoCodigo && osNode.filterable !== false) {
       osOptions.push({ codigo: osNode.codigo, nome: osNode.nome, contratoCodigo: osNode.contratoCodigo });
     }
   }
 
   for (var j = 0; j < hierarchy.nodes.length; j++) {
     var itemNode = hierarchy.nodes[j];
-    if (itemNode.tipo === 'item' && itemNode.osCodigo) {
+    if (itemNode.tipo === 'item' && itemNode.osCodigo && itemNode.filterable !== false) {
       var matchedRow = rows.find(function(row) { return String(row.code || '').trim() === String(itemNode.codigo || '').trim(); }) || {};
       itemOptions.push({
         codigo: itemNode.codigo,
         nome: itemNode.nome,
         osCodigo: itemNode.osCodigo,
         disciplina: String(matchedRow.disciplina || '').trim(),
-        disciplinas: Array.isArray(matchedRow.disciplinas) ? matchedRow.disciplinas : []
+        disciplinas: Array.isArray(matchedRow.disciplinas) ? matchedRow.disciplinas : [],
+        isLod: Boolean(itemNode.isLod)
       });
+
+      if (itemNode.isLod) {
+        lodOptions.push({
+          codigo: itemNode.codigo,
+          nome: itemNode.nome,
+          osCodigo: itemNode.osCodigo,
+          disciplina: String(matchedRow.disciplina || '').trim(),
+          disciplinas: Array.isArray(matchedRow.disciplinas) ? matchedRow.disciplinas : []
+        });
+      }
     }
   }
 
@@ -916,6 +1518,7 @@ function getEapStructuredDataFromRows_(rows) {
     contracts: contracts,
     osOptions: osOptions,
     itemOptions: itemOptions,
+    lodOptions: lodOptions,
     hierarchyNodes: hierarchy.nodes,
     childrenByParent: hierarchy.childrenByParent,
     rootCodes: hierarchy.rootCodes
@@ -924,7 +1527,6 @@ function getEapStructuredDataFromRows_(rows) {
 
 function buildEapHierarchyPayloadFromRows_(rows) {
   var rawNodes = [];
-  var nodeMap = {};
 
   for (var i = 0; i < rows.length; i++) {
     var item = rows[i] || {};
@@ -936,11 +1538,11 @@ function buildEapHierarchyPayloadFromRows_(rows) {
       codigo: codigo,
       nome: nome,
       dotCount: (codigo.match(/\./g) || []).length,
-      isOs: isOsItemName_(nome),
       disciplina: String(item.disciplina || '').trim(),
-      disciplinas: Array.isArray(item.disciplinas) ? item.disciplinas : []
+      disciplinas: Array.isArray(item.disciplinas) ? item.disciplinas : [],
+      isLod: Boolean(item.isLod || isLodItemName_(nome)),
+      filterable: !Boolean(item.isGeneralLod)
     });
-    nodeMap[codigo] = true;
   }
 
   rawNodes.sort(function(a, b) {
@@ -950,35 +1552,29 @@ function buildEapHierarchyPayloadFromRows_(rows) {
 
   var nodes = [];
   var rootCodes = [];
-  var contractCodeByNode = {};
-  var nearestOsByNode = {};
 
   for (var j = 0; j < rawNodes.length; j++) {
     var raw = rawNodes[j];
-    var parentCodigo = inferDirectParentCode_(raw.codigo, nodeMap);
+    var parts = String(raw.codigo || '').trim().split('.');
+    var level = parts.length - 1;
+    var parentCodigo = level > 0 ? parts.slice(0, parts.length - 1).join('.') : '';
     var contratoCodigo = '';
     var osCodigo = '';
     var tipo = 'item';
 
-    if (!parentCodigo) {
+    if (level === 0) {
       tipo = 'contrato';
       contratoCodigo = raw.codigo;
       rootCodes.push(raw.codigo);
+    } else if (level === 1) {
+      tipo = 'os';
+      contratoCodigo = parts[0] || '';
+      osCodigo = raw.codigo;
     } else {
-      contratoCodigo = contractCodeByNode[parentCodigo] || getContractRootFromCode_(raw.codigo);
-      if (raw.isOs) {
-        tipo = 'os';
-        osCodigo = raw.codigo;
-      } else {
-        tipo = 'item';
-        osCodigo = nearestOsByNode[parentCodigo] || '';
-      }
+      tipo = 'item';
+      contratoCodigo = parts[0] || '';
+      osCodigo = parentCodigo;
     }
-
-    if (tipo === 'os' && !osCodigo) osCodigo = raw.codigo;
-
-    contractCodeByNode[raw.codigo] = contratoCodigo;
-    nearestOsByNode[raw.codigo] = tipo === 'os' ? raw.codigo : osCodigo;
 
     nodes.push({
       codigo: raw.codigo,
@@ -989,7 +1585,9 @@ function buildEapHierarchyPayloadFromRows_(rows) {
       contratoCodigo: contratoCodigo,
       osCodigo: osCodigo,
       disciplina: raw.disciplina,
-      disciplinas: raw.disciplinas
+      disciplinas: raw.disciplinas,
+      isLod: raw.isLod,
+      filterable: raw.filterable
     });
   }
 
@@ -1086,17 +1684,12 @@ function isOsItemName_(value) {
 }
 
 function isDateSheetName_(name) {
-  var str = String(name || '').trim();
-
-  return (
-    /^\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4}$/.test(str) ||
-    /^\d{4}-\d{2}-\d{2}$/.test(str)
-  );
+  return Boolean(normalizeSheetNameDate_(name));
 }
 
 function formatIfDate_(val) {
   if (Object.prototype.toString.call(val) === '[object Date]' && !isNaN(val.getTime())) {
-    return val.getTime();
+    return formatDateYmdSafe_(val);
   }
 
   return val;
@@ -1170,43 +1763,42 @@ function formatDateYmdSafe_(date) {
 function normalizeSheetNameDate_(name) {
   var str = String(name || '').trim();
 
-  var ptMatch = str.match(/^(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})$/);
+  var ptMatch = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
   if (ptMatch) {
-    return ptMatch[3] + '-' + ptMatch[2] + '-' + ptMatch[1];
+    var ptDate = buildValidDateSafe_(Number(ptMatch[3]), Number(ptMatch[2]), Number(ptMatch[1]));
+    return ptDate ? formatDateYmdSafe_(ptDate) : '';
   }
 
-  var isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  var isoMatch = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (isoMatch) {
-    return isoMatch[1] + '-' + isoMatch[2] + '-' + isoMatch[3];
+    var isoDate = buildValidDateSafe_(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
+    return isoDate ? formatDateYmdSafe_(isoDate) : '';
   }
 
   return '';
 }
 
+function buildValidDateSafe_(year, month, day) {
+  if (!year || !month || !day) return null;
+  var date = new Date(year, month - 1, day);
+  date.setHours(0, 0, 0, 0);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
 function parseSimpleDate_(name) {
-  var str = String(name || '').trim();
-
-  var ptMatch = str.match(/^(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})/);
-
-  if (ptMatch) {
-    return new Date(
-      Number(ptMatch[3]),
-      Number(ptMatch[2]) - 1,
-      Number(ptMatch[1])
-    ).getTime();
-  }
-
-  var isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
-
-  if (isoMatch) {
-    return new Date(
-      Number(isoMatch[1]),
-      Number(isoMatch[2]) - 1,
-      Number(isoMatch[3])
-    ).getTime();
-  }
-
-  return 0;
+  var normalized = normalizeSheetNameDate_(name);
+  if (!normalized) return 0;
+  var parsed = parseYmdDateSafe_(normalized);
+  return parsed ? parsed.getTime() : 0;
 }
 
 // --- PUBLICACAO CRIPTOGRAFADA NO GITHUB ---
@@ -1283,6 +1875,7 @@ function firestoreSetAppData_(name, data) {
     throw new Error("Firestore appData/" + name + " falhou (" + status + "): " + response.getContentText().slice(0, 500));
   }
   firestoreSetAppDataChunks_(name, chunks);
+  PropertiesService.getScriptProperties().setProperty("appData_chunk_count_" + name, String(chunks.length));
 }
 
 function splitStringIntoChunks_(text, chunkSize) {
@@ -1321,6 +1914,42 @@ function firestoreSetAppDataChunks_(name, chunks) {
     if (status < 200 || status >= 300) {
       throw new Error("Firestore chunk appData/" + name + "/" + docId + " falhou (" + status + "): " + response.getContentText().slice(0, 500));
     }
+  }
+}
+
+function firestoreCleanupAppData_(name, data) {
+  var props = PropertiesService.getScriptProperties();
+  var previousChunkCount = Number(props.getProperty("appData_chunk_count_" + name) || 0);
+  if (!previousChunkCount) return;
+
+  var jsonText = JSON.stringify(data || {});
+  var nextChunkCount = splitStringIntoChunks_(jsonText, FIREBASE_APPDATA_CHUNK_SIZE).length;
+  if (nextChunkCount >= previousChunkCount) return;
+
+  var projectId = firestoreGetProjectId_();
+  var baseName = "projects/" + projectId + "/databases/(default)/documents/appData/" + encodeURIComponent(name) + "/chunks/";
+  for (var i = nextChunkCount; i < previousChunkCount; i++) {
+    var docId = ("00000" + i).slice(-5);
+    try {
+      firestoreDeleteDocument_(baseName + docId);
+    } catch (err) {
+      // Se o chunk nao existir mais, seguimos a publicacao.
+    }
+  }
+}
+
+function firestoreDeleteDocument_(documentName) {
+  if (!documentName) return;
+  var url = "https://firestore.googleapis.com/v1/" + documentName;
+  var response = UrlFetchApp.fetch(url, {
+    method: "delete",
+    muteHttpExceptions: true,
+    headers: { Authorization: "Bearer " + firestoreGetIdToken_() }
+  });
+  var status = response.getResponseCode();
+  if (status === 404) return;
+  if (status < 200 || status >= 300) {
+    throw new Error("Falha ao apagar documento Firestore " + documentName + " (" + status + "): " + response.getContentText().slice(0, 500));
   }
 }
 
@@ -1551,6 +2180,256 @@ function json_(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function getOrCreateLoginSheet_(ss) {
+  var sh = ss.getSheetByName('login');
+  if (!sh) {
+    sh = ss.insertSheet('login');
+  }
+
+  if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
+    sh.clear();
+    sh.getRange(1, 1, 1, 15).setValues([[
+      'Data', 'Nome', 'Email', 'Role', 'Disciplina', 'Status', 'Abas',
+      'PasswordHash', 'ResetCode', 'ResetExpires', 'IsAdmin', 'LastSeen',
+      'Alocacao', 'Contrato', 'SessionVersion'
+    ]]);
+  }
+
+  return sh;
+}
+
+function getHeaderMapSafe_(sheet) {
+  var lastColumn = Math.max(15, sheet.getLastColumn());
+  var headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function(value) {
+    return String(value || '').trim().toLowerCase();
+  });
+
+  function ensure(name) {
+    var key = String(name).toLowerCase();
+    var index = headers.indexOf(key);
+    if (index !== -1) {
+      return index;
+    }
+
+    sheet.getRange(1, headers.length + 1).setValue(name);
+    headers.push(key);
+    return headers.length - 1;
+  }
+
+  return {
+    data: ensure('Data'),
+    nome: ensure('Nome'),
+    email: ensure('Email'),
+    role: ensure('Role'),
+    disciplina: ensure('Disciplina'),
+    status: ensure('Status'),
+    abas: ensure('Abas'),
+    passwordhash: ensure('PasswordHash'),
+    resetcode: ensure('ResetCode'),
+    resetexpires: ensure('ResetExpires'),
+    isadmin: ensure('IsAdmin'),
+    lastseen: ensure('LastSeen'),
+    alocacao: ensure('Alocacao'),
+    contrato: ensure('Contrato'),
+    sessionversion: ensure('SessionVersion')
+  };
+}
+
+function getHeaderWidth_(header) {
+  var max = 0;
+  for (var key in header) {
+    if (Object.prototype.hasOwnProperty.call(header, key)) {
+      max = Math.max(max, header[key]);
+    }
+  }
+  return max + 1;
+}
+
+function newEmptyLoginRow_(header) {
+  var row = [];
+  var width = getHeaderWidth_(header);
+  for (var i = 0; i < width; i++) {
+    row.push('');
+  }
+  return row;
+}
+
+function setLoginRowPatch_(sheet, rowNumber, header, patch) {
+  var width = getHeaderWidth_(header);
+  var range = sheet.getRange(rowNumber, 1, 1, width);
+  var row = range.getValues()[0];
+
+  for (var key in patch) {
+    if (!Object.prototype.hasOwnProperty.call(patch, key)) {
+      continue;
+    }
+    if (header[key] === undefined) {
+      continue;
+    }
+    row[header[key]] = patch[key];
+  }
+
+  range.setValues([row]);
+}
+
+function normalizeEmail_(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function isCorporateEmail_(email) {
+  return normalizeEmail_(email).indexOf('@quantaconsultoria.com') !== -1;
+}
+
+function findUserRowByEmail_(values, header, email) {
+  var normalized = normalizeEmail_(email);
+  for (var i = 1; i < values.length; i++) {
+    if (normalizeEmail_(values[i][header.email]) === normalized) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function parseDelimitedList_(value) {
+  if (Array.isArray(value)) {
+    return value.map(function(item) {
+      return String(item || '').trim();
+    }).filter(Boolean);
+  }
+
+  return String(value || '')
+    .split(/[\n,;|]+/)
+    .map(function(item) {
+      return String(item || '').trim();
+    })
+    .filter(Boolean);
+}
+
+function normalizeUserDisciplines_(value) {
+  return parseDelimitedList_(value);
+}
+
+function normalizeAllowedTabs_(value) {
+  return parseDelimitedList_(value).map(function(item) {
+    return String(item || '').trim().toLowerCase();
+  }).filter(Boolean);
+}
+
+function parseBool_(value) {
+  var text = String(value || '').trim().toLowerCase();
+  return text === 'true' || text === '1' || text === 'yes' || text === 'sim';
+}
+
+function boolToSheet_(value) {
+  return parseBool_(value) ? 'true' : 'false';
+}
+
+function normalizeUserResponse_(row, header) {
+  var lastSeen = Number(row[header.lastseen] || 0);
+  var online = lastSeen > 0 && (Date.now() - lastSeen <= 2 * 60 * 1000);
+  var disciplines = normalizeUserDisciplines_(row[header.disciplina] || '');
+  var tabs = normalizeAllowedTabs_(row[header.abas] || '');
+
+  return {
+    id: String(row[header.email] || ''),
+    data: row[header.data],
+    nome: String(row[header.nome] || ''),
+    email: String(row[header.email] || ''),
+    cargo: String(row[header.role] || ''),
+    role: String(row[header.role] || ''),
+    disciplina: disciplines.length > 0 ? disciplines[0] : String(row[header.disciplina] || ''),
+    disciplinas: disciplines,
+    contrato: String(row[header.contrato] || ''),
+    contract: String(row[header.contrato] || ''),
+    status: String(row[header.status] || 'pending'),
+    alocacao: String(row[header.alocacao] || ''),
+    allowedTabs: tabs,
+    abas: tabs,
+    isAdmin: parseBool_(row[header.isadmin]),
+    online: online,
+    sessionVersion: String(row[header.sessionversion] || '')
+  };
+}
+
+function newSessionVersion_() {
+  return String(Date.now()) + '-' + Utilities.getUuid().slice(0, 8);
+}
+
+function makePasswordHash_(password) {
+  var digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(password || ''),
+    Utilities.Charset.UTF_8
+  );
+
+  return 'sha256:' + digest.map(function(b) {
+    return ('0' + (b & 255).toString(16)).slice(-2);
+  }).join('');
+}
+
+function verifyPassword_(password, stored) {
+  var hash = String(stored || '').trim();
+  if (!hash) return false;
+  if (hash.indexOf('sha256:') === 0) {
+    return makePasswordHash_(password) === hash;
+  }
+  return String(password || '') === hash;
+}
+
+function randomCode_(length) {
+  var digits = '';
+  var size = Math.max(4, Number(length || 6));
+  for (var i = 0; i < size; i++) {
+    digits += String(Math.floor(Math.random() * 10));
+  }
+  return digits;
+}
+
+function randomTemporaryPassword_() {
+  return 'Q' + randomCode_(5) + randomCode_(3);
+}
+
+function ensureAuthLogSheet_(ss) {
+  var sh = ss.getSheetByName('logs_auth');
+  if (!sh) {
+    sh = ss.insertSheet('logs_auth');
+    sh.appendRow(['Data', 'Level', 'Evento', 'Detalhe']);
+  } else if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
+    sh.clear();
+    sh.appendRow(['Data', 'Level', 'Evento', 'Detalhe']);
+  }
+  return sh;
+}
+
+function logAuth_(ss, level, eventName, detail) {
+  try {
+    ensureAuthLogSheet_(ss).appendRow([
+      new Date().toISOString(),
+      String(level || 'INFO'),
+      String(eventName || ''),
+      String(detail || '')
+    ]);
+  } catch (err) {
+    Logger.log('[AUTH][' + String(level || 'INFO') + '] ' + String(eventName || '') + ' ' + String(detail || ''));
+  }
+}
+
+function sendResetCodeEmail_(to, code, minutesValid) {
+  MailApp.sendEmail({
+    to: String(to || ''),
+    subject: 'EcoQuanta - Codigo de recuperacao',
+    body: 'Seu codigo de recuperacao e: ' + String(code || '') + '\n\nValidade: ' + String(minutesValid || 15) + ' minutos.'
+  });
+}
+
+function sendAdminTemporaryPasswordEmail_(to, tempPassword) {
+  MailApp.sendEmail({
+    to: String(to || ''),
+    subject: 'EcoQuanta - Senha temporaria',
+    body: 'Sua senha temporaria e: ' + String(tempPassword || '') + '\n\nApos entrar, altere a senha imediatamente.'
+  });
 }
 
 // JSON publico desativado: a EAP agora permanece somente no Firebase.

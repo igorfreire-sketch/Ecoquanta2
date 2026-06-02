@@ -5,6 +5,7 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
+  ChevronDown,
   FileText,
   Plus,
   Search,
@@ -859,10 +860,115 @@ function FilterSelect({
       <select value={value} onChange={(event) => onChange(event.target.value)} className="bentham-select h-10 text-[13px]">
         {options.map((option) => (
           <option key={typeof option === 'string' ? option : option.value} value={typeof option === 'string' ? option : option.value}>
-            {typeof option === 'string' ? option : option.label}
+            {(() => {
+              const optionValue = typeof option === 'string' ? option : option.value;
+              const optionLabel = typeof option === 'string' ? option : option.label;
+              const normalized = String(optionValue || '').trim().toLowerCase();
+              return normalized === 'todos' || normalized === 'todas' ? 'Selecionar...' : optionLabel;
+            })()}
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function FilterMultiSelectDropdown({
+  label,
+  value,
+  options,
+  placeholder,
+  onChange
+}: {
+  label: string;
+  value: string[];
+  options: string[];
+  placeholder: string;
+  onChange: (next: string[]) => void;
+}) {
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!wrapperRef.current) return;
+      if (!wrapperRef.current.contains(event.target as Node)) setOpen(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, []);
+
+  const selectedLabels = options.filter((option) => value.includes(option));
+
+  const toggleValue = (option: string) => {
+    if (value.includes(option)) {
+      onChange(value.filter((item) => item !== option));
+      return;
+    }
+    onChange([...value, option]);
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative min-w-[150px]">
+      <label className="bentham-label">{label}</label>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 text-left text-[13px] font-medium text-[#2D2D2D]"
+      >
+        <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+          {selectedLabels.length > 0 ? (
+            selectedLabels.map((item) => (
+              <span key={item} className="inline-flex max-w-full items-center rounded-full bg-[#EEF6FD] px-2 py-1 text-[11px] font-semibold text-[#0F4C81]">
+                <span className="truncate">{item}</span>
+              </span>
+            ))
+          ) : (
+            <span className="text-[#94A3B8]">{placeholder}</span>
+          )}
+        </div>
+        <ChevronDown size={16} className={`shrink-0 text-[#94A3B8] transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <motion.div
+          initial={{ opacity: 0, y: -6, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -6, scale: 0.98 }}
+          className="absolute z-30 mt-2 w-full overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_20px_48px_rgba(15,76,129,0.14)]"
+        >
+          <div className="max-h-[280px] overflow-y-auto p-2">
+            {options.length === 0 ? (
+              <div className="rounded-xl bg-[#F8FAFC] px-3 py-3 text-[12px] text-[#94A3B8]">
+                Nenhuma disciplina encontrada.
+              </div>
+            ) : (
+              options.map((option) => {
+                const checked = value.includes(option);
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => toggleValue(option)}
+                    className={`flex w-full items-start gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-[#F8FAFC] ${checked ? 'bg-[#ECFEFF]' : ''}`}
+                  >
+                    <span className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border ${checked ? 'border-[#0F766E] bg-[#0F766E]' : 'border-[#CBD5E1] bg-white'}`}>
+                      {checked ? <span className="text-[10px] font-black leading-none text-white">✓</span> : null}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold text-[#2D2D2D]">{option}</span>
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          <div className="border-t border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-[10px] font-medium text-[#64748B]">
+            Sem seleção, todas as disciplinas aparecem.
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }
@@ -1107,7 +1213,7 @@ export default function Projetista({
   const [filterSemana, setFilterSemana] = useState(getCurrentWeekKey());
   const [filterContrato, setFilterContrato] = useState('Todos');
   const [filterOs, setFilterOs] = useState('Todos');
-  const [filterDisciplina, setFilterDisciplina] = useState('Todos');
+  const [filterDisciplina, setFilterDisciplina] = useState<string[]>([]);
   const [filterEtapa, setFilterEtapa] = useState('Todos');
   const [filterLod, setFilterLod] = useState('Todos');
   const [filterStatus, setFilterStatus] = useState('Todos');
@@ -1139,7 +1245,7 @@ export default function Projetista({
   }, [activities, filterContrato]);
 
   const disciplinasDisponiveis = useMemo(
-    () => ['Todos', ...Array.from(new Set(activities.map((activity) => activity.disciplina)))],
+    () => Array.from(new Set(activities.map((activity) => activity.disciplina))).filter(Boolean),
     [activities]
   );
 
@@ -1180,7 +1286,7 @@ export default function Projetista({
 
         const matchesContrato = filterContrato === 'Todos' || activity.contratoCodigo === filterContrato;
         const matchesOs = filterOs === 'Todos' || activity.osCodigo === filterOs;
-        const matchesDisciplina = filterDisciplina === 'Todos' || activity.disciplina === filterDisciplina;
+        const matchesDisciplina = filterDisciplina.length === 0 || filterDisciplina.includes(activity.disciplina);
         const matchesEtapa = filterEtapa === 'Todos' || activity.etapaTecnica === filterEtapa;
         const matchesLod = filterLod === 'Todos' || String(activity.lodAtual) === filterLod || String(activity.lodAlvoSemana) === filterLod;
         const matchesStatus = filterStatus === 'Todos' || getEffectiveStatus(activity) === filterStatus;
@@ -1331,7 +1437,13 @@ export default function Projetista({
               <FilterSelect label="Semana" value={filterSemana} onChange={setFilterSemana} options={weekOptions} />
               <FilterSelect label="Contrato" value={filterContrato} onChange={setFilterContrato} options={contratosDisponiveis} />
               <FilterSelect label="OS" value={filterOs} onChange={setFilterOs} options={osDisponiveis} />
-              <FilterSelect label="Disciplina" value={filterDisciplina} onChange={setFilterDisciplina} options={disciplinasDisponiveis} />
+              <FilterMultiSelectDropdown
+                label="Disciplina"
+                value={filterDisciplina}
+                options={disciplinasDisponiveis}
+                placeholder="Selecionar..."
+                onChange={setFilterDisciplina}
+              />
             </div>
           </motion.div>
         )}

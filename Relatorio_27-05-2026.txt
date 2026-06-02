@@ -1,0 +1,44 @@
+Resumo do que foi feito hoje - 27/05/2026
+
+1. Corrigi o registro de atividades no Apps Script
+- Removi o erro de sintaxe que estava quebrando o envio do arquivo.
+- Ajustei a publicação da EAP unificada para nao perder as predecessoras da coluna I.
+
+2. Ajustei o cronograma / Gantt
+- Adicionei a ligacao visual entre predecessora e atividade no Gantt.
+- Melhorei a leitura das dependencias no detalhe do card.
+- O marcador de "Hoje" agora acompanha a area visivel do Gantt.
+- As duas janelas do modo Gantt passam a subir e descer juntas.
+- O card de detalhe do Gantt abre no centro com fade in / fade out.
+
+3. Ajustei os cards da aba Atividades
+- Removi os dados pre-setados e deixei a tela depender so do Firebase.
+- Tirei o uso de cache local como fonte de preload.
+- A aba nao cai mais em cards ficticios quando o Firebase nao retorna dados.
+- Coloquei a disciplina no rodape do card e removi a sigla do topo.
+- Centralizei melhor a disciplina e aumentei um pouco o card.
+- Adicionei a sigla da disciplina nas miniaturas dos cards da coordenação, planejamento e contrato.
+
+4. Ajustei filtros e comportamento por aba
+- O filtro de disciplina ficou ativo apenas na Area Tecnica.
+- Nas outras abas, o filtro de disciplina fica desativado.
+
+5. Ajustei a origem dos dados
+- O site agora puxa os dados apenas do Firebase.
+- A planilha continua nutrindo o Firebase.
+- O site nao busca direto da planilha para evitar lentidao.
+
+6. Outras melhorias visuais
+- As barras do Gantt ficaram mais legiveis.
+- A porcentagem real aparece no fim da barra.
+- A ponta da barra ganhou menos saturacao quando nao esta em 100%.
+
+Arquivos principais alterados:
+- src/App.tsx
+- src/components/Cronograma.tsx
+- src/components/Atividades.tsx
+- src/components/CoordenacaoEngenharia.tsx
+- src/components/CoordenacaoEngenharia/Contrato.tsx
+- Registrodeatividades/registrodeatividades.gs
+- src/lib/firebaseDb.ts
+

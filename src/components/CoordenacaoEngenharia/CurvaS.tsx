@@ -29,15 +29,72 @@ interface CurvasProps {
   activeContractCode?: string;
 }
 
+function normalizeCurvaMatrixRow(row: any): any[] | null {
+  if (Array.isArray(row)) {
+    return normalizeKey(row?.[0]) ? row : null;
+  }
+
+  const code = normalizeKey(row?.code || row?.codigo || row?.itemCodigo || row?.itemCode);
+  if (!code) return null;
+
+  return [
+    code,
+    normalizeKey(row?.name || row?.nome || row?.itemNome || code),
+    row?.progress ?? row?.progresso ?? 0,
+    row?.duration ?? row?.duracao ?? 0,
+    row?.plannedStart ?? row?.inicioPlanejado ?? row?.start ?? '',
+    row?.plannedEnd ?? row?.terminoPlanejado ?? row?.end ?? '',
+    row?.idealProgress ?? row?.percentualIdeal ?? row?.baselineIdealProgress ?? 0,
+    row?.realStart ?? row?.inicioReal ?? row?.plannedStart ?? row?.inicioPlanejado ?? '',
+    row?.realEnd ?? row?.fimReal ?? row?.plannedEnd ?? row?.terminoPlanejado ?? '',
+  ];
+}
+
+function buildCurvaPayloadFromCronograma(data: any): CompressedPayload | null {
+  const cronograma = Array.isArray(data?.cronograma) ? data.cronograma : [];
+  const osOptions = Array.isArray(data?.registro?.osOptions) ? data.registro.osOptions : [];
+  if (cronograma.length === 0 || osOptions.length === 0) return null;
+
+  const rowsByCode = new Map<string, any[]>();
+  cronograma.forEach((row: any) => {
+    const normalized = normalizeCurvaMatrixRow(row);
+    if (normalized) rowsByCode.set(normalizeKey(normalized[0]), normalized);
+  });
+
+  const atual = osOptions
+    .map((os: any) => rowsByCode.get(normalizeKey(os?.codigo)))
+    .filter((row: any): row is any[] => Array.isArray(row));
+
+  if (atual.length === 0) return null;
+
+  const allowedCodes = new Set(atual.map((row) => normalizeKey(row[0])));
+  const timeline = Object.fromEntries(
+    Object.entries(data?.timeline && typeof data.timeline === 'object' ? data.timeline : {})
+      .filter(([code]) => allowedCodes.has(normalizeKey(code))),
+  ) as Record<string, any[][]>;
+
+  return {
+    atual,
+    dates: Array.isArray(data?.dates) ? data.dates : [],
+    timeline,
+  };
+}
+
 function resolveCurvaPayload(payload: any): CompressedPayload | null {
   const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
   if (!data || typeof data !== 'object') return null;
-  if (!Array.isArray(data.atual) || data.atual.length === 0) return null;
+  const dedicated = data.curvaS && typeof data.curvaS === 'object' ? data.curvaS : null;
+  const source = Array.isArray(dedicated?.atual) && dedicated.atual.length > 0
+    ? dedicated
+    : buildCurvaPayloadFromCronograma(data) || data;
+  if (!Array.isArray(source.atual) || source.atual.length === 0) return null;
 
   return {
-    ...data,
-    dates: Array.isArray(data.dates) ? data.dates : [],
-    timeline: data.timeline && typeof data.timeline === 'object' ? data.timeline : {},
+    ...source,
+    reajustado: Array.isArray(data.reajustado) ? data.reajustado : source.reajustado,
+    registro: data.registro && typeof data.registro === 'object' ? data.registro : source.registro,
+    dates: Array.isArray(source.dates) ? source.dates : [],
+    timeline: source.timeline && typeof source.timeline === 'object' ? source.timeline : {},
   } as CompressedPayload;
 }
 
@@ -57,9 +114,9 @@ function parseFlexibleDate(val: any): Date | null {
   if (typeof val === 'number') return new Date(val);
   if (val instanceof Date) return val;
   const str = String(val).trim();
-  const ptMatch = str.match(/^(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})/);
+  const ptMatch = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
   if (ptMatch) { const d = new Date(Number(ptMatch[3]), Number(ptMatch[2]) - 1, Number(ptMatch[1])); d.setHours(0, 0, 0, 0); return d; }
-  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const isoMatch = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (isoMatch) { const d = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3])); d.setHours(0, 0, 0, 0); return d; }
   return null;
 }
@@ -74,21 +131,24 @@ function formatDateShortBR(dateObj: Date | null): string {
   const y = String(dateObj.getFullYear()).slice(-2);
   return `${d}/${m}/${y}`;
 }
+function formatTickDate(value: any): string {
+  return formatDateShortBR(parseFlexibleDate(value));
+}
 function formatLabel(dateObj: Date | null, viewMode: string): string {
   if (!dateObj || Number.isNaN(dateObj.getTime())) return '-';
   const d = String(dateObj.getDate()).padStart(2, '0');
   const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const y = String(dateObj.getFullYear()).slice(-2);
-  return viewMode === 'mensal' ? `${m}/${y}` : `${d}/${m}/${y}`;
-}
-
-function formatTickDate(value: any) {
-  const dateObj = parseFlexibleDate(value);
-  return formatDateShortBR(dateObj);
+  const y = String(dateObj.getFullYear());
+  return `${d}/${m}/${y}`;
 }
 
 function normalizeKey(value: any) {
   return String(value || '').trim();
+}
+
+function normalizeSearchText(value: any) {
+  const text = normalizeKey(value).toLowerCase();
+  return text.normalize ? text.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : text;
 }
 
 function isAllContract(value: any) {
@@ -181,8 +241,8 @@ function InfoCard({ label, value, highlight, extraClass = "", textColorClass = "
   if (textColorClass) finalTextColor = textColorClass; else if (highlight) finalTextColor = 'text-[#F97316]';
   return (
     <div className={`bg-white border border-[#E5E7EB] rounded-2xl p-4 shadow-sm flex flex-col justify-center ${extraClass}`}>
-      <p className="text-[10px] font-semibold text-[#757575] uppercase tracking-wider mb-1">{label}</p>
-      <p className={`${isLongText ? 'text-[15px]' : 'text-[18px]'} font-semibold ${finalTextColor}`}>{value}</p>
+      <p className="text-[10px] font-bold text-[#757575] uppercase tracking-wider mb-1">{label}</p>
+      <p className={`${isLongText ? 'text-[15px]' : 'text-[18px]'} font-bold ${finalTextColor}`}>{value}</p>
     </div>
   );
 }
@@ -192,7 +252,6 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
   const fullPanelRef = useRef<HTMLDivElement>(null);
   const [editMode, setEditMode] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [panelExpanded, setPanelExpanded] = useState(false);
   const [liveSeries, setLiveSeries] = useState(data.series);
 
   useEffect(() => { setLiveSeries(data.series); }, [data.series]);
@@ -211,13 +270,7 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
       const ritmoReal = Math.max(0, s.realAcumulado - prevReal);
       const ritmoIdeal = Math.max(0, s.idealAcumulado - prevIdeal);
       prevReal = s.realAcumulado; prevIdeal = s.idealAcumulado;
-      return {
-        ...s,
-        dateTs: s.dateObj ? s.dateObj.getTime() : 0,
-        displayName: formatLabel(s.dateObj, globalConfig.viewMode),
-        ritmoReal: round2(ritmoReal),
-        ritmoIdeal: round2(ritmoIdeal)
-      };
+      return { ...s, dateTs: s.dateObj.getTime(), displayName: formatLabel(s.dateObj, globalConfig.viewMode), ritmoReal: round2(ritmoReal), ritmoIdeal: round2(ritmoIdeal) };
     });
   }, [liveSeries, globalConfig]);
 
@@ -250,24 +303,16 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
 
   return (
     <div ref={fullPanelRef} className="pt-8 border-b-2 border-dashed border-gray-200 pb-12 mb-8 relative bg-white px-2">
-      <button
-        type="button"
-        onClick={() => setPanelExpanded((value) => !value)}
-        className="absolute right-3 top-3 z-10 h-8 w-8 rounded-full border border-gray-200 bg-white shadow-sm flex items-center justify-center text-gray-500 hover:text-[#3B82F6] hover:border-[#3B82F6] transition-colors"
-        aria-label={panelExpanded ? 'Recolher card' : 'Expandir card'}
-      >
-        <ChevronDown size={16} className={`transition-transform ${panelExpanded ? 'rotate-180' : ''}`} />
-      </button>
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
-        <h3 className="text-xl font-semibold text-gray-800 flex items-center gap-3 border-l-4 border-[#3B82F6] pl-4">
+        <h3 className="text-xl font-bold text-gray-800 flex items-center gap-3 border-l-4 border-[#3B82F6] pl-4">
           <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-md text-sm">OS {data.osCode}</span> {data.osName}
         </h3>
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => setEditMode(!editMode)} className={`h-9 px-4 rounded-xl flex items-center gap-2 text-[11px] font-semibold transition-all border ${editMode ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-500 hover:text-blue-500'}`}>
+          <button onClick={() => setEditMode(!editMode)} className={`h-9 px-4 rounded-xl flex items-center gap-2 text-[11px] font-bold transition-all border ${editMode ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-500 hover:text-blue-500'}`}>
             {editMode ? <><X size={14}/> FECHAR EDIÇÃO</> : <><Edit3 size={14}/> REAJUSTAR</>}
           </button>
-          <button onClick={() => downloadJPG(chartOnlyRef, 'Grafico')} className="h-9 bg-blue-50 text-[#3B82F6] px-4 rounded-xl flex items-center gap-2 text-[11px] font-semibold hover:bg-blue-100 transition-colors"><Download size={14} /> BAIXAR GRÁFICO</button>
-          <button onClick={() => downloadJPG(fullPanelRef, 'Completo')} className="h-9 bg-[#3B82F6] text-white px-4 rounded-xl flex items-center gap-2 text-[11px] font-semibold hover:bg-blue-600 transition-colors"><Download size={14} /> BAIXAR PAINEL</button>
+          <button onClick={() => downloadJPG(chartOnlyRef, 'Grafico')} className="h-9 bg-blue-50 text-[#3B82F6] px-4 rounded-xl flex items-center gap-2 text-[11px] font-bold hover:bg-blue-100 transition-colors"><Download size={14} /> BAIXAR GRÁFICO</button>
+          <button onClick={() => downloadJPG(fullPanelRef, 'Completo')} className="h-9 bg-[#3B82F6] text-white px-4 rounded-xl flex items-center gap-2 text-[11px] font-bold hover:bg-blue-600 transition-colors"><Download size={14} /> BAIXAR PAINEL</button>
         </div>
       </div>
       <div className="grid grid-cols-3 gap-4 mb-4">
@@ -283,11 +328,11 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
         <InfoCard label="Início Real" value={data.summary.inicioReal} textColorClass={data.summary.inicioReal === 'Não Iniciado' ? 'text-[#F97316]' : 'text-[#3B82F6]'} />
         <InfoCard label="Fim Real" value={data.summary.fimReal} textColorClass={data.summary.fimReal === 'Não Finalizado' ? 'text-[#F97316]' : 'text-[#2D2D2D]'} />
       </div>
-      <div className={`flex flex-col ${panelExpanded ? 'xl:flex-row' : ''} gap-6`}>
-        <div ref={chartOnlyRef} className={`bg-white p-3 rounded-2xl border border-gray-100 shadow-sm flex-1 transition-all ${panelExpanded && editMode ? 'xl:w-2/3' : 'w-full'}`}>
-          <div className="h-[450px] w-full transition-all">
+      <div className="flex flex-col xl:flex-row gap-6">
+        <div ref={chartOnlyRef} className={`bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex-1 transition-all ${editMode ? 'xl:w-2/3' : 'w-full'}`}>
+          <div className="h-[450px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartDataFinal} margin={{ top: 24, right: 12, left: -10, bottom: 78 }}>
+              <ComposedChart data={chartDataFinal} margin={{ top: 30, right: 20, left: -20, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6"/>
                 <XAxis
                   dataKey="dateTs"
@@ -306,7 +351,7 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
                   minTickGap={10}
                 />
                 <YAxis tick={{ fontSize: 12, fill: '#6B7280' }} tickFormatter={(v) => `${v}%`} axisLine={false} tickLine={false} />
-                <Tooltip cursor={{ fill: '#F9FAFB' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Tooltip labelFormatter={(value) => formatDateBR(parseFlexibleDate(value))} cursor={{ fill: '#F9FAFB' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
                 <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: '20px', fontSize: '12px', fontWeight: 600 }} iconType="circle"/>
                 <Bar dataKey="ritmoIdeal" name="RITMO PLANEJADO" fill="#D1D5DB" barSize={16} radius={[4, 4, 0, 0]} />
                 <Bar dataKey="ritmoReal" name="RITMO REALIZADO" fill="#F97316" barSize={16} radius={[4, 4, 0, 0]} />
@@ -320,8 +365,8 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
             </ResponsiveContainer>
           </div>
         </div>
-        {panelExpanded && editMode && (
-          <div className="xl:w-1/3 bg-gray-50 border border-gray-200 rounded-2xl p-4 flex flex-col h-[400px] shadow-inner">
+        {editMode && (
+          <div className="xl:w-1/3 bg-gray-50 border border-gray-200 rounded-2xl p-5 flex flex-col h-[482px] shadow-inner">
             <h4 className="font-bold text-gray-800 mb-1 flex items-center gap-2"><Edit3 size={18} className="text-[#3B82F6]"/> Ajuste em Tempo Real</h4>
             <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
               {liveSeries.map((pt: any, idx: number) => (
@@ -361,9 +406,11 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
   const [selectedContract, setSelectedContract] = useState('TODOS');
   const [selectedOsList, setSelectedOsList] = useState<string[]>([]);
   const [osExpanded, setOsExpanded] = useState(false);
+  const [osSearch, setOsSearch] = useState('');
   const [viewMode, setViewMode] = useState('mensal');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const osDropdownRef = useRef<HTMLDivElement>(null);
 
   // 1. CARREGAMENTO AUTÔNOMO (Caso entre direto na aba ou dê F5)
   const fetchCurvasData = async (forceRefresh = false) => {
@@ -432,12 +479,15 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
       const code = normalizeKey(row?.[0]);
       return code && code !== 'OS' && code !== normalizeKey(osCode);
     });
+    const nextReajustado = [header, ...preservedRows, ...body];
     const nextData = {
       ...rawData,
-      reajustado: [header, ...preservedRows, ...body],
-      latestEapPublishedAt: new Date().toISOString(),
+      reajustado: nextReajustado,
     };
-    await upsertFirebaseAppData('eap', nextData);
+    await upsertFirebaseAppData('curvaSReajustado', {
+      reajustado: nextReajustado,
+      latestEapPublishedAt: new Date().toISOString(),
+    });
     setRawData(nextData);
     localStorage.setItem('curvasAppData', JSON.stringify(nextData));
   };
@@ -495,6 +545,23 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
     return hierarchy.find(c => c.code === selectedContract)?.osList || [];
   }, [selectedContract, hierarchy]);
 
+  const filteredOsOptions = useMemo(() => {
+    const search = normalizeSearchText(osSearch);
+    if (!search) return activeOsOptions;
+    return activeOsOptions.filter((os) => normalizeSearchText(`${os.code} ${os.name}`).includes(search));
+  }, [activeOsOptions, osSearch]);
+
+  const allFilteredOsSelected = filteredOsOptions.length > 0 && filteredOsOptions.every((os) => selectedOsList.includes(os.code));
+
+  const toggleFilteredOs = () => {
+    const visibleCodes = filteredOsOptions.map((os) => os.code);
+    if (allFilteredOsSelected) {
+      setSelectedOsList((previous) => previous.filter((code) => !visibleCodes.includes(code)));
+      return;
+    }
+    setSelectedOsList((previous) => Array.from(new Set([...previous, ...visibleCodes])));
+  };
+
   const effectiveContractCode = isAllContract(activeContractCode) && !lockedContractCode
     ? ''
     : normalizeKey(lockedContractCode || activeContractCode || '');
@@ -503,7 +570,23 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
     if (!effectiveContractCode) return;
     setSelectedContract(effectiveContractCode);
     setSelectedOsList([]);
+    setOsExpanded(false);
+    setOsSearch('');
   }, [effectiveContractCode]);
+
+  useEffect(() => {
+    if (!osExpanded) return;
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!osDropdownRef.current?.contains(event.target as Node)) {
+        setOsExpanded(false);
+        setOsSearch('');
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [osExpanded]);
 
   const chartsData = useMemo(() => {
     if (!rawData || !rawData.atual || selectedOsList.length === 0) return [];
@@ -577,13 +660,13 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
             <TrendingUp size={24} />
           </div>
           <div>
-            <h2 className="text-[22px] font-semibold text-[#111827] tracking-tight">Curva S Dinâmica</h2>
+            <h2 className="text-[22px] font-bold text-[#111827] tracking-tight">Curva S Dinâmica</h2>
             <p className="text-[13px] text-[#6B7280]">Gestão Física com Compressão Extrema</p>
           </div>
         </div>
         <button 
           onClick={() => {
-             setSelectedContract(effectiveContractCode || 'TODOS'); setSelectedOsList([]);
+             setSelectedContract(effectiveContractCode || 'TODOS'); setSelectedOsList([]); setOsExpanded(false); setOsSearch('');
              if (onForceRefresh) onForceRefresh(); else fetchCurvasData(true);
           }} 
           disabled={loading || activeSyncState} 
@@ -598,56 +681,56 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
         <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Contrato</label>
-            <select value={selectedContract} disabled={Boolean(normalizeKey(lockedContractCode || ''))} onChange={(e) => { setSelectedContract(e.target.value); setSelectedOsList([]); }} className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px] disabled:opacity-70">
+            <select value={selectedContract} disabled={Boolean(normalizeKey(lockedContractCode || ''))} onChange={(e) => { setSelectedContract(e.target.value); setSelectedOsList([]); setOsExpanded(false); setOsSearch(''); }} className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px] disabled:opacity-70">
               {!effectiveContractCode && <option value="TODOS">Selecione...</option>}
               {hierarchy.map(c => <option key={c.code} value={c.code}>{c.code} - {c.name}</option>)}
             </select>
           </div>
-          <div className="flex flex-col gap-1.5">
+          <div ref={osDropdownRef} className="flex flex-col gap-1.5 relative">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Ordem de Serviço</label>
-            <button
-              type="button"
-              onClick={() => setOsExpanded((value) => !value)}
-              className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px] flex items-center justify-between gap-3 text-left"
-              aria-label={osExpanded ? 'Recolher lista de OS' : 'Expandir lista de OS'}
-            >
-              <span className={`${selectedOsList.length === 0 ? 'text-gray-400' : 'text-gray-700'} truncate`}>
-                {selectedOsList.length === 0
+            <div className="relative">
+              <input
+                type="text"
+                value={osSearch}
+                onFocus={() => setOsExpanded(true)}
+                onChange={(event) => { setOsSearch(event.target.value); setOsExpanded(true); }}
+                placeholder={selectedOsList.length === 0
                   ? 'Selecione...'
                   : selectedOsList.length === activeOsOptions.length
                     ? 'Todas as OS selecionadas'
                     : `${selectedOsList.length} OS selecionada(s)`}
-              </span>
-              <ChevronDown size={16} className={`shrink-0 text-gray-500 transition-transform ${osExpanded ? 'rotate-180' : ''}`} />
-            </button>
-            {osExpanded && (
-              <div className="border rounded-xl p-2 bg-gray-50 custom-scrollbar max-h-[360px] overflow-y-auto transition-all duration-300">
-              {activeOsOptions.length === 0 ? <p className="text-[12px] text-gray-400 p-2 text-center">Aguardando contrato...</p> : (
-                <>
-                  <button
-                    onClick={() => {
-                      setSelectedOsList(selectedOsList.length === activeOsOptions.length ? [] : activeOsOptions.map(o => o.code));
-                      setOsExpanded(false);
-                    }}
-                    className="flex items-center gap-2 text-[12px] font-bold text-[#3B82F6] p-2 hover:bg-blue-100 w-full rounded"
-                  >
-                    {selectedOsList.length === activeOsOptions.length ? <CheckSquare size={16}/> : <Square size={16}/>} TODAS
-                  </button>
-                  {activeOsOptions.map(os => (
-                    <button
-                      key={os.code}
-                      onClick={() => {
-                        setSelectedOsList((p) => p.includes(os.code) ? p.filter(c => c !== os.code) : [...p, os.code]);
-                        setOsExpanded(false);
-                      }}
-                      className="flex items-center gap-2 text-[12px] text-gray-700 p-2 hover:bg-gray-200 w-full rounded text-left"
-                    >
-                      {selectedOsList.includes(os.code) ? <CheckSquare size={16} className="text-[#3B82F6]"/> : <Square size={16} className="text-gray-400"/>} {os.name}
-                    </button>
-                  ))}
-                </>
-              )}
+                className="w-full h-11 pl-3 pr-10 bg-gray-50 border rounded-xl text-[14px] text-gray-700 placeholder:text-gray-400"
+                role="combobox"
+                aria-controls="curva-s-os-options"
+                aria-autocomplete="list"
+                aria-expanded={osExpanded}
+              />
+              <button
+                type="button"
+                onClick={() => setOsExpanded((value) => !value)}
+                className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-500"
+                aria-label={osExpanded ? 'Fechar lista de OS' : 'Abrir lista de OS'}
+              >
+                <ChevronDown size={16} className={`transition-transform ${osExpanded ? 'rotate-180' : ''}`} />
+              </button>
             </div>
+            {osExpanded && (
+              <div id="curva-s-os-options" className="absolute top-full left-0 right-0 z-30 mt-1 border rounded-xl p-2 bg-white shadow-lg custom-scrollbar max-h-[360px] overflow-y-auto">
+                {activeOsOptions.length === 0 ? <p className="text-[12px] text-gray-400 p-2 text-center">Aguardando contrato...</p> : filteredOsOptions.length === 0 ? (
+                  <p className="text-[12px] text-gray-400 p-2 text-center">Nenhuma OS encontrada.</p>
+                ) : (
+                  <>
+                    <button type="button" onClick={toggleFilteredOs} className="flex items-center gap-2 text-[12px] font-bold text-[#3B82F6] p-2 hover:bg-blue-100 w-full rounded">
+                      {allFilteredOsSelected ? <CheckSquare size={16}/> : <Square size={16}/>} {osSearch ? 'TODAS VISIVEIS' : 'TODAS'}
+                    </button>
+                    {filteredOsOptions.map(os => (
+                      <button type="button" key={os.code} onClick={() => setSelectedOsList(p => p.includes(os.code) ? p.filter(c => c !== os.code) : [...p, os.code])} className="flex items-center gap-2 text-[12px] text-gray-700 p-2 hover:bg-gray-100 w-full rounded text-left">
+                        {selectedOsList.includes(os.code) ? <CheckSquare size={16} className="text-[#3B82F6]"/> : <Square size={16} className="text-gray-400"/>} {os.name}
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
             )}
           </div>
           <div className="flex flex-col gap-1.5">

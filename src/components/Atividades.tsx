@@ -12,9 +12,7 @@ import {
   Fan,
   House,
   Plus,
-  PlugZap,
   Search,
-  Shovel,
   Waves,
   X
 } from 'lucide-react';
@@ -1591,7 +1589,7 @@ function FilterMultiSelectDropdown({
           {selectedLabels.length > 0 ? (
             selectedLabels.map((item) => (
               <span key={item} className="inline-flex max-w-full items-center rounded-full bg-[#EEF6FD] px-2.5 py-1 text-[11px] font-semibold text-[#0F4C81]">
-                <span className="truncate">{item}</span>
+                <span className="truncate">{getDisciplineFilterLabel(item)}</span>
               </span>
             ))
           ) : (
@@ -1627,7 +1625,7 @@ function FilterMultiSelectDropdown({
                       {checked ? <span className="text-[10px] font-black leading-none text-white">✓</span> : null}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-semibold text-[#2D2D2D]">{option}</span>
+                      <span className="block truncate text-[13px] font-semibold text-[#2D2D2D]">{getDisciplineFilterLabel(option)}</span>
                     </span>
                   </button>
                 );
@@ -1857,6 +1855,70 @@ const assigneeAccentColorMap: Record<string, string> = {
   'NÃ£o atribuÃ­do': '#94A3B8'
 };
 
+function EarthmovingDisciplineIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M4.1 14.1H15.8V9.2H11.2L10.4 5.4H6.1L5.4 9.2H4.8L4.1 14.1Z" fill="currentColor" />
+      <path d="M6.5 5.4H10.1V9.2H5.8L6.5 5.4Z" fill="white" />
+      <path d="M7.3 5.4H9.1V9.2H7.3V5.4Z" fill="currentColor" />
+      <path d="M13.1 8.9V6.7C13.1 5.9 13.6 5.4 14.4 5.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M11.8 10.4H14.6" stroke="white" strokeWidth="0.8" strokeLinecap="round" />
+      <path d="M11.8 11.7H14.6" stroke="white" strokeWidth="0.8" strokeLinecap="round" />
+      <path d="M11.8 13H14.6" stroke="white" strokeWidth="0.8" strokeLinecap="round" />
+      <path d="M15.5 13.4L18.4 15.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M18.3 13.1L21.2 13.7C20.8 15.7 21.2 17.1 22 18.2H18.6C17.8 16.7 17.7 15.1 18.3 13.1Z" fill="currentColor" />
+      <path d="M18.9 13.6C18.5 15.3 18.7 16.8 19.5 18.1" stroke="white" strokeWidth="0.8" strokeLinecap="round" />
+      <path d="M4.3 13.7H13.8C15.4 13.7 16.6 14.9 16.6 16.3C16.6 17.8 15.4 19 13.8 19H4.3C2.7 19 1.4 17.8 1.4 16.3C1.4 14.9 2.7 13.7 4.3 13.7Z" fill="currentColor" />
+      <path d="M4.4 15.1H13.7C14.5 15.1 15.1 15.6 15.1 16.3C15.1 17 14.5 17.6 13.7 17.6H4.4C3.6 17.6 3 17 3 16.3C3 15.6 3.6 15.1 4.4 15.1Z" fill="white" />
+      <circle cx="5" cy="16.3" r="0.85" fill="currentColor" />
+      <circle cx="8" cy="16.3" r="0.85" fill="currentColor" />
+      <circle cx="11" cy="16.3" r="0.85" fill="currentColor" />
+      <circle cx="14" cy="16.3" r="0.85" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ConcreteStructureDisciplineIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M4.1 19.5H19.9V21H4.1V19.5Z" fill="currentColor" />
+      <path d="M5.7 11.2H7.4V19.5H5.7V11.2Z" fill="currentColor" />
+      <path d="M11.15 8.1H12.85V19.5H11.15V8.1Z" fill="currentColor" />
+      <path d="M16.6 11.2H18.3V19.5H16.6V11.2Z" fill="currentColor" />
+      <path d="M4.5 14.55L12 12.45L19.5 14.55V16.15L12 14.15L4.5 16.15V14.55Z" fill="currentColor" />
+      <path d="M4.5 10.1L12 6.65L19.5 10.1V11.8L12 8.45L4.5 11.8V10.1Z" fill="currentColor" />
+      <path d="M5.7 7.9H7.4V10.75H5.7V7.9Z" fill="currentColor" />
+      <path d="M11.15 4.25H12.85V7.55H11.15V4.25Z" fill="currentColor" />
+      <path d="M16.6 7.9H18.3V10.75H16.6V7.9Z" fill="currentColor" />
+      <path d="M5.95 7.85V5.25" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+      <path d="M6.55 7.85V4.85" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+      <path d="M7.15 7.85V5.45" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+      <path d="M11.4 4.25V2" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+      <path d="M12 4.25V1.6" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+      <path d="M12.6 4.25V2" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+      <path d="M16.85 7.85V5.25" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+      <path d="M17.45 7.85V4.85" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+      <path d="M18.05 7.85V5.45" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function StructuralDisciplineIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
   return (
     <svg
@@ -1894,7 +1956,7 @@ function HydroSanitaryDisciplineIcon({ size = 24, className = '' }: { size?: num
       aria-hidden="true"
     >
       <path
-        d="M12 3.2C11.7 3.7 11.2 4.4 10.5 5.4C8.2 8.7 5.9 11.8 5.9 15.1C5.9 18.6 8.7 21.2 12 21.2C15.3 21.2 18.1 18.6 18.1 15.1C18.1 11.8 15.8 8.7 13.5 5.4C12.8 4.4 12.3 3.7 12 3.2Z"
+        d="M12 2.4C11.3 4.2 10.2 6.1 8.9 8.2C7.2 10.8 5.4 13.6 5.4 16.2C5.4 20 8.3 22.3 12 22.3C15.7 22.3 18.6 20 18.6 16.2C18.6 13.6 16.8 10.8 15.1 8.2C13.8 6.1 12.7 4.2 12 2.4Z"
         fill="currentColor"
       />
     </svg>
@@ -1912,27 +1974,42 @@ function AvacDisciplineIcon({ size = 24, className = '' }: { size?: number; clas
       className={className}
       aria-hidden="true"
     >
-      <circle cx="12" cy="12" r="1.7" fill="currentColor" />
+      <circle cx="9.6" cy="12" r="2.2" fill="currentColor" />
       <path
-        d="M12 4.1C11.1 4.1 10.6 4.9 10.2 5.8C9.6 7.2 9.7 8.5 10.2 9.2C10.8 10 11.9 10.2 12.8 9.7C13.8 9.2 14.1 8.2 13.8 7.2C13.5 6 12.8 4.1 12 4.1Z"
+        d="M8.2 9.6C6.8 7.8 6.2 5.2 7.8 4C9.4 2.7 12.5 3.7 13.2 5C13.8 6.1 12 7.1 11.2 9.7C10.2 9.2 9.1 9.2 8.2 9.6Z"
         fill="currentColor"
       />
       <path
-        d="M4.8 14.2C5.4 13.4 6.6 13.1 7.6 13.5C8.8 14 9.6 15 9.6 16.1C9.6 17 8.9 17.8 7.9 18C6.7 18.2 5.1 17.8 4.8 16.9C4.4 15.8 4.3 14.9 4.8 14.2Z"
+        d="M7.1 12C7.1 13.1 7.6 14.1 8.5 14.7C7 16.5 4.7 18 3.3 16.7C1.8 15.4 2.2 12.2 3.4 11.4C4.4 10.7 5.4 12 7.1 12Z"
         fill="currentColor"
       />
       <path
-        d="M15.2 14.4C15.8 13.5 16.9 13.1 18 13.5C19.2 13.9 20 14.9 20 16C20 16.9 19.4 17.7 18.4 18C17.2 18.3 15.6 17.9 15.2 17C14.8 15.9 14.8 15 15.2 14.4Z"
+        d="M10.7 14.9C11.7 14.6 12.4 13.9 12.8 12.9C14.9 13.6 17.4 15 16.9 16.9C16.4 18.8 13.4 19.9 12.1 19.1C11 18.5 11.6 16.9 10.7 14.9Z"
         fill="currentColor"
       />
-      <path
-        d="M14.1 10.6C14.9 10.4 16 10.6 17.1 11.1C18.4 11.7 19.2 12.6 19.2 13.4C19.2 14.2 18.5 14.8 17.4 14.8C16 14.8 14.6 14.2 14.2 13.3C13.8 12.4 13.8 11.1 14.1 10.6Z"
-        fill="currentColor"
-      />
-      <path
-        d="M12 7.2C12.7 7.2 13.3 7.8 13.4 8.6C13.5 9.6 13.1 10.6 12.3 11.1C11.3 11.7 10.2 11.7 9.4 11.1C8.7 10.5 8.5 9.5 8.9 8.7C9.4 7.7 10.5 7.2 12 7.2Z"
-        fill="currentColor"
-      />
+      <path d="M13.2 9.4C15.1 8.1 16.7 8.2 18.2 8.6C19.4 8.9 20.6 8.8 21.7 7.7" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+      <path d="M13.9 11.6C15.7 10.9 17.1 11.2 18.7 11.7C19.8 12.1 20.8 12.1 22 11" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+      <path d="M15.7 14.2C17 15 18 15.6 19.4 15.6C20.4 15.6 21.2 15.3 22 14.6" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ElectricalSpdaDisciplineIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M7.3 3.1C7.3 2.5 7.8 2 8.4 2C9 2 9.5 2.5 9.5 3.1V6.2H7.3V3.1Z" fill="currentColor" />
+      <path d="M14.5 3.1C14.5 2.5 15 2 15.6 2C16.2 2 16.7 2.5 16.7 3.1V6.2H14.5V3.1Z" fill="currentColor" />
+      <path d="M5.5 6.8H18.5C19.1 6.8 19.6 7.3 19.6 7.9C19.6 8.5 19.1 9 18.5 9H17.9V13.1C17.9 15.3 16.5 17.1 14.5 17.8L12 18.7L9.5 17.8C7.5 17.1 6.1 15.3 6.1 13.1V9H5.5C4.9 9 4.4 8.5 4.4 7.9C4.4 7.3 4.9 6.8 5.5 6.8Z" fill="currentColor" />
+      <path d="M12.2 9.5L9.3 14.3H11.7L10.4 18.9L14.8 12.7H12.5L14.1 9.5H12.2Z" fill="white" />
+      <path d="M11.8 15.3L9.2 20H11.7L10.8 22L15 16.1H12.6L13.2 15.3H11.8Z" fill="currentColor" />
     </svg>
   );
 }
@@ -1948,17 +2025,21 @@ function DrainageDisciplineIcon({ size = 24, className = '' }: { size?: number; 
       className={className}
       aria-hidden="true"
     >
-      <path d="M3.2 8.6C6.8 9 9.6 10.1 12 12.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M3.2 13.2C6.8 13.5 9.8 14.7 12.2 16.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M12 12.2L14.4 13.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M12.2 16.7L14.6 17.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M8.2 6.7C8.9 5.2 9.8 4 10.6 3.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <path d="M9.7 4.2C10.5 3.3 11.2 2.7 11.9 2.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <path d="M14.1 8.1C14.8 6.7 15.7 5.5 16.5 4.7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <path d="M15.7 5.6C16.4 4.7 17.2 4.1 17.8 3.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <path d="M12 9.4C11.6 9.8 11.4 10.4 11.5 11C11.6 11.8 12.1 12.5 12.8 12.9C13.7 13.4 14.6 13.3 15.2 12.8C15.9 12.3 16.1 11.4 15.9 10.7C15.7 9.9 15 9.4 14.1 9.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M13.7 10.2C14.6 10.8 15.2 11.8 15.2 12.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-      <path d="M18.4 17.1C17.8 18 17 18.7 16 19.1C15.4 19.3 14.7 19.5 14 19.5C12.8 19.5 11.7 19 10.8 18.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M7.5 3.2C7.1 3.9 6.5 4.8 6.5 5.5C6.5 6.2 7.1 6.7 7.8 6.7C8.5 6.7 9.1 6.2 9.1 5.5C9.1 4.8 8.4 3.9 7.5 3.2Z" fill="currentColor" />
+      <path d="M11.8 1.7C11.4 2.4 10.8 3.3 10.8 4C10.8 4.7 11.4 5.2 12.1 5.2C12.8 5.2 13.4 4.7 13.4 4C13.4 3.3 12.7 2.4 11.8 1.7Z" fill="currentColor" />
+      <path d="M15.8 3.8C15.4 4.5 14.8 5.4 14.8 6.1C14.8 6.8 15.4 7.3 16.1 7.3C16.8 7.3 17.4 6.8 17.4 6.1C17.4 5.4 16.7 4.5 15.8 3.8Z" fill="currentColor" />
+      <path d="M2.6 8.2C6.4 8.7 8.2 10.6 10.4 12.8C12 14.4 13.5 15.2 15 15.5" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <path d="M2 11.3C5.3 11.4 7.4 12.7 9.6 14C11.4 15.1 13 15.7 14.7 16" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <path d="M10.5 8.8C11.9 9.1 12.5 10.3 13.4 10.9C14.1 11.4 14.7 11.5 15.6 11.7" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+      <path d="M14.7 11.05L16.2 11.85L14.65 12.4Z" fill="currentColor" />
+      <path d="M12.3 11.55C13.6 11.9 14.2 13.1 15.1 13.6C15.8 14.1 16.4 14.2 17.3 14.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+      <path d="M16.4 13.85L17.9 14.7L16.3 15.2Z" fill="currentColor" />
+      <path d="M14.9 15.1H19.6L18.7 21.6C18.6 22.1 18.2 22.4 17.7 22.4H16.1C15.6 22.4 15.2 22.1 15.1 21.6L14.2 15.1H14.9Z" stroke="currentColor" strokeWidth="1.05" strokeLinejoin="round" />
+      <path d="M14 15H19.8" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" />
+      <path d="M14.3 16.4H19.5" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" />
+      <path d="M15.5 15.15V16.3M16.8 15.15V16.3M18.1 15.15V16.3M19.3 15.15V16.3" stroke="currentColor" strokeWidth="0.65" />
+      <circle cx="16.9" cy="19.3" r="1.45" stroke="currentColor" strokeWidth="0.9" />
+      <path d="M16.3 18.7H17.5M16.3 19.3H17.5M16.3 19.9H17.5" stroke="currentColor" strokeWidth="0.45" strokeLinecap="round" />
     </svg>
   );
 }
@@ -1974,12 +2055,13 @@ function ArchitectureDisciplineIcon({ size = 24, className = '' }: { size?: numb
       className={className}
       aria-hidden="true"
     >
-      <path d="M5.1 10.7V5.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M4.2 8.2H8.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M5.8 14.9L12 8.7L18.2 14.9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M6.7 18.4H17.3V10.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M8.3 18.4V15.2H11.4V18.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M7.5 15.9L3.9 12.3L3.9 19.2L10.8 19.2L7.5 15.9Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6.1 10.2L12.7 4.8L19.3 10.2" stroke="currentColor" strokeWidth="1.45" strokeLinecap="square" strokeLinejoin="miter" />
+      <path d="M7 9.45V19.35H18.1V9.45" stroke="currentColor" strokeWidth="1.45" strokeLinecap="square" strokeLinejoin="miter" />
+      <path d="M11.3 19.25V13.3H14.2V19.25" stroke="currentColor" strokeWidth="1.45" strokeLinecap="square" strokeLinejoin="miter" />
+      <path d="M5.2 3.9V10.9" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+      <path d="M2.9 7H7.45" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+      <path d="M3.1 10.7L10.7 19.4H3.1V10.7Z" fill="white" stroke="currentColor" strokeWidth="1.45" strokeLinejoin="miter" />
+      <path d="M4.75 14.55L7.7 17.75H4.75V14.55Z" stroke="currentColor" strokeWidth="1.05" strokeLinejoin="miter" />
     </svg>
   );
 }
@@ -1995,15 +2077,18 @@ function WaterproofingDisciplineIcon({ size = 24, className = '' }: { size?: num
       className={className}
       aria-hidden="true"
     >
-      <path d="M12 3.3C11.6 3.9 11.2 4.4 10.8 5.1C10.1 6.2 9.7 7.1 9.7 7.8C9.7 9 10.8 10.1 12 10.1C13.2 10.1 14.3 9 14.3 7.8C14.3 7.1 13.9 6.2 13.2 5.1C12.8 4.4 12.4 3.9 12 3.3Z" fill="currentColor" />
-      <path d="M8.7 6.4C8.4 6.8 8.1 7.2 7.7 7.8C7.2 8.5 6.9 9.1 6.9 9.6C6.9 10.5 7.6 11.2 8.5 11.2C9.4 11.2 10.1 10.5 10.1 9.6C10.1 9.1 9.8 8.5 9.3 7.8C9 7.2 8.8 6.8 8.7 6.4Z" fill="currentColor" />
-      <path d="M15.3 6.4C15.2 6.8 15 7.2 14.7 7.8C14.2 8.5 13.9 9.1 13.9 9.6C13.9 10.5 14.6 11.2 15.5 11.2C16.4 11.2 17.1 10.5 17.1 9.6C17.1 9.1 16.8 8.5 16.3 7.8C15.9 7.2 15.6 6.8 15.3 6.4Z" fill="currentColor" />
-      <path d="M6.1 14.2H17.9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M6.6 15.8H17.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M5 13.1L8.7 10.1L12 13.1L15.3 10.1L19 13.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4.4 17.1H19.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M4.4 18.8H19.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M6.2 16.6H17.8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="0.1 4.2" />
+      <path d="M12 2.6C11.5 3.4 10.7 4.6 10.7 5.5C10.7 6.5 11.3 7.2 12 7.2C12.8 7.2 13.4 6.5 13.4 5.5C13.4 4.6 12.6 3.4 12 2.6Z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+      <path d="M7.9 4.8C7.5 5.4 7 6.1 7 6.7C7 7.4 7.4 7.9 7.9 7.9C8.5 7.9 8.9 7.4 8.9 6.7C8.9 6.1 8.3 5.4 7.9 4.8Z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+      <path d="M16.1 5.2C15.7 5.8 15.2 6.5 15.2 7.1C15.2 7.8 15.6 8.3 16.1 8.3C16.7 8.3 17.1 7.8 17.1 7.1C17.1 6.5 16.5 5.8 16.1 5.2Z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+      <path d="M6.9 9.8L11.9 14.3L17 9.8" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4.6 11.8L11.9 14.3L19.4 11.8V13.2H4.6V11.8Z" stroke="currentColor" strokeWidth="1.05" strokeLinejoin="round" />
+      <path d="M4.6 15.1C5.3 14.7 6 14.7 6.7 15.1C7.4 15.5 8.1 15.5 8.8 15.1C9.5 14.7 10.2 14.7 10.9 15.1C11.6 15.5 12.3 15.5 13 15.1C13.7 14.7 14.4 14.7 15.1 15.1C15.8 15.5 16.5 15.5 17.2 15.1C17.9 14.7 18.6 14.7 19.3 15.1" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" />
+      <path d="M4.6 16.2H19.4V20.5H4.6V16.2Z" stroke="currentColor" strokeWidth="1.05" />
+      <path d="M5.8 17.5H18.2M5.8 19H18.2" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" strokeDasharray="0.1 2.1" />
+      <path d="M9.4 12.2L6.7 9.5" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" />
+      <path d="M6.7 9.5L6.8 11.1M6.7 9.5L8.3 9.7" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" />
+      <path d="M14.6 12.2L17.3 9.5" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" />
+      <path d="M17.3 9.5L17.2 11.1M17.3 9.5L15.7 9.7" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" />
     </svg>
   );
 }
@@ -2013,11 +2098,12 @@ const disciplineIconMap: Array<{
   icon: React.ComponentType<{ size?: number; className?: string }>;
   label: string;
 }> = [
-  { match: ['terraplanagem', 'terr', 'topografia', 'movimentacao de terra'], icon: Shovel, label: 'Terraplanagem' },
+  { match: ['terraplanagem', 'terr', 'topografia', 'movimentacao de terra'], icon: EarthmovingDisciplineIcon, label: 'Terraplanagem' },
+  { match: ['estrutura de concreto', 'estrutura concreto', 'concreto armado', 'sco'], icon: ConcreteStructureDisciplineIcon, label: 'Estrutura de Concreto' },
   { match: ['estrutural', 'estrutura', 'fundacao', 'fundacoes', 'est'], icon: StructuralDisciplineIcon, label: 'Estrutural' },
   { match: ['hidrossanitario', 'hidraulica', 'esgoto', 'agua fria', 'agua quente', 'hids'], icon: HydroSanitaryDisciplineIcon, label: 'Hidrossanitário' },
   { match: ['avac', 'climatizacao', 'ventilacao', 'ar condicionado'], icon: AvacDisciplineIcon, label: 'AVAC' },
-  { match: ['eletrica', 'elet', 'energia', 'spda', 'subestacao', 'subestacao eletrica', 'dados', 'camera', 'cameras', 'som', 'cftv', 'telecom', 'iluminacao'], icon: PlugZap, label: 'Elétrica' },
+  { match: ['eletrica e spda', 'eletrica', 'elet', 'energia', 'spda', 'subestacao', 'subestacao eletrica', 'dados', 'camera', 'cameras', 'som', 'cftv', 'telecom', 'iluminacao'], icon: ElectricalSpdaDisciplineIcon, label: 'Elétrica e SPDA' },
   { match: ['drenagem', 'dren', 'pluvial', 'escoamento', 'galeria'], icon: DrainageDisciplineIcon, label: 'Drenagem' },
   { match: ['arquitetura', 'arq', 'layout', 'interiores', 'arquitetonica'], icon: ArchitectureDisciplineIcon, label: 'Arquitetura' },
   { match: ['impermeabilizacao', 'impe', 'vedacao', 'waterproof'], icon: WaterproofingDisciplineIcon, label: 'Impermeabilização' }
@@ -2028,6 +2114,29 @@ function getDisciplineIconInfo(value?: string) {
   const normalized = normalizeText(cleaned);
   const match = disciplineIconMap.find((entry) => entry.match.some((token) => normalized.includes(normalizeText(token))));
   return match || { icon: Droplets, label: cleaned || 'Sem disciplina' };
+}
+
+function getDisciplineDisplayName(value?: string) {
+  const cleaned = splitDisciplinas(value)[0] || 'Sem disciplina';
+  const normalized = normalizeText(cleaned);
+  const catalogEntry = DEFAULT_DISCIPLINES.find((entry) => (
+    normalizeText(entry.code) === normalized
+    || normalizeText(entry.name) === normalized
+    || normalizeText(entry.label) === normalized
+    || entry.aliases.some((alias) => normalizeText(alias) === normalized)
+  ));
+
+  if (catalogEntry) return catalogEntry.name;
+  if (normalized === 'ter') return 'Terraplanagem';
+  return getDisciplineIconInfo(cleaned).label || cleaned;
+}
+
+function getDisciplineFilterLabel(value?: string) {
+  return getDisciplineDisplayName(value);
+}
+
+function getDisciplineDetailLabel(value?: string | string[]) {
+  return Array.from(new Set(splitDisciplinas(value).map((item) => getDisciplineDisplayName(item)))).join(' | ');
 }
 
 function getAssigneeInitials(name: string) {
@@ -2100,6 +2209,7 @@ function ProductionCard({
   const valueTone = isBehind ? 'text-[#EF4444]' : 'text-[#166534]';
   const participants = getActivityParticipants(activity);
   const disciplineIcon = getDisciplineIconInfo(activity.disciplina || activity.disciplinas?.[0] || '');
+  const disciplineDisplayName = getDisciplineDisplayName(activity.disciplina || activity.disciplinas?.[0] || '');
   const DisciplineIcon = disciplineIcon.icon;
   const visibleParticipants = participants.slice(0, 2);
   const extraParticipants = Math.max(0, participants.length - visibleParticipants.length);
@@ -2142,8 +2252,8 @@ function ProductionCard({
           <div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-[12px] bg-[#F3F4F6] px-2.5 py-2">
             <div
               className="flex h-10 w-10 items-center justify-center rounded-full border border-[#F05D28] bg-white text-[#F05D28] shadow-[0_3px_8px_rgba(240,93,40,0.10)]"
-              title={disciplineIcon.label}
-              aria-label={disciplineIcon.label}
+              title={disciplineDisplayName}
+              aria-label={disciplineDisplayName}
             >
               <DisciplineIcon size={20} strokeWidth={2.2} />
             </div>
@@ -3036,7 +3146,7 @@ export default function Atividades({
                   <DetailField label="OS" value={selectedActivity.osNome || selectedActivity.osCodigo} />
                   <DetailField label="Contrato" value={selectedActivity.contratoNome || selectedActivity.contratoCodigo} />
                   <DetailField label="Projeto / Objeto" value={selectedActivity.osNome} />
-                  <DetailField label="Disciplina" value={selectedActivity.disciplina} />
+                  <DetailField label="Disciplina" value={getDisciplineDetailLabel(selectedActivity.disciplinas || selectedActivity.disciplina)} />
                   <DetailField label="Subdisciplina" value={selectedActivity.subdisciplina} />
                   <DetailField label="Responsável" value={selectedActivity.responsavel} />
                   <DetailField label="Etapa técnica" value={selectedActivity.etapaTecnica} />

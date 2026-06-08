@@ -242,8 +242,8 @@ function buildLoginFirebaseData_(ss) {
       resetCode: resetCode,
       resetExpires: resetExpires,
       lastSeen: lastSeen,
-      onlyThirdParty: false,
-      showInCharts: true
+      onlyThirdParty: user.onlyThirdParty,
+      showInCharts: user.showInCharts
     };
 
     users.push(authUser);
@@ -402,6 +402,40 @@ function requestRegistroImmediateSync_() {
   } catch (err) {
     return "Registro nao sincronizado: " + String(err);
   }
+}
+
+function forwardAdminSnapshotToRegistro_(snapshot) {
+  var props = PropertiesService.getScriptProperties();
+  var url = String(props.getProperty("registro_apps_script_url") || "").trim();
+
+  if (!url) {
+    return false;
+  }
+
+  var response = UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    muteHttpExceptions: true,
+    payload: JSON.stringify({
+      action: "syncAdminSnapshot",
+      snapshot: snapshot || {}
+    })
+  });
+
+  var status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    throw new Error("Falha ao espelhar administracao no Registro (" + status + "): " + response.getContentText().slice(0, 200));
+  }
+
+  var body = {};
+  try {
+    body = JSON.parse(response.getContentText() || "{}");
+  } catch (err) {}
+  if (body && body.success === false) {
+    throw new Error(String(body.error || "Falha ao espelhar administracao no Registro."));
+  }
+
+  return true;
 }
 
 // --- PUBLICACAO ---
@@ -814,11 +848,25 @@ function doPost(e) {
       if (payload.allocation !== undefined) savePatch.alocacao = String(payload.allocation || '');
       if (payload.contract !== undefined) savePatch.contrato = String(payload.contract || '');
       if (payload.isAdmin !== undefined) savePatch.isadmin = boolToSheet_(payload.isAdmin);
+      if (payload.onlyThirdParty !== undefined) savePatch.onlythirdparty = boolToSheet_(payload.onlyThirdParty);
+      if (payload.showInCharts !== undefined) savePatch.showincharts = boolToSheet_(payload.showInCharts !== false);
       if (payload.status !== undefined) savePatch.status = String(payload.status || 'pending');
 
       setLoginRowPatch_(saveSheet, saveIndex + 1, saveHeader, savePatch);
       publishLoginDataToFirebaseNow();
       logAuth_(ss, 'INFO', 'saveUserAccess ok', saveEmail);
+      return json_({ success: true });
+    }
+
+    if (action === 'syncAdminSnapshot') {
+      var adminSnapshot = payload.snapshot || {};
+      syncUsersSnapshotToLoginSheet_(ss, adminSnapshot.users || adminSnapshot.usuarios || []);
+      publishLoginDataToFirebaseNow();
+      var forwarded = forwardAdminSnapshotToRegistro_(adminSnapshot);
+      logAuth_(ss, 'INFO', 'syncAdminSnapshot ok', safeJson_({
+        users: Array.isArray(adminSnapshot.users) ? adminSnapshot.users.length : 0,
+        forwardedToRegistro: forwarded
+      }));
       return json_({ success: true });
     }
 
@@ -2190,10 +2238,10 @@ function getOrCreateLoginSheet_(ss) {
 
   if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
     sh.clear();
-    sh.getRange(1, 1, 1, 15).setValues([[
+    sh.getRange(1, 1, 1, 17).setValues([[
       'Data', 'Nome', 'Email', 'Role', 'Disciplina', 'Status', 'Abas',
       'PasswordHash', 'ResetCode', 'ResetExpires', 'IsAdmin', 'LastSeen',
-      'Alocacao', 'Contrato', 'SessionVersion'
+      'Alocacao', 'Contrato', 'SessionVersion', 'OnlyThirdParty', 'ShowInCharts'
     ]]);
   }
 
@@ -2201,7 +2249,7 @@ function getOrCreateLoginSheet_(ss) {
 }
 
 function getHeaderMapSafe_(sheet) {
-  var lastColumn = Math.max(15, sheet.getLastColumn());
+  var lastColumn = Math.max(17, sheet.getLastColumn());
   var headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function(value) {
     return String(value || '').trim().toLowerCase();
   });
@@ -2233,7 +2281,9 @@ function getHeaderMapSafe_(sheet) {
     lastseen: ensure('LastSeen'),
     alocacao: ensure('Alocacao'),
     contrato: ensure('Contrato'),
-    sessionversion: ensure('SessionVersion')
+    sessionversion: ensure('SessionVersion'),
+    onlythirdparty: ensure('OnlyThirdParty'),
+    showincharts: ensure('ShowInCharts')
   };
 }
 
@@ -2254,6 +2304,68 @@ function newEmptyLoginRow_(header) {
     row.push('');
   }
   return row;
+}
+
+function syncUsersSnapshotToLoginSheet_(ss, items) {
+  var loginSheet = getOrCreateLoginSheet_(ss);
+  var header = getHeaderMapSafe_(loginSheet);
+  var width = getHeaderWidth_(header);
+  var existingValues = loginSheet.getDataRange().getValues();
+  var existingByEmail = {};
+
+  for (var i = 1; i < existingValues.length; i++) {
+    var existingEmail = normalizeEmail_(existingValues[i][header.email]);
+    if (!existingEmail) continue;
+    existingByEmail[existingEmail] = existingValues[i];
+  }
+
+  var rows = [];
+  var users = Array.isArray(items) ? items : [];
+  for (var u = 0; u < users.length; u++) {
+    var item = users[u] || {};
+    var email = normalizeEmail_(item.email);
+    if (!email) continue;
+    var existing = existingByEmail[email] || newEmptyLoginRow_(header);
+    var row = existing.slice(0, width);
+    while (row.length < width) row.push('');
+    var disciplinas = normalizeUserDisciplines_(item.disciplinas || item.disciplina || '');
+
+    row[header.data] = row[header.data] || new Date().toLocaleString('pt-BR');
+    row[header.nome] = String(item.nome || '');
+    row[header.email] = email;
+    row[header.role] = String(item.cargo || item.role || '');
+    row[header.disciplina] = disciplinas.join(' | ');
+    row[header.status] = String(item.status || 'pending');
+    row[header.abas] = normalizeAllowedTabs_(item.allowedTabs || item.abas || []);
+    row[header.isadmin] = boolToSheet_(item.isAdmin);
+    row[header.alocacao] = String(item.alocacao || '');
+    row[header.contrato] = String(item.contrato || item.contract || '');
+    row[header.onlythirdparty] = boolToSheet_(item.onlyThirdParty || item.onlyThirdPartyUsers || item.somenteTerceirizados);
+    row[header.showincharts] = boolToSheet_(item.showInCharts !== false);
+    rows.push(row);
+  }
+
+  loginSheet.clearContents();
+  var headerRow = [];
+  for (var key in header) {
+    if (!Object.prototype.hasOwnProperty.call(header, key)) continue;
+    headerRow[header[key]] = key;
+  }
+  var titleRow = headerRow.map(function(name) {
+    if (name === 'isadmin') return 'IsAdmin';
+    if (name === 'lastseen') return 'LastSeen';
+    if (name === 'passwordhash') return 'PasswordHash';
+    if (name === 'resetcode') return 'ResetCode';
+    if (name === 'resetexpires') return 'ResetExpires';
+    if (name === 'sessionversion') return 'SessionVersion';
+    if (name === 'onlythirdparty') return 'OnlyThirdParty';
+    if (name === 'showincharts') return 'ShowInCharts';
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  });
+  loginSheet.getRange(1, 1, 1, titleRow.length).setValues([titleRow]);
+  if (rows.length > 0) {
+    loginSheet.getRange(2, 1, rows.length, titleRow.length).setValues(rows);
+  }
 }
 
 function setLoginRowPatch_(sheet, rowNumber, header, patch) {
@@ -2326,6 +2438,11 @@ function boolToSheet_(value) {
   return parseBool_(value) ? 'true' : 'false';
 }
 
+function parseBoolWithDefault_(value, defaultValue) {
+  if (value === '' || value === null || value === undefined) return defaultValue;
+  return parseBool_(value);
+}
+
 function normalizeUserResponse_(row, header) {
   var lastSeen = Number(row[header.lastseen] || 0);
   var online = lastSeen > 0 && (Date.now() - lastSeen <= 2 * 60 * 1000);
@@ -2349,7 +2466,9 @@ function normalizeUserResponse_(row, header) {
     abas: tabs,
     isAdmin: parseBool_(row[header.isadmin]),
     online: online,
-    sessionVersion: String(row[header.sessionversion] || '')
+    sessionVersion: String(row[header.sessionversion] || ''),
+    onlyThirdParty: parseBool_(row[header.onlythirdparty]),
+    showInCharts: header.showincharts === undefined ? true : parseBoolWithDefault_(row[header.showincharts], true)
   };
 }
 

@@ -746,6 +746,15 @@ export async function upsertFirebaseAppData(name: string, data: any) {
   }, { merge: true });
 }
 
+export async function replaceFirebaseAppData(name: string, data: any) {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  await setDoc(doc(dbRef, 'appData', name), {
+    data,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function hashPasswordLikeAppsScript(password: string) {
   const normalized = String(password || '');
   const encoder = new TextEncoder();

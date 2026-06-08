@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { ChevronRight, Save } from 'lucide-react';
+import { ChevronRight, RefreshCcw, Save } from 'lucide-react';
 import Preenchimento from './Preenchimento';
 import Revisoes from './Revisoes';
 import TerceirizadasCadastro from '../TerceirizadasCadastro';
@@ -411,7 +411,9 @@ interface ConformidadeProps {
   pendingTerceirizadaIds?: string[];
   onSaveTerceirizada?: (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => Promise<void>;
   onDeleteTerceirizada?: (id: string) => Promise<void>;
-  onSavePendingInfo?: () => Promise<void>;
+  onSaveChanges?: () => Promise<void>;
+  hasPendingChanges?: boolean;
+  isSavingChanges?: boolean;
 }
 
 export default function Conformidade({
@@ -425,23 +427,27 @@ export default function Conformidade({
   pendingTerceirizadaIds = [],
   onSaveTerceirizada,
   onDeleteTerceirizada,
-  onSavePendingInfo,
+  onSaveChanges,
+  hasPendingChanges = false,
+  isSavingChanges = false,
 }: ConformidadeProps) {
-  const hasPendingTerceirizadas = pendingTerceirizadaIds.length > 0;
-  const [savingPending, setSavingPending] = useState(false);
-
-  const handleSavePendingInfo = async () => {
-    if (!onSavePendingInfo || savingPending || !hasPendingTerceirizadas) return;
-    setSavingPending(true);
-    try {
-      await onSavePendingInfo();
-    } finally {
-      setSavingPending(false);
-    }
-  };
-
   return (
-    <div className="w-full flex flex-col font-['Montserrat']">
+    <div className="w-full flex flex-col font-['Montserrat'] pb-24 md:pb-28">
+      {onSaveChanges && (
+        <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 z-50">
+          <button
+            type="button"
+            onClick={() => void onSaveChanges()}
+            disabled={!hasPendingChanges || isSavingChanges}
+            aria-label="Enviar informacoes"
+            title={hasPendingChanges ? 'Enviar informacoes' : 'Nenhuma alteracao pendente'}
+            className="h-16 px-8 rounded-2xl bg-[#F05D28] text-white text-[15px] font-bold shadow-2xl shadow-black/20 hover:bg-[#D94E1F] transition-colors inline-flex items-center gap-3 disabled:opacity-70"
+          >
+            {isSavingChanges ? <RefreshCcw size={18} className="animate-spin" /> : <Save size={18} />}
+            Enviar informacoes
+          </button>
+        </div>
+      )}
       <div className="w-full">
         {activeTab === 'dashboard' && <Dashboard preloadedData={preloadedData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />}
         {activeTab === 'preenchimento' && <Preenchimento currentUser={currentUser} preloadedData={preloadedData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />}
@@ -456,20 +462,6 @@ export default function Conformidade({
               onSave={onSaveTerceirizada || (async () => {})}
               onDelete={onDeleteTerceirizada || (async () => {})}
             />
-
-            {hasPendingTerceirizadas && (
-              <div className="fixed right-8 bottom-8 z-30 flex">
-                <button
-                  type="button"
-                  onClick={() => void handleSavePendingInfo()}
-                  disabled={savingPending}
-                  className="h-14 px-6 bg-[#F05D28] text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-[#F05D28]/25 disabled:opacity-70"
-                >
-                  <Save size={18} />
-                  {savingPending ? 'Enviando...' : `Enviar informacoes (${pendingTerceirizadaIds.length})`}
-                </button>
-              </div>
-            )}
           </>
         )}
       </div>

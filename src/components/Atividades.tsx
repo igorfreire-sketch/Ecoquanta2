@@ -50,6 +50,7 @@ export interface EngineeringActivity {
   osCodigo: string;
   osNome: string;
   itemCodigo?: string;
+  itemNome?: string;
   disciplina: string;
   disciplinas: string[];
   subdisciplina: string;
@@ -1038,6 +1039,35 @@ const extractLodValue = (value?: string) => {
   return LOD_OPTIONS.includes(numberValue as LodLevel) ? (numberValue as LodLevel) : null;
 };
 
+const stripLodFromTitle = (value?: string, osCode?: string) => {
+  const cleanedOsCode = String(osCode || '').trim();
+  const escapedOsCode = cleanedOsCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  return String(value || '')
+    .replace(/\bLOD\b[^0-9]*\d+/gi, '')
+    .replace(/^\s*\d+(?:\.\d+)+\s*-\s*/g, '')
+    .replace(/^\s*\d+(?:\.\d+)+\s+/g, '')
+    .replace(cleanedOsCode ? new RegExp(`^\\s*${escapedOsCode}\\s*-?\\s*`, 'i') : /^$/, '')
+    .replace(/\s+-\s+-/g, ' - ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+-\s+$/g, '')
+    .trim();
+};
+
+const extractVisualOsCode = (activity: Pick<EngineeringActivity, 'osCodigo' | 'osNome'>) => {
+  const rawOsCode = String(activity.osCodigo || '').trim();
+  if (/^OS\s*\d+/i.test(rawOsCode)) return rawOsCode;
+
+  const titleMatch = String(activity.osNome || '').match(/\bOS\s*\d+\b/i);
+  if (titleMatch) return titleMatch[0].trim().replace(/\s+/g, ' ');
+
+  return rawOsCode;
+};
+
+const getActivityProjectLabel = (activity: Pick<EngineeringActivity, 'itemNome' | 'atividade'>) => {
+  return String(activity.itemNome || activity.atividade || '').trim();
+};
+
 const getNextLodValue = (lod: LodLevel): LodLevel => {
   const sorted = [...LOD_OPTIONS].sort((a, b) => a - b);
   const next = sorted.find((item) => item > lod);
@@ -1256,6 +1286,7 @@ const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProp
       return {
         id: `eap-${code}`,
         itemCodigo: code,
+        itemNome: itemNameByCode.get(code) || rowName,
         sourceType: 'eap',
         contractCode: contractCode || 'Sem contrato',
         contratoCodigo: contractCode || 'Sem contrato',
@@ -1368,6 +1399,7 @@ const normalizeActivity = (raw: Partial<EngineeringActivity> & Record<string, un
     contratoNome: String(raw.contratoNome || raw.contratoCodigo || ''),
     osCodigo: String(raw.osCodigo || ''),
     osNome: String(raw.osNome || ''),
+    itemNome: String((raw as any).itemNome || (raw as any).itemName || ''),
     disciplina: normalizeDisciplineLabel(raw.disciplinas || raw.disciplina || raw.criadoPorDisciplina || ''),
     disciplinas: splitDisciplinas(raw.disciplinas || raw.disciplina || raw.criadoPorDisciplina || '').filter(isMeaningfulDisciplineToken),
     subdisciplina: normalizeDisciplineLabel(raw.subdisciplina || ''),
@@ -2093,27 +2125,88 @@ function WaterproofingDisciplineIcon({ size = 24, className = '' }: { size?: num
   );
 }
 
-const disciplineIconMap: Array<{
-  match: string[];
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+type DisciplineIconInfo = {
+  match?: string[];
+  icon?: React.ComponentType<{ size?: number; className?: string }>;
+  imageSrc?: string;
   label: string;
-}> = [
+};
+
+const disciplineImageModules = import.meta.glob('../../icones/*.png', { eager: true, import: 'default' }) as Record<string, string>;
+
+function normalizeIconStem(value?: string) {
+  return String(value || '')
+    .replace(/\.[^.]+$/, '')
+    .replace(/\(\d+\)$/, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+const disciplineImageEntries = Object.entries(disciplineImageModules).map(([filePath, src]) => {
+  const rawName = filePath.split('/').pop() || filePath.split('\\').pop() || filePath;
+  const stem = rawName.replace(/\.[^.]+$/, '');
+  return {
+    src,
+    rawName,
+    normalizedStem: normalizeIconStem(stem),
+  };
+});
+
+function findDisciplineImageSrc(cleaned: string, catalogEntry?: { code?: string; name?: string; label?: string }) {
+  const candidates = Array.from(
+    new Set(
+      [
+        cleaned,
+        catalogEntry?.name,
+        catalogEntry?.label,
+        catalogEntry?.code,
+        catalogEntry?.code && catalogEntry?.name ? `${catalogEntry.code}${catalogEntry.name}` : '',
+        catalogEntry?.code && catalogEntry?.name ? `${catalogEntry.code}-${catalogEntry.name}` : '',
+      ]
+        .map((value) => normalizeIconStem(value))
+        .filter(Boolean)
+    )
+  );
+
+  for (const candidate of candidates) {
+    const exact = disciplineImageEntries.find((entry) => entry.normalizedStem === candidate);
+    if (exact) return exact.src;
+  }
+
+  for (const candidate of candidates) {
+    const partial = disciplineImageEntries.find((entry) => entry.normalizedStem.includes(candidate) || candidate.includes(entry.normalizedStem));
+    if (partial) return partial.src;
+  }
+
+  return undefined;
+}
+
+const disciplineIconMap: DisciplineIconInfo[] = [
   { match: ['terraplanagem', 'terr', 'topografia', 'movimentacao de terra'], icon: EarthmovingDisciplineIcon, label: 'Terraplanagem' },
   { match: ['estrutura de concreto', 'estrutura concreto', 'concreto armado', 'sco'], icon: ConcreteStructureDisciplineIcon, label: 'Estrutura de Concreto' },
   { match: ['estrutural', 'estrutura', 'fundacao', 'fundacoes', 'est'], icon: StructuralDisciplineIcon, label: 'Estrutural' },
-  { match: ['hidrossanitario', 'hidraulica', 'esgoto', 'agua fria', 'agua quente', 'hids'], icon: HydroSanitaryDisciplineIcon, label: 'Hidrossanitário' },
-  { match: ['avac', 'climatizacao', 'ventilacao', 'ar condicionado'], icon: AvacDisciplineIcon, label: 'AVAC' },
-  { match: ['eletrica e spda', 'eletrica', 'elet', 'energia', 'spda', 'subestacao', 'subestacao eletrica', 'dados', 'camera', 'cameras', 'som', 'cftv', 'telecom', 'iluminacao'], icon: ElectricalSpdaDisciplineIcon, label: 'Elétrica e SPDA' },
-  { match: ['drenagem', 'dren', 'pluvial', 'escoamento', 'galeria'], icon: DrainageDisciplineIcon, label: 'Drenagem' },
-  { match: ['arquitetura', 'arq', 'layout', 'interiores', 'arquitetonica'], icon: ArchitectureDisciplineIcon, label: 'Arquitetura' },
   { match: ['impermeabilizacao', 'impe', 'vedacao', 'waterproof'], icon: WaterproofingDisciplineIcon, label: 'Impermeabilização' }
 ];
 
-function getDisciplineIconInfo(value?: string) {
+function getDisciplineIconInfo(value?: string): DisciplineIconInfo {
   const cleaned = String(value || '').trim();
   const normalized = normalizeText(cleaned);
-  const match = disciplineIconMap.find((entry) => entry.match.some((token) => normalized.includes(normalizeText(token))));
-  return match || { icon: Droplets, label: cleaned || 'Sem disciplina' };
+  const catalogEntry = DEFAULT_DISCIPLINES.find((entry) => (
+    normalizeText(entry.code) === normalized
+    || normalizeText(entry.name) === normalized
+    || normalizeText(entry.label) === normalized
+    || entry.aliases.some((alias) => normalizeText(alias) === normalized)
+  ));
+  const imageSrc = findDisciplineImageSrc(cleaned, catalogEntry);
+  if (imageSrc) {
+    return { imageSrc, label: catalogEntry?.name || cleaned || 'Sem disciplina' };
+  }
+
+  const match = disciplineIconMap.find((entry) => entry.match?.some((token) => normalized.includes(normalizeText(token))));
+  return match || { icon: Droplets, label: catalogEntry?.name || cleaned || 'Sem disciplina' };
 }
 
 function getDisciplineDisplayName(value?: string) {
@@ -2213,8 +2306,9 @@ function ProductionCard({
   const DisciplineIcon = disciplineIcon.icon;
   const visibleParticipants = participants.slice(0, 2);
   const extraParticipants = Math.max(0, participants.length - visibleParticipants.length);
-  const displayCode = getActivityRenderableCode(activity) || activity.origemItem || activity.osCodigo;
-  const workFrontText = 'Projeto...... - Licitação.....';
+  const displayCode = extractVisualOsCode(activity) || activity.osCodigo || getActivityRenderableCode(activity) || activity.origemItem;
+  const displayTitle = stripLodFromTitle(activity.osNome, displayCode) || activity.osNome || activity.osCodigo;
+  const workFrontText = getActivityProjectLabel(activity);
 
   return (
     <div ref={hostRef} className="relative w-full" style={{ height: `${CARD_DESIGN_HEIGHT * scale}px` }}>
@@ -2244,18 +2338,28 @@ function ProductionCard({
 
         <div className="flex min-h-[54px] items-center pr-8">
           <p className="text-[18px] font-medium leading-[1.18] text-[#111827]">
-            <span className="font-black text-[#F05D28]">{displayCode || activity.osCodigo}</span> - {activity.osNome}
+            {displayCode ? <span className="font-black text-[#F05D28]">{displayCode}</span> : null}
+            {displayCode ? ' - ' : ''}
+            {displayTitle}
           </p>
         </div>
 
         <div className="mt-2 grid grid-cols-[minmax(0,1fr)_190px] gap-2">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-[12px] bg-[#F3F4F6] px-2.5 py-2">
             <div
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-[#F05D28] bg-white text-[#F05D28] shadow-[0_3px_8px_rgba(240,93,40,0.10)]"
+              className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-[3px] text-[#F05D28] shadow-[0_3px_8px_rgba(240,93,40,0.10)]"
               title={disciplineDisplayName}
               aria-label={disciplineDisplayName}
             >
-              <DisciplineIcon size={20} strokeWidth={2.2} />
+              {disciplineIcon.imageSrc ? (
+                <img
+                  src={disciplineIcon.imageSrc}
+                  alt={disciplineDisplayName}
+                  className="h-full w-full rounded-full object-cover"
+                />
+              ) : DisciplineIcon ? (
+                <DisciplineIcon size={30} className="scale-[1.05]" strokeWidth={2.2} />
+              ) : null}
             </div>
 
             {visibleParticipants.map((person) => {
@@ -2313,7 +2417,7 @@ function ProductionCard({
             </div>
 
             <div className="min-w-0">
-              <p className="text-[14px] font-black leading-tight text-[#111827] break-words">{workFrontText}</p>
+              <p className="text-[14px] font-black leading-tight text-[#111827] break-words">{workFrontText || ' '}</p>
             </div>
           </div>
         </div>
@@ -2360,7 +2464,7 @@ export default function Atividades({
   const [filterLod, setFilterLod] = useState('Todos');
   const [filterStatus, setFilterStatus] = useState('Todos');
   const [filterPrioridade, setFilterPrioridade] = useState('Todos');
-  const [filterShowCompleted, setFilterShowCompleted] = useState(true);
+  const [filterShowCompleted, setFilterShowCompleted] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedEapIndex, setSelectedEapIndex] = useState<number | null>(null);
@@ -2385,6 +2489,22 @@ export default function Atividades({
   const selectedActivity = useMemo(
     () => activitiesWithDiscipline.find((activity) => activity.id === selectedActivityId) || null,
     [activitiesWithDiscipline, selectedActivityId]
+  );
+  const selectedActivityDisplayCode = useMemo(
+    () => (selectedActivity ? extractVisualOsCode(selectedActivity) || selectedActivity.osCodigo || getActivityRenderableCode(selectedActivity) || selectedActivity.origemItem || '' : ''),
+    [selectedActivity]
+  );
+  const selectedActivityDisplayTitle = useMemo(
+    () => (selectedActivity ? stripLodFromTitle(selectedActivity.osNome, selectedActivityDisplayCode) || '' : ''),
+    [selectedActivity, selectedActivityDisplayCode]
+  );
+  const selectedActivityDisciplineIcon = useMemo(
+    () => (selectedActivity ? getDisciplineIconInfo(selectedActivity.disciplina || selectedActivity.disciplinas?.[0] || '') : null),
+    [selectedActivity]
+  );
+  const selectedActivityDisciplineName = useMemo(
+    () => (selectedActivity ? getDisciplineDisplayName(selectedActivity.disciplina || selectedActivity.disciplinas?.[0] || '') : ''),
+    [selectedActivity]
   );
 
   const disciplineScopedActivities = useMemo(
@@ -2932,9 +3052,6 @@ export default function Atividades({
               </div>
             </div>
           </div>
-          <div className="inline-flex items-center gap-2 self-start rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-[11px] font-semibold text-[#64748B] xl:shrink-0 xl:self-center">
-            <span>Clique no cartão para abrir os detalhes</span>
-          </div>
         </div>
 
         <div className="mb-3">
@@ -3041,19 +3158,42 @@ export default function Atividades({
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-[#F05D28]">Detalhamento operacional</p>
-                    <h3 className="mt-2 text-[18px] font-black text-[#2D2D2D]">{selectedActivity.osCodigo} · {selectedActivity.osNome}</h3>
+                    <h3 className="mt-2 text-[18px] font-black text-[#2D2D2D]">
+                      {selectedActivityDisplayCode}
+                      {selectedActivityDisplayTitle ? ` · ${selectedActivityDisplayTitle}` : ''}
+                    </h3>
                     <p className="mt-2 text-[12px] leading-relaxed text-[#64748B]">
                       Painel lateral com os dados técnicos e operacionais da atividade selecionada.
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setSelectedActivityId(null)}
-                    className="flex h-9 w-9 items-center justify-center rounded-full border border-[#E5E7EB] text-[#64748B] transition-colors hover:bg-[#F8FAFC] cursor-pointer"
-                  >
-                    <X size={16} />
-                  </button>
+                  <div className="flex items-start gap-4">
+                    {selectedActivityDisciplineIcon ? (
+                      <div
+                        className="flex h-[65px] w-[65px] items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-[4px] shadow-[0_4px_12px_rgba(240,93,40,0.12)]"
+                        title={selectedActivityDisciplineName}
+                        aria-label={selectedActivityDisciplineName}
+                      >
+                        {selectedActivityDisciplineIcon.imageSrc ? (
+                          <img
+                            src={selectedActivityDisciplineIcon.imageSrc}
+                            alt={selectedActivityDisciplineName}
+                            className="h-full w-full rounded-full object-cover"
+                          />
+                        ) : selectedActivityDisciplineIcon.icon ? (
+                          <selectedActivityDisciplineIcon.icon size={46} className="scale-[1.05] text-[#F05D28]" />
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedActivityId(null)}
+                      className="flex h-9 w-9 items-center justify-center rounded-full border border-[#E5E7EB] text-[#64748B] transition-colors hover:bg-[#F8FAFC] cursor-pointer"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -3142,18 +3282,19 @@ export default function Atividades({
                 </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-3">
-                  <DetailField label="OS" value={selectedActivity.osNome || selectedActivity.osCodigo} />
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <DetailField label="OS" value={selectedActivityDisplayCode || selectedActivity.osNome || selectedActivity.osCodigo} />
                   <DetailField label="Contrato" value={selectedActivity.contratoNome || selectedActivity.contratoCodigo} />
-                  <DetailField label="Projeto / Objeto" value={selectedActivity.osNome} />
+                  <DetailField label="ID" value={selectedActivity.origemItem || selectedActivity.itemCodigo || '-'} />
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                   <DetailField label="Disciplina" value={getDisciplineDetailLabel(selectedActivity.disciplinas || selectedActivity.disciplina)} />
-                  <DetailField label="Subdisciplina" value={selectedActivity.subdisciplina} />
                   <DetailField label="Responsável" value={selectedActivity.responsavel} />
-                  <DetailField label="Etapa técnica" value={selectedActivity.etapaTecnica} />
                   <DetailField label="Prioridade" value={<PriorityBadge priority={selectedActivity.prioridade} />} />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                   <DetailField
                     label="Status atual"
                     value={
@@ -3162,33 +3303,14 @@ export default function Atividades({
                       </span>
                     }
                   />
-                </div>
-
-                <DetailField label="Atividade completa" value={<p className="leading-relaxed text-[#334155]">{isManualActivity(selectedActivity) ? selectedActivity.atividade : ''}</p>} />
-
-                <div className="grid grid-cols-2 gap-3">
                   <DetailField label="Início planejado" value={formatDatePt(selectedActivity.inicioPlanejado)} />
                   <DetailField label="Término planejado" value={formatDatePt(selectedActivity.terminoPlanejado)} />
-                  <DetailField label="Percentual previsto" value={`${selectedActivity.percentualPrevisto}%`} />
-                  <DetailField label="Percentual realizado" value={typeof selectedActivity.porcentagemAtividade === 'number' ? `${getLeaderPercentual(selectedActivity)}%` : '-'} />
-                  <DetailField
-                    label="Diferença previsto x realizado"
-                    value={
-                      <span className={typeof selectedActivity.porcentagemAtividade === 'number' ? (getProgressDelta(selectedActivity) < 0 ? 'text-[#B45309]' : 'text-[#0F766E]') : 'text-[#94A3B8]'}>
-                        {typeof selectedActivity.porcentagemAtividade === 'number'
-                          ? `${getProgressDelta(selectedActivity) >= 0 ? `+${getProgressDelta(selectedActivity)}` : getProgressDelta(selectedActivity)} pontos`
-                          : '-'}
-                      </span>
-                    }
-                  />
-                  <DetailField label="Origem EAP" value={selectedActivity.origemItem || 'Sem código informado'} />
                 </div>
 
                 <ProgressComparison activity={selectedActivity} />
 
                 <DetailField label="Motivo de bloqueio" value={selectedActivity.motivoBloqueio || 'Sem bloqueio registrado para esta atividade.'} />
-                <DetailField label="Próxima ação" value={selectedActivity.proximaAcao} />
-                <DetailField label="Observações" value={selectedActivity.observacaoLider || selectedActivity.observacoes} />
+                <DetailField label="Observações" value={' '} />
                 </div>
               </div>
               </motion.div>

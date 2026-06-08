@@ -15,6 +15,8 @@ import {
   ExternalLink,
   Save,
   ChevronRight,
+  X,
+  Mail,
 } from 'lucide-react';
 import TerceirizadasCadastro from './TerceirizadasCadastro';
 
@@ -86,7 +88,6 @@ interface AdministracaoProps {
   onUpdateUsuario: (userId: string, patch: Partial<UserAccessRecord>) => void;
   onToggleAdmin: (userId: string, checked: boolean) => void;
   onToggleTabPermission: (userId: string, tabKey: AppTabKey) => void;
-  onSavePendingUsers: () => Promise<void>;
   dirtyUserIds: string[];
   pendingTerceirizadaIds: string[];
   onAcceptUser: (userId: string) => Promise<void>;
@@ -104,6 +105,9 @@ interface AdministracaoProps {
   onToggleRoleTabPermission: (cargo: string, tabKey: AppTabKey) => Promise<void>;
   onSaveDatabaseLink: (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => Promise<void>;
   onDeleteDatabaseLink: (id: string) => Promise<void>;
+  onSaveChanges: () => Promise<void>;
+  hasPendingChanges: boolean;
+  isSavingChanges: boolean;
 }
 
 function statusLabel(status: UserStatus) {
@@ -338,6 +342,38 @@ function InlineListManager({
   );
 }
 
+function ManagementLauncherCard({
+  title,
+  subtitle,
+  badge,
+  onOpen,
+}: {
+  title: string;
+  subtitle: string;
+  badge: string;
+  onOpen: () => void;
+}) {
+  return (
+    <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
+      <div className="space-y-2">
+        <div className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
+          {badge}
+        </div>
+        <h3 className="text-[16px] font-bold text-[#2D2D2D]">{title}</h3>
+        <p className="text-[13px] text-[#757575] leading-relaxed">{subtitle}</p>
+      </div>
+
+      <button
+        type="button"
+        onClick={onOpen}
+        className="h-11 px-5 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center justify-center gap-2 w-fit"
+      >
+        {title}
+      </button>
+    </div>
+  );
+}
+
 function DisciplineSettingsManager({
   items,
   settings,
@@ -453,6 +489,86 @@ function DisciplineSettingsManager({
             </label>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function FadeModal({
+  open,
+  title,
+  subtitle,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  subtitle: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const [shouldRender, setShouldRender] = React.useState(open);
+  const [visible, setVisible] = React.useState(open);
+
+  React.useEffect(() => {
+    if (open) {
+      setShouldRender(true);
+      const frame = window.requestAnimationFrame(() => setVisible(true));
+      return () => window.cancelAnimationFrame(frame);
+    }
+
+    setVisible(false);
+    const timeout = window.setTimeout(() => setShouldRender(false), 220);
+    return () => window.clearTimeout(timeout);
+  }, [open]);
+
+  React.useEffect(() => {
+    if (!shouldRender) return undefined;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [shouldRender, onClose]);
+
+  if (!shouldRender) return null;
+
+  return (
+    <div
+      className={`fixed inset-0 z-[80] flex items-center justify-center p-4 transition-opacity duration-200 ${visible ? 'opacity-100' : 'opacity-0'}`}
+      aria-modal="true"
+      role="dialog"
+    >
+      <button
+        type="button"
+        aria-label="Fechar janela"
+        onClick={onClose}
+        className="absolute inset-0 bg-[#111827]/45 backdrop-blur-[2px]"
+      />
+
+      <div
+        className={`relative z-[81] w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-[28px] border border-[#E5E7EB] bg-white shadow-2xl shadow-black/20 transition-all duration-200 ${visible ? 'translate-y-0 scale-100' : 'translate-y-3 scale-[0.98]'}`}
+      >
+        <div className="px-6 md:px-8 py-5 border-b border-[#E5E7EB] flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-[20px] font-bold text-[#2D2D2D]">{title}</h2>
+            <p className="text-[13px] text-[#757575] mt-1">{subtitle}</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-11 h-11 rounded-xl border border-[#E5E7EB] bg-white text-[#757575] hover:text-[#2D2D2D] hover:border-[#F05D28] transition-colors inline-flex items-center justify-center shrink-0"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-6 md:p-8 overflow-y-auto max-h-[calc(85vh-88px)] bg-[#FCFCFD]">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -775,7 +891,6 @@ export default function Administracao({
   onUpdateUsuario,
   onToggleAdmin,
   onToggleTabPermission,
-  onSavePendingUsers,
   dirtyUserIds,
   pendingTerceirizadaIds,
   onAcceptUser,
@@ -793,12 +908,18 @@ export default function Administracao({
   onToggleRoleTabPermission,
   onSaveDatabaseLink,
   onDeleteDatabaseLink,
+  onSaveChanges,
+  hasPendingChanges,
+  isSavingChanges,
 }: AdministracaoProps) {
   const [search, setSearch] = React.useState('');
   const deferredSearch = React.useDeferredValue(search);
   const [disciplinaFiltro, setDisciplinaFiltro] = React.useState('Todas');
   const [cargoFiltro, setCargoFiltro] = React.useState('Todos');
-  const [savingUsers, setSavingUsers] = React.useState(false);
+  const [activeManagementModal, setActiveManagementModal] = React.useState<null | 'cargos' | 'disciplinas' | 'alocacoes'>(null);
+  const [deliveryNoticeCount, setDeliveryNoticeCount] = React.useState(0);
+  const [deliveryNoticeOpen, setDeliveryNoticeOpen] = React.useState(false);
+  const wasSavingRef = React.useRef(false);
 
   const totalUsuarios = usuarios.length;
   const usuariosOnline = usuarios.filter((user) => user.online).length;
@@ -826,21 +947,83 @@ export default function Administracao({
     });
   }, [usuarios, deferredSearch, disciplinaFiltro, cargoFiltro]);
 
-  const pendingChangesCount = dirtyUserIds.length + pendingTerceirizadaIds.length;
-  const hasPendingChanges = pendingChangesCount > 0;
-
-  const handleSavePendingUsers = async () => {
-    if (!hasPendingChanges || savingUsers) return;
-    setSavingUsers(true);
-    try {
-      await onSavePendingUsers();
-    } finally {
-      setSavingUsers(false);
+  React.useEffect(() => {
+    if (isSavingChanges) {
+      wasSavingRef.current = true;
+      return;
     }
-  };
+
+    if (wasSavingRef.current && !hasPendingChanges) {
+      setDeliveryNoticeCount(1);
+      setDeliveryNoticeOpen(false);
+    }
+
+    wasSavingRef.current = false;
+  }, [hasPendingChanges, isSavingChanges]);
 
   return (
-    <div className="space-y-6 max-w-full">
+    <div className="space-y-6 max-w-full pb-24 md:pb-28">
+      {deliveryNoticeCount > 0 && (
+        <div className="fixed top-4 right-4 md:top-6 md:right-6 z-[70]">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setDeliveryNoticeOpen((prev) => !prev)}
+              className="relative w-12 h-12 rounded-2xl border border-[#E5E7EB] bg-white text-[#F05D28] shadow-xl shadow-black/10 hover:border-[#F05D28] transition-colors inline-flex items-center justify-center"
+              aria-label="Abrir notificacao de envio"
+              title="Notificacao de envio"
+            >
+              <Mail size={18} />
+              <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-[#F05D28] text-white text-[10px] font-bold inline-flex items-center justify-center">
+                {deliveryNoticeCount}
+              </span>
+            </button>
+
+            {deliveryNoticeOpen && (
+              <div className="absolute top-14 right-0 w-[320px] rounded-2xl border border-[#E5E7EB] bg-white shadow-2xl shadow-black/15 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[13px] font-bold text-[#2D2D2D]">Aviso de atualizacao</p>
+                    <p className="text-[12px] text-[#757575] mt-2 leading-relaxed">
+                      As atualizacoes e informacoes preenchidas no site podem demorar ate 5 minutos para atualizar, pois o site e criptografado e esse processo pode levar um pouco mais de tempo.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeliveryNoticeOpen(false);
+                      setDeliveryNoticeCount((prev) => {
+                        const next = Math.max(0, prev - 1);
+                        return next;
+                      });
+                    }}
+                    className="w-8 h-8 rounded-lg text-[#757575] hover:text-[#2D2D2D] hover:bg-[#F9FAFB] transition-colors inline-flex items-center justify-center shrink-0"
+                    aria-label="Fechar notificacao"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 z-50">
+        <button
+          type="button"
+          onClick={() => void onSaveChanges()}
+          disabled={!hasPendingChanges || isSavingChanges}
+          aria-label="Enviar informacoes"
+          title={hasPendingChanges ? 'Enviar informacoes' : 'Nenhuma alteracao pendente'}
+          className="h-16 px-8 rounded-2xl bg-[#F05D28] text-white text-[15px] font-bold shadow-2xl shadow-black/20 hover:bg-[#D94E1F] transition-colors inline-flex items-center gap-3 disabled:opacity-70"
+        >
+          {isSavingChanges ? <RefreshCcw size={18} className="animate-spin" /> : <Save size={18} />}
+          Enviar informacoes
+        </button>
+      </div>
+
       {activeSection === 'usuarios' && (
         <>
       <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 lg:p-8">
@@ -914,7 +1097,10 @@ export default function Administracao({
 
           <button
             type="button"
-            onClick={() => void onRefresh()}
+            onClick={() => {
+              if (hasPendingChanges && !window.confirm('Existem alteracoes sem enviar. Atualizar vai descarta-las. Deseja continuar?')) return;
+              void onRefresh();
+            }}
             className="h-11 px-4 rounded-xl border border-[#E5E7EB] bg-white text-[#2D2D2D] text-[13px] font-bold hover:border-[#F05D28] hover:text-[#F05D28] transition-colors inline-flex items-center justify-center gap-2"
           >
             <RefreshCcw size={16} />
@@ -1162,6 +1348,77 @@ export default function Administracao({
       {activeSection === 'gerenciamento' && (
         <>
       <section className="grid grid-cols-1 2xl:grid-cols-3 gap-6">
+        <ManagementLauncherCard
+          title="Gerenciar Cargos"
+          subtitle="Visualize os cargos cadastrados e abra o balão para editar a lista."
+          badge={`${cargos.length} cadastrado(s)`}
+          onOpen={() => setActiveManagementModal('cargos')}
+        />
+
+        <ManagementLauncherCard
+          title="Gerenciar Disciplinas"
+          subtitle="Visualize as disciplinas cadastradas e abra o balão para editar e controlar os graficos."
+          badge={`${disciplinas.length} cadastrada(s)`}
+          onOpen={() => setActiveManagementModal('disciplinas')}
+        />
+
+        <ManagementLauncherCard
+          title="Gerenciar Alocacao"
+          subtitle="Visualize as alocacoes cadastradas e abra o balão para manter tudo padronizado."
+          badge={`${alocacoes.length} cadastrada(s)`}
+          onOpen={() => setActiveManagementModal('alocacoes')}
+        />
+      </section>
+
+      <FadeModal
+        open={activeManagementModal === 'cargos'}
+        title="Gerenciar Cargos"
+        subtitle="Visualize tudo o que ja esta cadastrado e ajuste os cargos em um unico lugar."
+        onClose={() => setActiveManagementModal(null)}
+      >
+        <InlineListManager
+          title="Gerenciar Cargos"
+          subtitle="Adicione ou remova os cargos disponiveis para selecao no cadastro administrativo."
+          items={cargos}
+          placeholder="Novo cargo"
+          onAdd={onAddCargo}
+          onRemove={onRemoveCargo}
+        />
+      </FadeModal>
+
+      <FadeModal
+        open={activeManagementModal === 'disciplinas'}
+        title="Gerenciar Disciplinas"
+        subtitle="Visualize as disciplinas cadastradas, ajuste a exibicao em graficos e remova o que nao serve mais."
+        onClose={() => setActiveManagementModal(null)}
+      >
+        <DisciplineSettingsManager
+          items={disciplinas}
+          settings={disciplineSettings}
+          onAdd={onAddDisciplina}
+          onRemove={onRemoveDisciplina}
+          onToggleCharts={onToggleDisciplineCharts}
+        />
+      </FadeModal>
+
+      <FadeModal
+        open={activeManagementModal === 'alocacoes'}
+        title="Gerenciar Alocacao"
+        subtitle="Visualize as alocacoes cadastradas e mantenha a lista padronizada."
+        onClose={() => setActiveManagementModal(null)}
+      >
+        <InlineListManager
+          title="Gerenciar Alocacao"
+          subtitle="Adicione ou remova as opcoes de alocacao disponiveis para os usuarios."
+          items={alocacoes}
+          placeholder="Nova alocacao"
+          onAdd={onAddAlocacao}
+          onRemove={onRemoveAlocacao}
+        />
+      </FadeModal>
+
+      {false && (
+      <section className="grid grid-cols-1 2xl:grid-cols-3 gap-6">
         <InlineListManager
           title="Gerenciar Cargos"
           subtitle="Adicione ou remova os cargos disponíveis para seleção no cadastro administrativo."
@@ -1187,7 +1444,7 @@ export default function Administracao({
           onRemove={onRemoveAlocacao}
         />
       </section>
-
+      )}
 
       <RoleTabPermissionsManager
         cargos={cargos}
@@ -1251,19 +1508,6 @@ export default function Administracao({
         </>
       )}
 
-      {hasPendingChanges && (
-        <div className="fixed right-8 bottom-8 z-30 flex">
-          <button
-            type="button"
-            onClick={() => void handleSavePendingUsers()}
-            disabled={savingUsers}
-            className="h-14 px-6 bg-[#F05D28] text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-xl shadow-[#F05D28]/25 disabled:opacity-70"
-          >
-            <Save size={18} />
-            {savingUsers ? 'Enviando...' : `Enviar informacoes (${pendingChangesCount})`}
-          </button>
-        </div>
-      )}
     </div>
   );
 }

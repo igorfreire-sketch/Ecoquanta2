@@ -168,6 +168,18 @@ function doPost(e) {
       return json_({ success: true });
     }
 
+    if (action === 'syncAdminSnapshot') {
+      var adminSnapshot = data.snapshot || {};
+      syncAdminSnapshotToSheets_(ss, adminSnapshot);
+      logAuth_(ss, 'INFO', 'syncAdminSnapshot ok', safeJson_({
+        users: Array.isArray(adminSnapshot.users) ? adminSnapshot.users.length : 0,
+        cargos: Array.isArray(adminSnapshot.cargos) ? adminSnapshot.cargos.length : 0,
+        terceirizadas: Array.isArray(adminSnapshot.terceirizadas) ? adminSnapshot.terceirizadas.length : 0
+      }));
+      flushAndSchedulePublicJsonPublish_();
+      return json_({ success: true });
+    }
+
     if (action === 'saveDatabaseLink') {
       var idDbFast = String(data.id || '').trim();
       var nomeDbFast = String(data.nome || '').trim();
@@ -515,6 +527,8 @@ function doPost(e) {
       if (data.allocation !== undefined) saveUserPatch.alocacao = String(data.allocation || '');
       if (data.contract !== undefined) saveUserPatch.contrato = String(data.contract || '');
       if (data.isAdmin !== undefined) saveUserPatch.isadmin = boolToSheet_(data.isAdmin);
+      if (data.onlyThirdParty !== undefined) saveUserPatch.onlythirdparty = boolToSheet_(data.onlyThirdParty);
+      if (data.showInCharts !== undefined) saveUserPatch.showincharts = boolToSheet_(data.showInCharts !== false);
       if (data.status !== undefined) saveUserPatch.status = String(data.status || 'pending');
       saveUserPatch.lastseen = '';
       saveUserPatch.sessionversion = newSessionVersion_();
@@ -1289,6 +1303,134 @@ function getTerceirizadas_(ss) {
   return out;
 }
 
+function extractDisciplineNamesFromSnapshot_(items) {
+  if (!Array.isArray(items)) return [];
+  return uniqueSorted_(
+    items.map(function(item) {
+      if (item && typeof item === 'object') {
+        return String(item.nome || item.name || '').trim();
+      }
+      return String(item || '').trim();
+    }).filter(Boolean)
+  );
+}
+
+function replaceSimpleSheetRows_(sheet, headerRow, rows) {
+  sheet.clearContents();
+  var allRows = [headerRow].concat(Array.isArray(rows) && rows.length ? rows : []);
+  sheet.getRange(1, 1, allRows.length, headerRow.length).setValues(allRows);
+}
+
+function syncDatabaseLinksSnapshotToSheet_(ss, items) {
+  var sh = getOrCreateDatabaseLinksSheet_(ss);
+  var now = new Date().toLocaleString('pt-BR');
+  var rows = (Array.isArray(items) ? items : []).map(function(item) {
+    return [
+      String(item && item.id || Utilities.getUuid()),
+      String(item && item.nome || ''),
+      String(item && item.link || ''),
+      String(item && item.descricao || ''),
+      String(item && item.atualizadoEm || now)
+    ];
+  }).filter(function(row) {
+    return String(row[0] || '').trim() && String(row[1] || '').trim();
+  });
+  replaceSimpleSheetRows_(sh, ['ID', 'Nome', 'Link', 'Descricao', 'AtualizadoEm'], rows);
+}
+
+function syncTerceirizadasSnapshotToSheet_(ss, items) {
+  var sh = getOrCreateTerceirizadasSheet_(ss);
+  var now = new Date().toLocaleString('pt-BR');
+  var rows = (Array.isArray(items) ? items : []).map(function(item) {
+    return [
+      String(item && item.id || Utilities.getUuid()),
+      String(item && item.nome || ''),
+      String(item && item.disciplina || ''),
+      now
+    ];
+  }).filter(function(row) {
+    return String(row[0] || '').trim() && String(row[1] || '').trim() && String(row[2] || '').trim();
+  });
+  replaceSimpleSheetRows_(sh, ['ID', 'Nome', 'Disciplina', 'AtualizadoEm'], rows);
+}
+
+function syncUsersSnapshotToLoginSheet_(ss, items) {
+  var loginSheet = getOrCreateLoginSheet_(ss);
+  var header = getHeaderMapSafe_(loginSheet);
+  var width = getHeaderWidth_(header);
+  var existingValues = loginSheet.getDataRange().getValues();
+  var existingByEmail = {};
+
+  for (var i = 1; i < existingValues.length; i++) {
+    var existingEmail = normalizeEmail_(existingValues[i][header.email]);
+    if (!existingEmail) continue;
+    existingByEmail[existingEmail] = existingValues[i];
+  }
+
+  var rows = [];
+  var users = Array.isArray(items) ? items : [];
+  for (var u = 0; u < users.length; u++) {
+    var item = users[u] || {};
+    var email = normalizeEmail_(item.email);
+    if (!email) continue;
+    var existing = existingByEmail[email] || newEmptyLoginRow_(header);
+    var row = existing.slice(0, width);
+    while (row.length < width) row.push('');
+    var disciplinas = normalizeUserDisciplines_(item.disciplinas || item.disciplina || '');
+
+    row[header.data] = row[header.data] || new Date().toLocaleString('pt-BR');
+    row[header.nome] = String(item.nome || '');
+    row[header.email] = email;
+    row[header.role] = String(item.cargo || item.role || '');
+    row[header.disciplina] = disciplinas.join(' | ');
+    row[header.status] = String(item.status || 'pending');
+    row[header.abas] = normalizeAllowedTabs_(item.allowedTabs || item.abas || []);
+    row[header.isadmin] = boolToSheet_(item.isAdmin);
+    row[header.alocacao] = String(item.alocacao || '');
+    row[header.contrato] = String(item.contrato || item.contract || '');
+    row[header.onlythirdparty] = boolToSheet_(item.onlyThirdParty || item.onlyThirdPartyUsers || item.somenteTerceirizados);
+    row[header.showincharts] = boolToSheet_(item.showInCharts !== false);
+    rows.push(row);
+  }
+
+  loginSheet.clearContents();
+  var headerRow = [];
+  for (var key in header) {
+    if (!Object.prototype.hasOwnProperty.call(header, key)) continue;
+    headerRow[header[key]] = key;
+  }
+  var titleRow = headerRow.map(function(name) {
+    if (name === 'isadmin') return 'IsAdmin';
+    if (name === 'lastseen') return 'LastSeen';
+    if (name === 'passwordhash') return 'PasswordHash';
+    if (name === 'resetcode') return 'ResetCode';
+    if (name === 'resetexpires') return 'ResetExpires';
+    if (name === 'sessionversion') return 'SessionVersion';
+    if (name === 'onlythirdparty') return 'OnlyThirdParty';
+    if (name === 'showincharts') return 'ShowInCharts';
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  });
+  loginSheet.getRange(1, 1, 1, titleRow.length).setValues([titleRow]);
+  if (rows.length > 0) {
+    loginSheet.getRange(2, 1, rows.length, titleRow.length).setValues(rows);
+  }
+}
+
+function syncAdminSnapshotToSheets_(ss, snapshot) {
+  snapshot = snapshot && typeof snapshot === 'object' ? snapshot : {};
+  var disciplinas = extractDisciplineNamesFromSnapshot_(snapshot.disciplinas || snapshot.disciplineSettings);
+  saveConfigSheet_(
+    ss,
+    uniqueSorted_(arrayFromAny_(snapshot.cargos)),
+    disciplinas,
+    uniqueSorted_(arrayFromAny_(snapshot.alocacoes))
+  );
+  saveRoleTabPermissions_(ss, snapshot.roleTabPermissions || {});
+  syncDatabaseLinksSnapshotToSheet_(ss, snapshot.databaseLinks || []);
+  syncTerceirizadasSnapshotToSheet_(ss, snapshot.terceirizadas || []);
+  syncUsersSnapshotToLoginSheet_(ss, snapshot.users || snapshot.usuarios || []);
+}
+
 function buildTerceirizadaProfessionalId_(id) {
   return 'terceirizada:' + String(id || '').trim();
 }
@@ -1754,7 +1896,8 @@ function getHeaderMapSafe_(sheet) {
     role: ensure('Role'), disciplina: ensure('Disciplina'), status: ensure('Status'),
     abas: ensure('Abas'), passwordhash: ensure('PasswordHash'), resetcode: ensure('ResetCode'),
     resetexpires: ensure('ResetExpires'), isadmin: ensure('IsAdmin'), lastseen: ensure('LastSeen'),
-    alocacao: ensure('Alocacao'), contrato: ensure('Contrato'), sessionversion: ensure('SessionVersion')
+    alocacao: ensure('Alocacao'), contrato: ensure('Contrato'), sessionversion: ensure('SessionVersion'),
+    onlythirdparty: ensure('OnlyThirdParty'), showincharts: ensure('ShowInCharts')
   };
 }
 
@@ -1812,8 +1955,15 @@ function normalizeUserResponse_(row, header) {
     contrato: String(row[header.contrato] || ''),
     allowedTabs: parseAllowedTabs_(row[header.abas]), abas: parseAllowedTabs_(row[header.abas]),
     isAdmin: parseBool_(row[header.isadmin]), online: online,
-    sessionVersion: String(row[header.sessionversion] || '')
+    sessionVersion: String(row[header.sessionversion] || ''),
+    onlyThirdParty: parseBool_(row[header.onlythirdparty]),
+    showInCharts: header.showincharts === undefined ? true : parseBoolWithDefault_(row[header.showincharts], true)
   };
+}
+
+function parseBoolWithDefault_(value, defaultValue) {
+  if (value === '' || value === null || value === undefined) return defaultValue;
+  return parseBool_(value);
 }
 
 function newSessionVersion_() {

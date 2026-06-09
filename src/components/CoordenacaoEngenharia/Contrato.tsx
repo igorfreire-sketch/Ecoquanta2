@@ -4,14 +4,18 @@ import {
   Building2,
   CalendarDays,
   CheckCircle2,
+  ChevronRight,
   ClipboardList,
+  FileText,
   Filter,
   FileWarning,
   GitBranch,
   PencilLine,
   Plus,
   Route,
+  Save,
   Search,
+  Trash2,
   X,
 } from 'lucide-react';
 import Atividades from '../Atividades';
@@ -27,10 +31,11 @@ interface ContratoProps {
     admin?: any;
     contractPriorities?: ContractPriorityRecord[];
     contractInterferences?: Interferencia[];
+    osSettings?: any[];
   };
   activeContractCode?: string;
   lockedContractCode?: string;
-  activeView?: 'dashboard' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
+  activeView?: 'os' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
 }
 
 interface ActivityRow {
@@ -74,6 +79,40 @@ interface StoredPrioritiesState {
   confirmed: Record<string, boolean>;
   monthly: Record<string, string>;
   licitatoria: Record<string, boolean>;
+}
+
+interface OsSettingRecord {
+  id: string;
+  osCodigo: string;
+  tipoLicitacao: string;
+  tipoProjeto: string;
+  responsavel: string;
+  prioridadeMensal?: string;
+  prioridadeLicitatoria?: boolean;
+  updatedAt?: string;
+}
+
+const TIPO_LICITACAO_OPTIONS = ['', 'Integrada', 'Semi-integrada'];
+const TIPO_PROJETO_OPTIONS = ['Básico', 'Executivo', 'Anteprojeto', 'Conceitual', 'Detalhado', 'Legal'];
+
+function extractProjectType(osNome?: string): string {
+  const name = String(osNome || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/\bBASICO\b/.test(name)) return 'Básico';
+  if (/\bEXECUTIVO\b/.test(name)) return 'Executivo';
+  if (/\bCONCEITUAL\b/.test(name)) return 'Conceitual';
+  if (/\bLEGAL\b/.test(name)) return 'Legal';
+  if (/\bDETALHADO\b/.test(name)) return 'Detalhado';
+  if (/\bANTEPROJETO\b/.test(name)) return 'Anteprojeto';
+  return '';
+}
+
+function buildOsSettingsMap(records: any[]): Record<string, OsSettingRecord> {
+  const map: Record<string, OsSettingRecord> = {};
+  (records || []).forEach((item: any) => {
+    const code = String(item?.osCodigo || item?.id || '').trim();
+    if (code) map[code] = item as OsSettingRecord;
+  });
+  return map;
 }
 
 const FLOW_STEPS = [
@@ -563,7 +602,7 @@ export default function Contrato({
   preloadedData,
   activeContractCode,
   lockedContractCode,
-  activeView = 'dashboard',
+  activeView = 'os',
 }: ContratoProps) {
   const activities = useMemo(() => buildActivities(preloadedData), [preloadedData]);
   const contracts = useMemo(() => getContracts(preloadedData, activities), [preloadedData, activities]);
@@ -588,6 +627,20 @@ export default function Contrato({
   const [showInterferenciaForm, setShowInterferenciaForm] = useState(false);
   const [interferencias, setInterferencias] = useState<Interferencia[]>(() => readStoredInterferencias(preloadedData?.contractInterferences));
   const [interferenciaDraft, setInterferenciaDraft] = useState({ nome: '', data: '', osImpactada: '', observacao: '' });
+
+  const [osSettingsMap, setOsSettingsMap] = useState<Record<string, OsSettingRecord>>(
+    () => buildOsSettingsMap(Array.isArray(preloadedData?.osSettings) ? preloadedData.osSettings : [])
+  );
+  const [selectedOsCodigo, setSelectedOsCodigo] = useState<string | null>(null);
+  const [osDraft, setOsDraft] = useState<{
+    tipoLicitacao: string;
+    tipoProjeto: string;
+    responsavel: string;
+    prioridadeMensal: string;
+    prioridadeLicitatoria: boolean;
+  } | null>(null);
+  const [isSavingOs, setIsSavingOs] = useState(false);
+  const [osToastVisible, setOsToastVisible] = useState(false);
   const prioridadesPersistidas = useMemo(
     () => buildLegacyPriorityState(prioridadeMensal, prioridadeLicitatoria, monthlyPriorityCycle),
     [monthlyPriorityCycle, prioridadeLicitatoria, prioridadeMensal]
@@ -606,6 +659,10 @@ export default function Contrato({
   React.useEffect(() => {
     setInterferencias(readStoredInterferencias(preloadedData?.contractInterferences));
   }, [preloadedData?.contractInterferences]);
+
+  React.useEffect(() => {
+    setOsSettingsMap(buildOsSettingsMap(Array.isArray(preloadedData?.osSettings) ? preloadedData.osSettings : []));
+  }, [preloadedData?.osSettings]);
 
   const locked = Boolean(String(lockedContractCode || '').trim());
 
@@ -672,6 +729,44 @@ export default function Contrato({
     });
   };
 
+  const handleSelectOs = (osCodigo: string, osNome: string) => {
+    setSelectedOsCodigo(osCodigo);
+    const existing = osSettingsMap[osCodigo];
+    const inferredProjeto = existing?.tipoProjeto || extractProjectType(osNome) || 'Básico';
+    setOsDraft({
+      tipoLicitacao: existing?.tipoLicitacao || '',
+      tipoProjeto: inferredProjeto,
+      responsavel: existing?.responsavel || '',
+      prioridadeMensal: existing?.prioridadeMensal || '',
+      prioridadeLicitatoria: Boolean(existing?.prioridadeLicitatoria),
+    });
+  };
+
+  const handleEnviarOs = async () => {
+    if (!selectedOsCodigo || !osDraft) return;
+    setIsSavingOs(true);
+    try {
+      const record: OsSettingRecord = {
+        id: selectedOsCodigo,
+        osCodigo: selectedOsCodigo,
+        tipoLicitacao: osDraft.tipoLicitacao,
+        tipoProjeto: osDraft.tipoProjeto,
+        responsavel: osDraft.responsavel,
+        prioridadeMensal: osDraft.prioridadeMensal,
+        prioridadeLicitatoria: osDraft.prioridadeLicitatoria,
+        updatedAt: new Date().toISOString(),
+      };
+      if (isFirebaseConfigured()) {
+        await setFirebaseDocument('osSettings', selectedOsCodigo, record);
+      }
+      setOsSettingsMap((prev) => ({ ...prev, [selectedOsCodigo]: record }));
+      setOsToastVisible(true);
+      setTimeout(() => setOsToastVisible(false), 6000);
+    } finally {
+      setIsSavingOs(false);
+    }
+  };
+
   const handleAddInterferencia = async () => {
     if (!isInterferenciaValid) return;
     if (!isFirebaseConfigured()) return;
@@ -693,7 +788,7 @@ export default function Contrato({
 
   return (
     <div className="space-y-6 font-['Montserrat']">
-      {activeView !== 'cronograma' && activeView !== 'atividades' && (
+      {activeView !== 'cronograma' && activeView !== 'atividades' && activeView !== 'os' && (
         <section className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm p-5">
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(220px,280px)_minmax(220px,280px)_minmax(0,1fr)] gap-4">
             <div>
@@ -748,7 +843,7 @@ export default function Contrato({
         </section>
       )}
 
-      {activeView === 'atividades' ? (
+      {activeView === 'atividades' && (
         <div className="space-y-3">
           <div className="flex items-center justify-end">
             <button
@@ -772,7 +867,186 @@ export default function Contrato({
             disciplineFilterEnabled
           />
         </div>
-      ) : (activeView === 'dashboard' || activeView === 'prioridades') && (
+      )}
+
+      {activeView === 'os' && (
+        <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(420px,420px)] gap-6">
+          {/* OS List */}
+          <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
+            <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <FileText size={18} className="text-[#F05D28]" />
+                <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Ordens de Serviço</h3>
+              </div>
+              {!locked && (
+                <select
+                  value={selectedContract}
+                  onChange={(e) => setSelectedContract(e.target.value)}
+                  className="h-9 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[12px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+                >
+                  <option value="Todos">Todos os contratos</option>
+                  {contracts.map((c) => (
+                    <option key={c.id} value={c.id}>{c.nome || c.id}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="divide-y divide-[#E5E7EB] xl:overflow-y-auto xl:max-h-[calc(100vh-14rem)]">
+              {osOptions.length === 0 && (
+                <div className="py-12 px-6 text-center text-[13px] font-medium text-[#757575]">
+                  Nenhuma OS encontrada.
+                </div>
+              )}
+              {osOptions.map((os) => {
+                const settings = osSettingsMap[os.codigo];
+                const isSelected = selectedOsCodigo === os.codigo;
+                const monthlyActive = isMonthlyPriorityActive(settings?.prioridadeMensal, monthlyPriorityCycle);
+                const licitatoriaActive = Boolean(settings?.prioridadeLicitatoria);
+                const isOperante = monthlyActive || licitatoriaActive;
+                return (
+                  <button
+                    type="button"
+                    key={os.codigo}
+                    onClick={() => handleSelectOs(os.codigo, os.nome)}
+                    className={`w-full text-left px-5 py-4 transition-colors ${isSelected ? 'bg-[#FFF7ED]' : 'hover:bg-[#F9FAFB]'}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-bold text-[#F05D28] uppercase tracking-widest">{os.codigo}</p>
+                        <p className="mt-0.5 text-[13px] font-bold text-[#2D2D2D] truncate">{os.nome}</p>
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {settings?.tipoLicitacao && (
+                            <span className="rounded-full bg-[#EFF6FF] px-2 py-0.5 text-[10px] font-bold text-[#1D4ED8]">{settings.tipoLicitacao}</span>
+                          )}
+                          {settings?.tipoProjeto && (
+                            <span className="rounded-full bg-[#F3F4F6] px-2 py-0.5 text-[10px] font-bold text-[#374151]">{settings.tipoProjeto}</span>
+                          )}
+                          {monthlyActive && (
+                            <span className="rounded-full bg-[#DCFCE7] px-2 py-0.5 text-[10px] font-bold text-[#166534]">Prioridade do mês</span>
+                          )}
+                          {licitatoriaActive && (
+                            <span className="rounded-full bg-[#E0E7FF] px-2 py-0.5 text-[10px] font-bold text-[#3730A3]">Licitatória</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {!isOperante && (
+                          <span className="shrink-0 rounded-full border border-[#FECACA] bg-[#FEF2F2] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#B91C1C]">
+                            Não Operante
+                          </span>
+                        )}
+                        <ChevronRight size={16} className="text-[#CBD5E1] shrink-0" />
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* OS Detail Panel */}
+          {selectedOsCodigo && osDraft ? (
+            <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden xl:sticky xl:top-6 xl:self-start">
+              <div className="px-6 py-5 border-b border-[#E5E7EB]">
+                <p className="text-[11px] font-bold text-[#F05D28] uppercase tracking-widest">{selectedOsCodigo}</p>
+                <h3 className="mt-1 text-[16px] font-bold text-[#2D2D2D] leading-snug">
+                  {osOptions.find((o) => o.codigo === selectedOsCodigo)?.nome || selectedOsCodigo}
+                </h3>
+              </div>
+              <div className="p-6 space-y-5">
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Tipo de Projeto</label>
+                    <select
+                      value={osDraft.tipoProjeto}
+                      onChange={(e) => setOsDraft((prev) => prev ? { ...prev, tipoProjeto: e.target.value } : prev)}
+                      className="mt-1 w-full h-10 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+                    >
+                      {TIPO_PROJETO_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Tipo de Licitação</label>
+                    <select
+                      value={osDraft.tipoLicitacao}
+                      onChange={(e) => setOsDraft((prev) => prev ? { ...prev, tipoLicitacao: e.target.value } : prev)}
+                      className="mt-1 w-full h-10 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+                    >
+                      {TIPO_LICITACAO_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>{opt || 'Não definido'}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Responsável</label>
+                    <input
+                      value={osDraft.responsavel}
+                      onChange={(e) => setOsDraft((prev) => prev ? { ...prev, responsavel: e.target.value } : prev)}
+                      placeholder="Nome do responsável"
+                      className="mt-1 w-full h-10 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className={`rounded-2xl border p-4 ${osDraft.prioridadeMensal === monthlyPriorityCycle ? 'border-[#BBF7D0] bg-[#F0FDF4]' : 'border-[#FDE68A] bg-[#FFFBEB]'}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-black uppercase tracking-widest text-[#166534]">Prioridade do mês</p>
+                        <p className="mt-2 text-[13px] font-semibold text-[#1F2937]">Fica ativa no ciclo atual e reseta automaticamente no dia 05.</p>
+                        <p className="mt-1 text-[11px] text-[#4B5563]">Ciclo: {monthlyPriorityCycleLabel}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setOsDraft((prev) => prev ? {
+                          ...prev,
+                          prioridadeMensal: prev.prioridadeMensal === monthlyPriorityCycle ? '' : monthlyPriorityCycle,
+                        } : prev)}
+                        className={`min-w-[84px] rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-wide transition ${
+                          osDraft.prioridadeMensal === monthlyPriorityCycle
+                            ? 'bg-[#10B981] text-white hover:bg-[#059669]'
+                            : 'border border-[#86EFAC] bg-white text-[#166534] hover:bg-[#ECFDF5]'
+                        }`}
+                      >
+                        {osDraft.prioridadeMensal === monthlyPriorityCycle ? 'Ativa' : 'Marcar'}
+                      </button>
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-[#E5E7EB]">
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedOsCodigo(null); setOsDraft(null); }}
+                    className="inline-flex items-center gap-2 rounded-xl border border-[#FECACA] bg-white px-4 py-2 text-[12px] font-bold text-[#B91C1C] hover:bg-[#FEF2F2] transition-colors"
+                  >
+                    <Trash2 size={14} />
+                    Excluir da lista
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSavingOs}
+                    onClick={handleEnviarOs}
+                    className="h-14 px-6 rounded-2xl bg-[#F05D28] text-white text-[15px] font-bold shadow-lg hover:bg-[#D94E1F] transition-colors inline-flex items-center gap-3 disabled:opacity-70"
+                  >
+                    {isSavingOs ? <Save size={18} className="animate-pulse" /> : <Save size={18} />}
+                    {isSavingOs ? 'Salvando...' : 'Enviar informações'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm flex items-center justify-center min-h-[360px]">
+              <p className="text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">Selecione uma OS</p>
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeView === 'prioridades' && (
         <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)] gap-6">
           <ActivitiesList
             activities={filteredActivities}
@@ -988,6 +1262,19 @@ export default function Contrato({
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {osToastVisible && (
+        <div className="fixed bottom-6 right-6 z-[100] flex items-start gap-3 rounded-2xl border border-[#FED7AA] bg-[#FFF7ED] px-5 py-4 shadow-xl max-w-[340px]">
+          <Save size={18} className="text-[#F05D28] mt-0.5 shrink-0" />
+          <div>
+            <p className="text-[13px] font-bold text-[#2D2D2D]">Informações enviadas</p>
+            <p className="mt-1 text-[12px] font-medium text-[#64748B]">Modificações podem demorar até 5 minutos para ser aplicadas.</p>
+          </div>
+          <button type="button" onClick={() => setOsToastVisible(false)} className="ml-2 text-[#94A3B8] hover:text-[#2D2D2D]">
+            <X size={16} />
+          </button>
         </div>
       )}
     </div>

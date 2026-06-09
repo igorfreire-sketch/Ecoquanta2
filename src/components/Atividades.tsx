@@ -1,9 +1,11 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
   Calendar,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   ChevronDown,
   Droplet,
@@ -1068,6 +1070,17 @@ const getActivityProjectLabel = (activity: Pick<EngineeringActivity, 'itemNome' 
   return String(activity.itemNome || activity.atividade || '').trim();
 };
 
+const extractProjectType = (osNome?: string): string => {
+  const name = String(osNome || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/\bBASICO\b/.test(name)) return 'Básico';
+  if (/\bEXECUTIVO\b/.test(name)) return 'Executivo';
+  if (/\bCONCEITUAL\b/.test(name)) return 'Conceitual';
+  if (/\bLEGAL\b/.test(name)) return 'Legal';
+  if (/\bDETALHADO\b/.test(name)) return 'Detalhado';
+  if (/\bANTEPROJETO\b/.test(name)) return 'Anteprojeto';
+  return '';
+};
+
 const getNextLodValue = (lod: LodLevel): LodLevel => {
   const sorted = [...LOD_OPTIONS].sort((a, b) => a - b);
   const next = sorted.find((item) => item > lod);
@@ -1866,11 +1879,27 @@ const osAccentColorMap: Record<string, string> = {
   'OS 013': '#166534',
   'OS 022': '#D97706',
   'OS 032': '#2563EB',
-  'OS 034': '#0F4C81',
-  'OS 037': '#14B8A6',
+  'OS 034': '#7C3AED',
+  'OS 037': '#0891B2',
   'OS 043': '#C66A4A',
-  'OS 050': '#1D4ED8',
-  'OS 053': '#0F766E'
+  'OS 045': '#DB2777',
+  'OS 050': '#EA580C',
+  'OS 053': '#15803D'
+};
+
+const OS_COLOR_PALETTE = [
+  '#0F766E', '#166534', '#D97706', '#2563EB', '#7C3AED',
+  '#DB2777', '#DC2626', '#EA580C', '#65A30D', '#0284C7',
+  '#9333EA', '#BE185D', '#B45309', '#0891B2', '#C66A4A'
+];
+
+const getOsAccentColor = (osCode: string): string => {
+  if (osAccentColorMap[osCode]) return osAccentColorMap[osCode];
+  let hash = 0;
+  for (let i = 0; i < osCode.length; i++) {
+    hash = (hash * 31 + osCode.charCodeAt(i)) & 0x7fffffff;
+  }
+  return OS_COLOR_PALETTE[hash % OS_COLOR_PALETTE.length];
 };
 
 const assigneeAccentColorMap: Record<string, string> = {
@@ -2266,15 +2295,15 @@ const BOARD_GAP = 8;
 
 function useResponsiveCardScale() {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const [scale, setScale] = useState(1);
+  const [scale, setScale] = useState<number | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
     const updateScale = () => {
       const width = host.clientWidth || CARD_DESIGN_WIDTH;
-      const nextScale = Math.min(1, width / CARD_DESIGN_WIDTH);
+      const nextScale = width / CARD_DESIGN_WIDTH;
       setScale(Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 1);
     };
 
@@ -2291,9 +2320,11 @@ function useResponsiveCardScale() {
 
 function ProductionCard({
   activity,
+  tipoLicitacao,
   onClick
 }: {
   activity: EngineeringActivity;
+  tipoLicitacao: string;
   onClick: () => void;
 }) {
   const { hostRef, scale } = useResponsiveCardScale();
@@ -2315,24 +2346,26 @@ function ProductionCard({
       <button
         type="button"
         onClick={onClick}
-        className="absolute left-0 top-0 block overflow-hidden rounded-[28px] border border-[#E7EDF4] bg-white px-4 py-3.5 text-left shadow-[0_9px_20px_rgba(45,45,45,0.22)] transition-all hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.14)] cursor-pointer"
+        className="absolute left-0 top-0 block overflow-hidden rounded-[28px] border border-[#E7EDF4] bg-white px-4 py-3.5 text-left shadow-[0_9px_20px_rgba(45,45,45,0.22)] transition-[border-color,box-shadow] hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.14)] cursor-pointer"
         style={{
           width: `${CARD_DESIGN_WIDTH}px`,
-          transform: `scale(${scale})`,
-          transformOrigin: 'top left'
+          transform: scale !== null ? `scale(${scale})` : 'scale(1)',
+          transformOrigin: 'top left',
+          visibility: scale !== null ? 'visible' : 'hidden',
         }}
       >
         <div
-          className="absolute right-0 top-0 flex flex-col items-center"
+          className="absolute right-[32px] top-0 flex flex-col items-center"
           aria-hidden="true"
+          style={{ '--flag-color': getOsAccentColor(activity.osCodigo) } as React.CSSProperties}
         >
           <div
-            className="h-5 w-4"
-            style={{ backgroundColor: osAccentColorMap[activity.osCodigo] || '#F05D28' }}
+            className="h-[28px] w-4"
+            style={{ backgroundColor: getOsAccentColor(activity.osCodigo) }}
           />
-          <div className="h-[7px] w-4 bg-[#0F668D]" />
           <div
-            className="h-0 w-0 border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent border-t-[#0F668D]"
+            className="h-0 w-0 border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent"
+            style={{ borderTopColor: getOsAccentColor(activity.osCodigo) }}
           />
         </div>
 
@@ -2389,7 +2422,7 @@ function ProductionCard({
             <div className="grid grid-cols-3 gap-1.5 text-center xl:gap-2">
               <div className="min-w-0">
                 <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">LOD</p>
-                <p className="mt-0.5 text-[15px] font-black leading-none text-[#2D2D2D]">{activity.lodAlvoSemana}</p>
+                <p className="mt-0.5 text-[15px] font-black leading-none text-[#2D2D2D]">{activity.lodAtual}</p>
               </div>
               <div className="min-w-0">
                 <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">Exec</p>
@@ -2404,20 +2437,22 @@ function ProductionCard({
         </div>
 
         <div className="mt-3 rounded-[12px] bg-[#F3F4F6] px-3 py-2">
-          <div className="grid grid-cols-[150px_minmax(0,1fr)] items-center gap-3">
-            <div className="grid grid-cols-2 gap-2">
-              <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Início</p>
-                <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{formatDatePt(activity.inicioPlanejado)}</p>
-              </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Término</p>
-                <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{formatDatePt(activity.terminoPlanejado)}</p>
-              </div>
-            </div>
-
+          <div className="grid grid-cols-4 gap-2">
             <div className="min-w-0">
-              <p className="text-[14px] font-black leading-tight text-[#111827] break-words">{workFrontText || ' '}</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Início</p>
+              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{formatDatePt(activity.inicioPlanejado)}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Término</p>
+              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{formatDatePt(activity.terminoPlanejado)}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Projeto</p>
+              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{extractProjectType(activity.osNome) || 'Básico'}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Licitação</p>
+              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{tipoLicitacao || ''}</p>
             </div>
           </div>
         </div>
@@ -2445,7 +2480,15 @@ export default function Atividades({
   const [boardScrollLeft, setBoardScrollLeft] = useState(0);
   const [boardScrollMax, setBoardScrollMax] = useState(0);
   const [boardTrackWidth, setBoardTrackWidth] = useState(0);
-  const [boardZoomPercent, setBoardZoomPercent] = useState(100);
+  const [boardZoomPercent, setBoardZoomPercent] = useState(() => {
+    try {
+      const cached = localStorage.getItem('atividades_boardZoom');
+      const val = cached ? parseInt(cached, 10) : 75;
+      return [75, 90, 120].includes(val) ? val : 75;
+    } catch {
+      return 75;
+    }
+  });
   const [activities, setActivities] = useState<EngineeringActivity[]>(() => {
     return sourceActivities;
   });
@@ -2636,6 +2679,17 @@ export default function Atividades({
   }, [activitiesWithDiscipline]);
 
   const etapasDisponiveis = useMemo(() => ['Todos', ...TECHNICAL_STEPS], []);
+
+  const osSettingsMap = useMemo(() => {
+    const items = Array.isArray(preloadedData?.osSettings) ? preloadedData.osSettings : [];
+    const map: Record<string, string> = {};
+    items.forEach((item: any) => {
+      const code = String(item?.osCodigo || item?.id || '').trim();
+      const tipo = String(item?.tipoLicitacao || '').trim();
+      if (code) map[code] = tipo;
+    });
+    return map;
+  }, [preloadedData?.osSettings]);
   const lodsDisponiveis = useMemo(() => ['Todos', ...LOD_OPTIONS.map(String)], []);
   const statusDisponiveis = useMemo(() => ['Todos', ...STATUS_OPTIONS], []);
   const prioridadesDisponiveis = useMemo(() => ['Todos', ...PRIORITY_OPTIONS], []);
@@ -2907,6 +2961,26 @@ export default function Atividades({
     return () => window.cancelAnimationFrame(raf);
   }, [boardColumns, boardScrollMax, isCurrentWeekBoard]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+
+      if (selectedActivityId) {
+        const idx = boardActivities.findIndex((a) => a.id === selectedActivityId);
+        if (e.key === 'ArrowLeft' && idx > 0) setSelectedActivityId(boardActivities[idx - 1].id);
+        if (e.key === 'ArrowRight' && idx < boardActivities.length - 1) setSelectedActivityId(boardActivities[idx + 1].id);
+      } else {
+        const wIdx = weekOptions.findIndex((opt) => opt.value === filterSemana);
+        if (e.key === 'ArrowLeft' && wIdx > 0) setFilterSemana(weekOptions[wIdx - 1].value);
+        if (e.key === 'ArrowRight' && wIdx < weekOptions.length - 1) setFilterSemana(weekOptions[wIdx + 1].value);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedActivityId, boardActivities, weekOptions, filterSemana]);
+
   const scrollBoardTo = (nextScrollLeft: number) => {
     const el = boardScrollRef.current;
     if (!el) return;
@@ -3025,7 +3099,30 @@ export default function Atividades({
       <section className="overflow-hidden rounded-[34px] border border-[#E5E7EB] bg-[linear-gradient(180deg,#FFFFFF_0%,#F8FAFC_100%)] p-2.5 shadow-sm">
         <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
           <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 md:grid-cols-3 xl:max-w-[900px] xl:grid-cols-[1.35fr_0.75fr_0.75fr_0.75fr_0.75fr_0.95fr]">
-            <CompactStat icon={<Calendar size={14} />} label="Semana" value={formatWeekLabel(filterSemana)} tone="border-[#E5E7EB]" valueClassName="whitespace-nowrap" />
+            <div className="inline-flex min-w-0 items-center gap-1 rounded-[20px] border border-[#E5E7EB] bg-white px-2 py-1.5 shadow-sm">
+              <button
+                type="button"
+                aria-label="Semana anterior"
+                disabled={weekOptions.findIndex((o) => o.value === filterSemana) <= 0}
+                onClick={() => { const i = weekOptions.findIndex((o) => o.value === filterSemana); if (i > 0) setFilterSemana(weekOptions[i - 1].value); }}
+                className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[#64748B] transition-colors hover:bg-[#F3F4F6] disabled:opacity-30 cursor-pointer disabled:cursor-default"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <div className="min-w-0 text-center">
+                <p className="text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Semana</p>
+                <p className="text-[13px] font-black whitespace-nowrap text-[#2D2D2D]">{formatWeekLabel(filterSemana)}</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Próxima semana"
+                disabled={weekOptions.findIndex((o) => o.value === filterSemana) >= weekOptions.length - 1}
+                onClick={() => { const i = weekOptions.findIndex((o) => o.value === filterSemana); if (i < weekOptions.length - 1) setFilterSemana(weekOptions[i + 1].value); }}
+                className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[#64748B] transition-colors hover:bg-[#F3F4F6] disabled:opacity-30 cursor-pointer disabled:cursor-default"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
             <CompactStat icon={<Activity size={14} />} label="Atividades" value={kpis.total} tone="border-[#C9E1F7]" />
             <CompactStat icon={<Clock size={14} />} label="Em execução" value={kpis.emExecucao} tone="border-[#DBEAFE]" />
             <CompactStat icon={<AlertTriangle size={14} />} label="Bloqueadas" value={kpis.bloqueadas} tone="border-[#F7C7B7]" />
@@ -3036,18 +3133,23 @@ export default function Atividades({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Escala</p>
-                <div className="mt-1 flex items-center gap-2">
-                  <span className="text-[13px] font-black text-[#2D2D2D] whitespace-nowrap">{boardZoomPercent}%</span>
-                  <input
-                    type="range"
-                    min={80}
-                    max={200}
-                    step={5}
-                    value={boardZoomPercent}
-                    onChange={(event) => setBoardZoomPercent(Number(event.target.value))}
-                    className="h-1.5 w-full cursor-pointer accent-[#F05D28]"
-                    aria-label="Escala dos cards"
-                  />
+                <div className="mt-1 flex items-center gap-1">
+                  {(['P', 'M', 'G'] as const).map((label) => {
+                    const value = label === 'P' ? 75 : label === 'M' ? 90 : 120;
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => {
+                          setBoardZoomPercent(value);
+                          try { localStorage.setItem('atividades_boardZoom', String(value)); } catch {}
+                        }}
+                        className={`rounded-md px-2 py-0.5 text-[11px] font-black transition-colors ${boardZoomPercent === value ? 'bg-[#F05D28] text-white' : 'bg-[#F3F4F6] text-[#2D2D2D] hover:bg-[#F7C7B7]'}`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -3124,7 +3226,7 @@ export default function Atividades({
                   ) : (
                     column.activities.map((activity) => (
                       <React.Fragment key={activity.id}>
-                        <ProductionCard activity={activity} onClick={() => setSelectedActivityId(activity.id)} />
+                        <ProductionCard activity={activity} tipoLicitacao={osSettingsMap[activity.osCodigo] || ''} onClick={() => setSelectedActivityId(activity.id)} />
                       </React.Fragment>
                     ))
                   )}
@@ -3147,6 +3249,31 @@ export default function Atividades({
             />
 
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+              {(() => {
+                const idx = boardActivities.findIndex((a) => a.id === selectedActivityId);
+                return (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="Atividade anterior"
+                      disabled={idx <= 0}
+                      onClick={() => { if (idx > 0) setSelectedActivityId(boardActivities[idx - 1].id); }}
+                      className="absolute left-2 top-1/2 z-[51] flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#2D2D2D] shadow-lg transition-all hover:bg-white hover:shadow-xl disabled:opacity-25 cursor-pointer disabled:cursor-default"
+                    >
+                      <ChevronLeft size={22} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Próxima atividade"
+                      disabled={idx >= boardActivities.length - 1}
+                      onClick={() => { if (idx < boardActivities.length - 1) setSelectedActivityId(boardActivities[idx + 1].id); }}
+                      className="absolute right-2 top-1/2 z-[51] flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#2D2D2D] shadow-lg transition-all hover:bg-white hover:shadow-xl disabled:opacity-25 cursor-pointer disabled:cursor-default"
+                    >
+                      <ChevronRight size={22} />
+                    </button>
+                  </>
+                );
+              })()}
               <motion.div
                 initial={{ opacity: 0, scale: 0.98, y: 14 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}

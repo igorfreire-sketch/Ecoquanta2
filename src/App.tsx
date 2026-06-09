@@ -96,9 +96,9 @@ function shouldLockUserToContract(user?: AuthUser | null) {
 type AppTab = 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'administracao';
 type AreaTecnicaSubTab = 'atividades' | 'cronograma';
 type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma';
-type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'cronograma' | 'atividades';
+type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'cronograma' | 'atividades' | 'os';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'cronograma';
-type ContratoSubTab = 'dashboard' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
+type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
@@ -132,6 +132,7 @@ interface GlobalData {
   contractPriorities?: any[];
   contractInterferences?: any[];
   resolvedAlerts?: any[];
+  osSettings?: any[];
 }
 
 interface PublicGlobalRegistroPayload {
@@ -1196,7 +1197,7 @@ export default function App() {
   const [subTab, setSubTab] = React.useState<ControleSubTab>('profissionais');
   const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('dashboard');
   const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
-  const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('dashboard');
+  const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('os');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [showFilters, setShowFilters] = React.useState(false);
@@ -1407,17 +1408,19 @@ export default function App() {
         contractPriorities: [],
         contractInterferences: [],
         resolvedAlerts: [],
+        osSettings: [],
       };
     }
 
-    const [planningTodos, contractPriorities, contractInterferences, resolvedAlerts] = await Promise.all([
+    const [planningTodos, contractPriorities, contractInterferences, resolvedAlerts, osSettings] = await Promise.all([
       fetchFirebaseCollection('planningTodos'),
       fetchFirebaseCollection('contractPriorities'),
       fetchFirebaseCollection('contractInterferences'),
       fetchFirebaseCollection('resolvedAlerts'),
+      fetchFirebaseCollection('osSettings'),
     ]);
 
-    return { planningTodos, contractPriorities, contractInterferences, resolvedAlerts };
+    return { planningTodos, contractPriorities, contractInterferences, resolvedAlerts, osSettings };
   }, []);
 
   const refreshRealtimeEnvironment = useCallback(async (user: AuthUser) => {
@@ -2078,6 +2081,7 @@ export default function App() {
       return [
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'dashboard', onClick: () => setPlanejamentoSubTab('dashboard') },
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'atividades', onClick: () => setPlanejamentoSubTab('atividades') },
+        { key: 'os', label: 'OS', icon: <FileText size={16} />, active: planejamentoSubTab === 'os', onClick: () => setPlanejamentoSubTab('os') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: planejamentoSubTab === 'cronograma', onClick: () => setPlanejamentoSubTab('cronograma') }] : []),
       ];
     }
@@ -2095,7 +2099,7 @@ export default function App() {
 
     if (activeTab === 'contrato') {
       return [
-        { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: contratoSubTab === 'dashboard', onClick: () => setContratoSubTab('dashboard') },
+        { key: 'os', label: 'OS', icon: <FileText size={16} />, active: contratoSubTab === 'os', onClick: () => setContratoSubTab('os') },
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: contratoSubTab === 'atividades', onClick: () => setContratoSubTab('atividades') },
         { key: 'interferencias', label: 'Interferências', icon: <AlertTriangle size={16} />, active: contratoSubTab === 'interferencias', onClick: () => setContratoSubTab('interferencias') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: contratoSubTab === 'cronograma', onClick: () => setContratoSubTab('cronograma') }] : []),
@@ -2262,9 +2266,11 @@ export default function App() {
                   ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="dashboard" activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                   : planejamentoSubTab === 'atividades'
                     ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines filtersAlwaysVisible disciplineFilterEnabled />
-                    : planejamentoSubTab === 'cronograma'
-                      ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
-                      : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                    : planejamentoSubTab === 'os'
+                      ? <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView="os" />
+                      : planejamentoSubTab === 'cronograma'
+                        ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
+                        : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, ChevronDown, ChevronRight, Filter, Maximize2, X, AlertTriangle, Clock3, ListChecks } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
@@ -51,6 +51,7 @@ interface TreeNode {
   name: string;
   row: CronogramaRow;
   children: TreeNode[];
+  synthetic?: boolean; // true when the node was inferred to fill a hierarchy gap
 }
 
 type GanttScaleMode = 'day' | 'week' | 'month' | 'year';
@@ -376,15 +377,31 @@ function buildTree(rows: CronogramaRow[], contractFilter: string, osFilter: stri
     return true;
   });
 
-  const selectedSet = new Set(selectedCodes);
-  const childrenMap = new Map<string, string[]>();
+  // Fill hierarchy gaps: for every code whose direct parent is missing from the
+  // selected set, synthesize phantom nodes for each missing intermediate so the
+  // tree structure is always correct (e.g. 2.20.1 gets a real 2.20 parent).
+  const allSet = new Set(selectedCodes);
+  const syntheticCodes = new Set<string>();
 
   selectedCodes.forEach((code) => {
-    const parentCode = getParentCode(code);
-    if (!selectedSet.has(parentCode)) return;
-    const bucket = childrenMap.get(parentCode) || [];
+    let parent = getParentCode(code);
+    while (parent) {
+      if (allSet.has(parent)) break; // chain complete
+      syntheticCodes.add(parent);
+      allSet.add(parent);
+      parent = getParentCode(parent);
+    }
+  });
+
+  const allCodes = [...selectedCodes, ...Array.from(syntheticCodes)];
+
+  const childrenMap = new Map<string, string[]>();
+  allCodes.forEach((code) => {
+    const parent = getParentCode(code);
+    if (!parent || !allSet.has(parent)) return;
+    const bucket = childrenMap.get(parent) || [];
     bucket.push(code);
-    childrenMap.set(parentCode, bucket);
+    childrenMap.set(parent, bucket);
   });
 
   childrenMap.forEach((children, parentCode) => {
@@ -393,18 +410,23 @@ function buildTree(rows: CronogramaRow[], contractFilter: string, osFilter: stri
   });
 
   const buildNode = (code: string): TreeNode => {
-    const row = rowMap.get(code)!;
+    const isSynthetic = syntheticCodes.has(code);
+    const row = rowMap.get(code) ?? { code, name: code };
     const childCodes = childrenMap.get(code) || [];
     return {
       code,
-      name: normalizeText(row.name || row.code),
+      name: normalizeText(row.name || row.code || code),
       row,
       children: childCodes.map(buildNode),
+      synthetic: isSynthetic,
     };
   };
 
-  const rootCodes = selectedCodes
-    .filter((code) => !selectedSet.has(getParentCode(code)))
+  const rootCodes = allCodes
+    .filter((code) => {
+      const parent = getParentCode(code);
+      return !parent || !allSet.has(parent);
+    })
     .sort(compareHierarchy);
 
   return rootCodes.map(buildNode);
@@ -719,10 +741,23 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
     });
   });
 
+  // Binary-insert into sorted queue to keep O(n log n) instead of O(n² log n)
+  const insertSorted = (arr: string[], code: string) => {
+    const order = codeOrder.get(code) ?? 0;
+    let lo = 0;
+    let hi = arr.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if ((codeOrder.get(arr[mid]) ?? 0) <= order) lo = mid + 1;
+      else hi = mid;
+    }
+    arr.splice(lo, 0, code);
+  };
+
   const queue = Array.from(indegree.entries())
     .filter(([, value]) => value === 0)
     .map(([code]) => code)
-    .sort((a, b) => (codeOrder.get(a) || 0) - (codeOrder.get(b) || 0));
+    .sort((a, b) => (codeOrder.get(a) ?? 0) - (codeOrder.get(b) ?? 0));
 
   const sortedCodes: string[] = [];
   while (queue.length > 0) {
@@ -732,10 +767,7 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
     nextCodes.forEach((nextCode) => {
       const nextValue = (indegree.get(nextCode) || 0) - 1;
       indegree.set(nextCode, nextValue);
-      if (nextValue === 0) {
-        queue.push(nextCode);
-        queue.sort((a, b) => (codeOrder.get(a) || 0) - (codeOrder.get(b) || 0));
-      }
+      if (nextValue === 0) insertSorted(queue, nextCode);
     });
   }
 
@@ -1043,6 +1075,37 @@ function TreeRow({
   const progress = toPercent(node.row.progress);
   const predecessor = normalizeText(node.row.predecessor);
 
+  // Synthetic nodes are phantom grouping nodes inferred to fill hierarchy gaps.
+  // They have no real data, so render them as a minimal collapsible header.
+  if (node.synthetic) {
+    return (
+      <>
+        <div className="border-b border-[#F3F4F6] last:border-b-0 bg-[#FAFAFA]">
+          <div className="px-5 py-2.5">
+            <button
+              type="button"
+              onClick={() => hasChildren && onToggle(node.code)}
+              className={`flex w-full items-center gap-2 text-left ${hasChildren ? 'cursor-pointer' : 'cursor-default'}`}
+              style={{ paddingLeft: `${level * 18}px` }}
+            >
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center text-[#9CA3AF]">
+                {hasChildren ? (expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : <span className="h-1.5 w-1.5 rounded-full bg-[#D1D5DB]" />}
+              </span>
+              <p className="text-[12px] font-semibold italic text-[#9CA3AF]">
+                {node.code}
+              </p>
+            </button>
+          </div>
+        </div>
+        {hasChildren && expanded && node.children.map((child) => (
+          <React.Fragment key={child.code}>
+            <TreeRow node={child} level={level + 1} expandedRows={expandedRows} onToggle={onToggle} />
+          </React.Fragment>
+        ))}
+      </>
+    );
+  }
+
   return (
     <>
       <div className="border-b border-[#F3F4F6] last:border-b-0">
@@ -1058,7 +1121,7 @@ function TreeRow({
                 {hasChildren ? (expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />) : <span className="h-2 w-2 rounded-full bg-[#D1D5DB]" />}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-bold text-[#2D2D2D]">
+                <p className="truncate text-[#2D2D2D] text-[13px] font-bold">
                   {node.code} - {node.name}
                 </p>
                 <p className="mt-1 text-[11px] text-[#757575]">
@@ -1139,21 +1202,8 @@ export default function Cronograma({
     [rows, tree, ganttScaleMode],
   );
 
-  const expandedDefaults = useMemo(() => new Set(tree.map((node) => node.code)), [tree]);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [ganttExpandedRows, setGanttExpandedRows] = useState<Set<string>>(new Set());
-  const ganttExpandedDefaults = useMemo(
-    () => new Set(flattenTreeNodes(tree).map((node) => node.code)),
-    [tree],
-  );
-
-  useEffect(() => {
-    setExpandedRows(expandedDefaults);
-  }, [expandedDefaults]);
-
-  useEffect(() => {
-    setGanttExpandedRows(ganttExpandedDefaults);
-  }, [ganttExpandedDefaults]);
 
   const toggleRow = (code: string) => {
     setExpandedRows((prev) => {
@@ -1192,21 +1242,21 @@ export default function Cronograma({
 
   const ganttVisibleRows = useMemo(() => flattenVisibleTreeNodes(tree, ganttExpandedRows), [tree, ganttExpandedRows]);
   const ganttTaskMap = useMemo(() => new Map(ganttModel.tasks.map((task) => [task.code, task])), [ganttModel.tasks]);
-  const ganttVisibleTasks = useMemo(
-    () => ganttVisibleRows
-      .map(({ node, level }, index) => {
+  const ganttVisibleTasks = useMemo(() => {
+    let rowIndex = 0;
+    return ganttVisibleRows
+      .map(({ node, level }) => {
         const task = ganttTaskMap.get(node.code);
-        if (!task) return null;
+        if (!task) return null; // synthetic nodes have no Gantt task — skip
         return {
           ...task,
-          rowIndex: index,
+          rowIndex: rowIndex++, // compact: no gaps where synthetics were
           level,
           hasChildren: node.children.length > 0,
         };
       })
-      .filter((task): task is GanttTask & { hasChildren: boolean } => Boolean(task)),
-    [ganttTaskMap, ganttVisibleRows],
-  );
+      .filter((task): task is GanttTask & { hasChildren: boolean } => Boolean(task));
+  }, [ganttTaskMap, ganttVisibleRows]);
   const ganttVisibleIndexByCode = useMemo(() => {
     const indexMap = new Map<string, number>();
     ganttVisibleTasks.forEach((task, index) => indexMap.set(task.code, index));
@@ -1215,6 +1265,73 @@ export default function Cronograma({
   const selectedGanttTask = useMemo(
     () => ganttVisibleTasks.find((task) => task.code === selectedGanttTaskCode) || null,
     [ganttVisibleTasks, selectedGanttTaskCode],
+  );
+
+  const GANTT_ROW_HEIGHT = 76;
+  const GANTT_HEADER_HEIGHT = 72;
+  const ganttTimelineWidth = useMemo(
+    () => Math.max(ganttModel.unitCount * ganttModel.unitPx, 720),
+    [ganttModel.unitCount, ganttModel.unitPx],
+  );
+  const ganttChartHeight = useMemo(
+    () => GANTT_HEADER_HEIGHT + ganttVisibleTasks.length * GANTT_ROW_HEIGHT + 24,
+    [ganttVisibleTasks.length],
+  );
+  const ganttToday = useMemo(() => getTodayInSaoPaulo(), []);
+  const ganttTodayLineX = useMemo(
+    () => Math.max(0, Math.min(ganttTimelineWidth, getGanttScaleTimelinePosition(ganttModel, ganttToday))),
+    [ganttModel, ganttTimelineWidth, ganttToday],
+  );
+  const ganttDayMonthGroups = useMemo(() => {
+    if (ganttModel.scaleMode !== 'day') return [];
+    return Array.from({ length: ganttModel.unitCount }).reduce<Array<{ key: string; label: string; count: number }>>((groups, _, index) => {
+      const date = getGanttUnitDate(ganttModel, index);
+      const key = `${date.getFullYear()}-${date.getMonth()}`;
+      const current = groups[groups.length - 1];
+      if (current?.key === key) {
+        current.count += 1;
+      } else {
+        groups.push({ key, label: date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }), count: 1 });
+      }
+      return groups;
+    }, []);
+  }, [ganttModel]);
+
+  // Pre-compute all day-header cell data so the render loop is cheap
+  const ganttDayCells = useMemo(() => {
+    if (ganttModel.scaleMode !== 'day') return [];
+    return Array.from({ length: ganttModel.unitCount }, (_, index) => {
+      const date = getGanttUnitDate(ganttModel, index);
+      return {
+        index,
+        date,
+        isToday: sameDay(date, ganttToday),
+        isWeekend: date.getDay() === 0 || date.getDay() === 6,
+        dayStr: String(date.getDate()).padStart(2, '0'),
+        weekdayStr: date.toLocaleDateString('pt-BR', { weekday: 'narrow' }),
+        titleStr: date.toLocaleDateString('pt-BR'),
+      };
+    });
+  }, [ganttModel, ganttToday]);
+
+  // Pre-compute bar geometries so they aren't recalculated during render
+  const ganttBarGeometries = useMemo(
+    () => new Map(ganttVisibleTasks.map((task) => [task.code, getGanttBarGeometry(ganttModel, task.start, task.end)])),
+    [ganttModel, ganttVisibleTasks],
+  );
+
+  const syncGanttScroll = useCallback(
+    (source: 'left' | 'right') => (event: React.UIEvent<HTMLDivElement>) => {
+      const otherRef = source === 'left' ? ganttRightScrollRef : ganttLeftScrollRef;
+      const other = otherRef.current;
+      if (!other || ganttScrollLockRef.current === source) return;
+      ganttScrollLockRef.current = source;
+      other.scrollTop = event.currentTarget.scrollTop;
+      window.requestAnimationFrame(() => {
+        if (ganttScrollLockRef.current === source) ganttScrollLockRef.current = null;
+      });
+    },
+    [],
   );
 
   const planningVisibleRows = useMemo(() => {
@@ -1302,48 +1419,21 @@ export default function Cronograma({
   };
 
   const renderGanttModal = () => {
-    if (!showGantt) return null;
-
-    const rowHeight = 76;
-    const headerHeight = 72;
+    // Always render — keeps DOM nodes alive for instant open.
+    // CSS hides and blocks interaction when !showGantt.
+    const rowHeight = GANTT_ROW_HEIGHT;
+    const headerHeight = GANTT_HEADER_HEIGHT;
     const leftWidth = 460;
-    const timelineWidth = Math.max(ganttModel.unitCount * ganttModel.unitPx, 720);
-    const chartHeight = headerHeight + ganttVisibleTasks.length * rowHeight + 24;
-    const ganttToday = getTodayInSaoPaulo();
-    const todayLineX = Math.max(0, Math.min(timelineWidth, getGanttScaleTimelinePosition(ganttModel, ganttToday)));
-    const ganttDayMonthGroups = ganttModel.scaleMode === 'day'
-      ? Array.from({ length: ganttModel.unitCount }).reduce<Array<{ key: string; label: string; count: number }>>((groups, _, index) => {
-          const date = getGanttUnitDate(ganttModel, index);
-          const key = `${date.getFullYear()}-${date.getMonth()}`;
-          const current = groups[groups.length - 1];
-          if (current?.key === key) {
-            current.count += 1;
-          } else {
-            groups.push({
-              key,
-              label: date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }),
-              count: 1,
-            });
-          }
-          return groups;
-        }, [])
-      : [];
-
-    const syncGanttScroll = (source: 'left' | 'right') => (event: React.UIEvent<HTMLDivElement>) => {
-      const otherRef = source === 'left' ? ganttRightScrollRef : ganttLeftScrollRef;
-      const other = otherRef.current;
-      if (!other || ganttScrollLockRef.current === source) return;
-
-      ganttScrollLockRef.current = source;
-      other.scrollTop = event.currentTarget.scrollTop;
-      window.requestAnimationFrame(() => {
-        if (ganttScrollLockRef.current === source) ganttScrollLockRef.current = null;
-      });
-    };
+    const timelineWidth = ganttTimelineWidth;
+    const chartHeight = ganttChartHeight;
+    const todayLineX = ganttTodayLineX;
 
     return (
       <>
-      <div className="fixed inset-0 z-[200] bg-slate-950/70 backdrop-blur-sm p-3 md:p-5">
+      <div
+        className="fixed inset-0 z-[200] bg-slate-950/70 backdrop-blur-sm p-3 md:p-5"
+        style={showGantt ? undefined : { visibility: 'hidden', pointerEvents: 'none' }}
+      >
         <div className="flex h-full w-full flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
           <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 md:flex-row md:items-start md:justify-between">
             <div className="min-w-0">
@@ -1567,28 +1657,23 @@ export default function Cronograma({
                         ))}
                       </div>
                       <div className="flex h-10">
-                        {Array.from({ length: ganttModel.unitCount }).map((_, index) => {
-                          const date = getGanttUnitDate(ganttModel, index);
-                          const isToday = sameDay(date, ganttToday);
-                          const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-                          return (
-                            <div
-                              key={`${index}-${ganttModel.scaleMode}`}
-                              className={`flex shrink-0 flex-col items-center justify-center border-r border-slate-200 text-center ${
-                                isToday
-                                  ? 'bg-rose-50 text-rose-600'
-                                  : isWeekend
-                                    ? 'bg-slate-50 text-slate-400'
-                                    : 'text-slate-600'
-                              }`}
-                              style={{ width: `${ganttModel.unitPx}px` }}
-                              title={date.toLocaleDateString('pt-BR')}
-                            >
-                              <span className="text-[11px] font-black leading-none">{String(date.getDate()).padStart(2, '0')}</span>
-                              <span className="mt-1 text-[8px] font-bold uppercase leading-none">{date.toLocaleDateString('pt-BR', { weekday: 'narrow' })}</span>
-                            </div>
-                          );
-                        })}
+                        {ganttDayCells.map((cell) => (
+                          <div
+                            key={`${cell.index}-${ganttModel.scaleMode}`}
+                            className={`flex shrink-0 flex-col items-center justify-center border-r border-slate-200 text-center ${
+                              cell.isToday
+                                ? 'bg-rose-50 text-rose-600'
+                                : cell.isWeekend
+                                  ? 'bg-slate-50 text-slate-400'
+                                  : 'text-slate-600'
+                            }`}
+                            style={{ width: `${ganttModel.unitPx}px` }}
+                            title={cell.titleStr}
+                          >
+                            <span className="text-[11px] font-black leading-none">{cell.dayStr}</span>
+                            <span className="mt-1 text-[8px] font-bold uppercase leading-none">{cell.weekdayStr}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ) : (
@@ -1619,8 +1704,8 @@ export default function Cronograma({
                       if (predecessorIndex === undefined) return [];
                       const predecessor = ganttVisibleTasks[predecessorIndex];
                       if (!predecessor || !predecessor.start || !predecessor.end) return [];
-                      const startGeometry = getGanttBarGeometry(ganttModel, predecessor.start, predecessor.end);
-                      const endGeometry = getGanttBarGeometry(ganttModel, task.start, task.end);
+                      const startGeometry = ganttBarGeometries.get(predecessor.code) ?? getGanttBarGeometry(ganttModel, predecessor.start, predecessor.end);
+                      const endGeometry = ganttBarGeometries.get(task.code) ?? getGanttBarGeometry(ganttModel, task.start, task.end);
                       const fromX = startGeometry.left + startGeometry.width;
                       const toX = endGeometry.left;
                       const fromY = predecessor.rowIndex * rowHeight + rowHeight / 2;
@@ -1645,7 +1730,7 @@ export default function Cronograma({
                 <div className="relative z-20">
                   {ganttVisibleTasks.map((task) => {
                     const progress = toPercent(task.progress);
-                    const geometry = getGanttBarGeometry(ganttModel, task.start, task.end);
+                    const geometry = ganttBarGeometries.get(task.code) ?? getGanttBarGeometry(ganttModel, task.start, task.end);
                     const top = 72 + task.rowIndex * rowHeight + 22;
                     const barHeight = 26;
                     const barTone = task.critical
@@ -1725,7 +1810,7 @@ export default function Cronograma({
       </div>
 
       <AnimatePresence>
-        {selectedGanttTask && (
+        {showGantt && selectedGanttTask && (
           <div
             className="fixed inset-0 z-[240] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-[2px]"
             onClick={() => setSelectedGanttTaskCode(null)}

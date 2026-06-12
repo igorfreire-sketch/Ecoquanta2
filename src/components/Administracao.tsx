@@ -78,6 +78,7 @@ export interface PreRegistrationRecord {
   disciplina: string;
   alocacao: string;
   contrato: string;
+  allowedTabs: AppTabKey[];
 }
 
 interface AdministracaoProps {
@@ -940,6 +941,7 @@ export default function Administracao({
   const [preRegDisciplina, setPreRegDisciplina] = React.useState('');
   const [preRegAlocacao, setPreRegAlocacao] = React.useState('');
   const [preRegContrato, setPreRegContrato] = React.useState('');
+  const [preRegAllowedTabs, setPreRegAllowedTabs] = React.useState<AppTabKey[]>([]);
 
   const totalUsuarios = usuarios.length;
   const usuariosOnline = usuarios.filter((user) => user.online).length;
@@ -1442,12 +1444,13 @@ export default function Administracao({
                 onClick={() => {
                   const email = preRegEmail.trim().toLowerCase();
                   if (!email || !preRegCargo || !preRegDisciplina) return;
-                  onAddPreRegistration({ email, cargo: preRegCargo, disciplina: preRegDisciplina, alocacao: preRegAlocacao, contrato: preRegContrato });
+                  onAddPreRegistration({ email, cargo: preRegCargo, disciplina: preRegDisciplina, alocacao: preRegAlocacao, contrato: preRegContrato, allowedTabs: preRegAllowedTabs });
                   setPreRegEmail('');
                   setPreRegCargo('');
                   setPreRegDisciplina('');
                   setPreRegAlocacao('');
                   setPreRegContrato('');
+                  setPreRegAllowedTabs([]);
                 }}
                 className="h-11 px-6 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center gap-2 disabled:opacity-50"
               >
@@ -1456,6 +1459,27 @@ export default function Administracao({
               </button>
             </div>
           </div>
+
+          {appTabs.filter((t) => t.key !== 'administracao').length > 0 && (
+            <div className="space-y-2">
+              <label className="text-[12px] font-medium text-[#757575]">Abas liberadas ao registrar</label>
+              <div className="bg-[#F9FAFB] border border-[#E5E7EB] rounded-xl p-3 flex flex-wrap gap-x-4 gap-y-2">
+                {appTabs.filter((t) => t.key !== 'administracao').map((tab) => (
+                  <label key={tab.key} className="flex items-center gap-2 cursor-pointer text-[12px] font-medium text-[#2D2D2D]">
+                    <input
+                      type="checkbox"
+                      checked={preRegAllowedTabs.includes(tab.key)}
+                      onChange={() => setPreRegAllowedTabs((prev) =>
+                        prev.includes(tab.key) ? prev.filter((k) => k !== tab.key) : [...prev, tab.key]
+                      )}
+                      className="w-4 h-4 accent-[#F05D28]"
+                    />
+                    {tab.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
 
           {preRegistrations.length > 0 && (
             <div className="space-y-3">
@@ -1469,6 +1493,7 @@ export default function Administracao({
                       <th className="text-left px-4 py-3 font-semibold text-[#757575]">Disciplina</th>
                       <th className="text-left px-4 py-3 font-semibold text-[#757575]">Alocação</th>
                       <th className="text-left px-4 py-3 font-semibold text-[#757575]">Contrato</th>
+                      <th className="text-left px-4 py-3 font-semibold text-[#757575]">Abas</th>
                       <th className="px-4 py-3"></th>
                     </tr>
                   </thead>
@@ -1480,6 +1505,11 @@ export default function Administracao({
                         <td className="px-4 py-3 text-[#757575]">{reg.disciplina || '—'}</td>
                         <td className="px-4 py-3 text-[#757575]">{reg.alocacao || '—'}</td>
                         <td className="px-4 py-3 text-[#757575]">{reg.contrato || '—'}</td>
+                        <td className="px-4 py-3 text-[#757575]">
+                          {Array.isArray(reg.allowedTabs) && reg.allowedTabs.length > 0
+                            ? reg.allowedTabs.map((k) => appTabs.find((t) => t.key === k)?.label || k).join(', ')
+                            : '—'}
+                        </td>
                         <td className="px-4 py-3">
                           <button
                             type="button"

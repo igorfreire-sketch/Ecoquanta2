@@ -594,7 +594,7 @@ function doPost(e) {
       regRow[regHeader.status] = regApproved ? 'approved' : 'pending';
       regRow[regHeader.alocacao] = regPreReg ? regPreReg.alocacao : '';
       regRow[regHeader.contrato] = regPreReg ? regPreReg.contrato : '';
-      regRow[regHeader.abas] = '';
+      regRow[regHeader.abas] = regPreReg ? normalizeAllowedTabs_(regPreReg.allowedTabs || []) : '';
       regRow[regHeader.passwordhash] = makePasswordHash_(regPassword);
       regRow[regHeader.resetcode] = '';
       regRow[regHeader.resetexpires] = '';
@@ -2261,7 +2261,7 @@ function getOrCreatePreRegistrationsSheet_(ss) {
 
   if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
     sh.clear();
-    sh.getRange(1, 1, 1, 5).setValues([['Email', 'Cargo', 'Disciplina', 'Alocacao', 'Contrato']]);
+    sh.getRange(1, 1, 1, 6).setValues([['Email', 'Cargo', 'Disciplina', 'Alocacao', 'Contrato', 'AllowedTabs']]);
   }
 
   return sh;
@@ -2270,7 +2270,7 @@ function getOrCreatePreRegistrationsSheet_(ss) {
 function savePreRegistrationsToSheet_(ss, records) {
   var sh = getOrCreatePreRegistrationsSheet_(ss);
   sh.clearContents();
-  sh.getRange(1, 1, 1, 5).setValues([['Email', 'Cargo', 'Disciplina', 'Alocacao', 'Contrato']]);
+  sh.getRange(1, 1, 1, 6).setValues([['Email', 'Cargo', 'Disciplina', 'Alocacao', 'Contrato', 'AllowedTabs']]);
 
   if (!Array.isArray(records) || records.length === 0) return;
 
@@ -2281,11 +2281,12 @@ function savePreRegistrationsToSheet_(ss, records) {
       String(r.disciplina || ''),
       String(r.alocacao || ''),
       String(r.contrato || ''),
+      normalizeAllowedTabs_(r.allowedTabs || []),
     ];
   }).filter(function(row) { return row[0]; });
 
   if (rows.length > 0) {
-    sh.getRange(2, 1, rows.length, 5).setValues(rows);
+    sh.getRange(2, 1, rows.length, 6).setValues(rows);
   }
 }
 
@@ -2294,7 +2295,8 @@ function findPreRegistration_(ss, email) {
   var lastRow = sh.getLastRow();
   if (lastRow < 2) return null;
 
-  var data = sh.getRange(2, 1, lastRow - 1, 5).getValues();
+  var numCols = Math.max(6, sh.getLastColumn());
+  var data = sh.getRange(2, 1, lastRow - 1, numCols).getValues();
   var normalizedEmail = String(email || '').trim().toLowerCase();
 
   for (var i = 0; i < data.length; i++) {
@@ -2305,6 +2307,7 @@ function findPreRegistration_(ss, email) {
         disciplina: String(data[i][2] || ''),
         alocacao: String(data[i][3] || ''),
         contrato: String(data[i][4] || ''),
+        allowedTabs: parseAllowedTabs_(data[i][5] || ''),
       };
     }
   }

@@ -58,6 +58,7 @@ const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Con
 const Administracao = React.lazy(() => import('./components/Administracao'));
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
+const EAP_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
 const APP_VERSION_LABEL = getAppVersionLabel();
 const DEFAULT_ALOCACOES = [
   'Rio de Janeiro',
@@ -748,7 +749,12 @@ function getAdminState(data: GlobalData) {
     })).filter((item: TerceirizadaRecord) => item.id && item.nome) : [],
     databaseLinks: Array.isArray(admin.databaseLinks) ? admin.databaseLinks : [],
     roleTabPermissions: admin.roleTabPermissions && typeof admin.roleTabPermissions === 'object' ? admin.roleTabPermissions as RoleTabPermissions : {},
-    preRegistrations: Array.isArray(admin.preRegistrations) ? admin.preRegistrations as PreRegistrationRecord[] : [],
+    preRegistrations: Array.isArray(admin.preRegistrations)
+      ? (admin.preRegistrations as any[]).map((r: any) => ({
+          ...r,
+          allowedTabs: Array.isArray(r.allowedTabs) ? r.allowedTabs as AppTabKey[] : [],
+        }) as PreRegistrationRecord)
+      : [],
   };
 }
 
@@ -1357,19 +1363,23 @@ export default function App() {
 
   const syncAdminSnapshotToAppsScript = useCallback(async () => {
     const snapshot = buildAdminFirebaseSnapshot();
-    const response = await postToAppsScript<GenericResponse>({
-      action: 'syncAdminSnapshot',
-      snapshot,
+    const response = await fetch(EAP_APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'syncAdminSnapshot', snapshot }),
     });
-    assertSuccess(response, 'Falha ao espelhar a administracao na planilha.');
+    const text = await response.text();
+    let result: GenericResponse;
+    try { result = JSON.parse(text) as GenericResponse; } catch { result = { success: false, error: text }; }
+    assertSuccess(result, 'Falha ao espelhar a administracao na planilha.');
   }, [buildAdminFirebaseSnapshot]);
 
   const syncAdminSnapshotToAppsScriptInBackground = useCallback((snapshot: Record<string, any>) => {
-    void postToAppsScript<GenericResponse>({
-      action: 'syncAdminSnapshot',
-      snapshot,
+    void fetch(EAP_APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'syncAdminSnapshot', snapshot }),
     })
-      .then((response) => {
+      .then((r) => r.json())
+      .then((response: GenericResponse) => {
         assertSuccess(response, 'Falha ao espelhar a administracao na planilha.');
       })
       .catch((error) => {

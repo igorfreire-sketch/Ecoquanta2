@@ -583,16 +583,17 @@ function doPost(e) {
       }
 
       var regRow = newEmptyLoginRow_(regHeader);
-      var regApproved = isCorporateEmail_(regEmail);
+      var regPreReg = findPreRegistration_(ss, regEmail);
+      var regApproved = isCorporateEmail_(regEmail) || !!regPreReg;
 
       regRow[regHeader.data] = new Date().toLocaleString('pt-BR');
       regRow[regHeader.nome] = regName;
       regRow[regHeader.email] = regEmail;
-      regRow[regHeader.role] = '';
-      regRow[regHeader.disciplina] = '';
+      regRow[regHeader.role] = regPreReg ? regPreReg.cargo : '';
+      regRow[regHeader.disciplina] = regPreReg ? regPreReg.disciplina : '';
       regRow[regHeader.status] = regApproved ? 'approved' : 'pending';
-      regRow[regHeader.alocacao] = '';
-      regRow[regHeader.contrato] = '';
+      regRow[regHeader.alocacao] = regPreReg ? regPreReg.alocacao : '';
+      regRow[regHeader.contrato] = regPreReg ? regPreReg.contrato : '';
       regRow[regHeader.abas] = '';
       regRow[regHeader.passwordhash] = makePasswordHash_(regPassword);
       regRow[regHeader.resetcode] = '';
@@ -603,7 +604,7 @@ function doPost(e) {
 
       regSheet.appendRow(regRow);
       publishLoginDataToFirebaseNow();
-      logAuth_(ss, 'INFO', 'registerUser ok', regEmail);
+      logAuth_(ss, 'INFO', 'registerUser ok', regEmail + (regPreReg ? ' (pre-cadastro)' : ''));
       return json_({
         success: true,
         message: regApproved
@@ -861,10 +862,14 @@ function doPost(e) {
     if (action === 'syncAdminSnapshot') {
       var adminSnapshot = payload.snapshot || {};
       syncUsersSnapshotToLoginSheet_(ss, adminSnapshot.users || adminSnapshot.usuarios || []);
+      if (Array.isArray(adminSnapshot.preRegistrations)) {
+        savePreRegistrationsToSheet_(ss, adminSnapshot.preRegistrations);
+      }
       publishLoginDataToFirebaseNow();
       var forwarded = forwardAdminSnapshotToRegistro_(adminSnapshot);
       logAuth_(ss, 'INFO', 'syncAdminSnapshot ok', safeJson_({
         users: Array.isArray(adminSnapshot.users) ? adminSnapshot.users.length : 0,
+        preRegistrations: Array.isArray(adminSnapshot.preRegistrations) ? adminSnapshot.preRegistrations.length : 0,
         forwardedToRegistro: forwarded
       }));
       return json_({ success: true });
@@ -2246,6 +2251,65 @@ function getOrCreateLoginSheet_(ss) {
   }
 
   return sh;
+}
+
+function getOrCreatePreRegistrationsSheet_(ss) {
+  var sh = ss.getSheetByName('pre_cadastros');
+  if (!sh) {
+    sh = ss.insertSheet('pre_cadastros');
+  }
+
+  if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
+    sh.clear();
+    sh.getRange(1, 1, 1, 5).setValues([['Email', 'Cargo', 'Disciplina', 'Alocacao', 'Contrato']]);
+  }
+
+  return sh;
+}
+
+function savePreRegistrationsToSheet_(ss, records) {
+  var sh = getOrCreatePreRegistrationsSheet_(ss);
+  sh.clearContents();
+  sh.getRange(1, 1, 1, 5).setValues([['Email', 'Cargo', 'Disciplina', 'Alocacao', 'Contrato']]);
+
+  if (!Array.isArray(records) || records.length === 0) return;
+
+  var rows = records.map(function(r) {
+    return [
+      String(r.email || '').trim().toLowerCase(),
+      String(r.cargo || ''),
+      String(r.disciplina || ''),
+      String(r.alocacao || ''),
+      String(r.contrato || ''),
+    ];
+  }).filter(function(row) { return row[0]; });
+
+  if (rows.length > 0) {
+    sh.getRange(2, 1, rows.length, 5).setValues(rows);
+  }
+}
+
+function findPreRegistration_(ss, email) {
+  var sh = getOrCreatePreRegistrationsSheet_(ss);
+  var lastRow = sh.getLastRow();
+  if (lastRow < 2) return null;
+
+  var data = sh.getRange(2, 1, lastRow - 1, 5).getValues();
+  var normalizedEmail = String(email || '').trim().toLowerCase();
+
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][0] || '').trim().toLowerCase() === normalizedEmail) {
+      return {
+        email: normalizedEmail,
+        cargo: String(data[i][1] || ''),
+        disciplina: String(data[i][2] || ''),
+        alocacao: String(data[i][3] || ''),
+        contrato: String(data[i][4] || ''),
+      };
+    }
+  }
+
+  return null;
 }
 
 function getHeaderMapSafe_(sheet) {

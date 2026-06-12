@@ -2873,7 +2873,8 @@ function buildFullDatabasePayloadData_(ss) {
 
 function publishPayloadDataToFirebase_(payloadData) {
   payloadData = payloadData || {};
-  firestoreSetAppData_("admin", payloadData.admin || {});
+  // admin node is owned by the React app (via writeAdminSnapshotToFirebase).
+  // Writing here with chunked format conflicts with the React data field and causes data loss.
   firestoreSetAppData_("registro", payloadData.registro || {});
   firestoreSetAppData_("cronograma", payloadData.cronograma || []);
 

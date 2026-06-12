@@ -315,6 +315,11 @@ async function getAppDataDoc<T>(dbRef: Firestore, name: string): Promise<T | nul
   const snapshot = await getDoc(doc(dbRef, 'appData', name));
   if (!snapshot.exists()) return null;
   const payload = snapshot.data();
+  // React-written documents store the value in a "data" field (not chunked).
+  // Prefer this over the GAS chunked format to avoid stale GAS overwrites.
+  if (payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) {
+    return payload.data as T;
+  }
   if (payload.chunked && Number(payload.chunkCount || 0) > 0) {
     const jsonText = (await readChunkedAppData(dbRef, name, Number(payload.chunkCount || 0))).join('');
     return JSON.parse(jsonText) as T;
@@ -322,7 +327,7 @@ async function getAppDataDoc<T>(dbRef: Firestore, name: string): Promise<T | nul
   if (typeof payload.dataJson === 'string') {
     return JSON.parse(payload.dataJson) as T;
   }
-  return ((payload.data && typeof payload.data === 'object') ? payload.data : payload) as T;
+  return (Array.isArray(payload.data) ? payload.data : payload) as T;
 }
 
 export async function fetchFirebaseAppData<T = any>(name: string): Promise<T | null> {
@@ -429,6 +434,28 @@ export async function fetchGlobalDataFromFirebase(user?: AuthUserLike): Promise<
   return fullData;
 }
 
+function mergePendingAuthUsersIntoAdmin(admin: any, auth: any): any {
+  const authUsers: any[] = Array.isArray(auth?.users) ? auth.users
+    : auth?.usersByEmail && typeof auth.usersByEmail === 'object' ? Object.values(auth.usersByEmail)
+    : [];
+  if (authUsers.length === 0) return admin;
+
+  const safeAdmin = admin && typeof admin === 'object' ? admin : {};
+  const adminUsers: any[] = Array.isArray(safeAdmin.users) ? safeAdmin.users
+    : Array.isArray(safeAdmin.usuarios) ? safeAdmin.usuarios : [];
+  const adminEmailSet = new Set(
+    adminUsers.map((u: any) => String(u.email || u.id || '').toLowerCase().trim()).filter(Boolean),
+  );
+
+  const newFromAuth = authUsers.filter((u: any) => {
+    const email = String(u.email || u.id || '').toLowerCase().trim();
+    return email && !adminEmailSet.has(email);
+  });
+
+  if (newFromAuth.length === 0) return admin;
+  return { ...safeAdmin, users: [...adminUsers, ...newFromAuth] };
+}
+
 export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
   try {
     if (!isFirebaseConfigured()) {
@@ -437,15 +464,17 @@ export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
     }
     await ensureFirebaseAuth();
     const dbRef = getDb();
-    const [menu, registroBase, admin] = await Promise.all([
+    const [menu, registroBase, admin, auth] = await Promise.all([
       getAppDataDoc<any>(dbRef, 'menu'),
       getAppDataDoc<any>(dbRef, 'registro'),
       getAppDataDoc<any>(dbRef, 'admin'),
+      getAppDataDoc<any>(dbRef, 'auth'),
     ]);
     const registro = mergePublishedRegistro(registroBase, menu?.registro || menu);
+    const mergedAdmin = mergePendingAuthUsersIntoAdmin(admin, auth);
 
     return {
-      admin: admin || undefined,
+      admin: mergedAdmin || undefined,
       registro: isNonEmptyObject(registro) ? registro : undefined,
       eap: menu?.eapResumo ? {
         latestEapSheet: menu.eapResumo.latestEapSheet || '',

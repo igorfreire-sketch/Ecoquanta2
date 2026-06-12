@@ -72,6 +72,14 @@ export interface TerceirizadaRecord {
   disciplina: string;
 }
 
+export interface PreRegistrationRecord {
+  email: string;
+  cargo: string;
+  disciplina: string;
+  alocacao: string;
+  contrato: string;
+}
+
 interface AdministracaoProps {
   usuarios: UserAccessRecord[];
   disciplinas: DisciplinaOption[];
@@ -83,7 +91,7 @@ interface AdministracaoProps {
   roleTabPermissions: RoleTabPermissions;
   databaseLinks: DatabaseLinkRecord[];
   appTabs: Array<{ key: AppTabKey; label: string }>;
-  activeSection?: 'usuarios' | 'terceirizadas' | 'gerenciamento';
+  activeSection?: 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro';
   onRefresh: () => Promise<void>;
   onUpdateUsuario: (userId: string, patch: Partial<UserAccessRecord>) => void;
   onToggleAdmin: (userId: string, checked: boolean) => void;
@@ -108,6 +116,9 @@ interface AdministracaoProps {
   onSaveChanges: () => Promise<void>;
   hasPendingChanges: boolean;
   isSavingChanges: boolean;
+  preRegistrations: PreRegistrationRecord[];
+  onAddPreRegistration: (record: PreRegistrationRecord) => void;
+  onRemovePreRegistration: (email: string) => void;
 }
 
 function statusLabel(status: UserStatus) {
@@ -911,6 +922,9 @@ export default function Administracao({
   onSaveChanges,
   hasPendingChanges,
   isSavingChanges,
+  preRegistrations,
+  onAddPreRegistration,
+  onRemovePreRegistration,
 }: AdministracaoProps) {
   const [search, setSearch] = React.useState('');
   const deferredSearch = React.useDeferredValue(search);
@@ -920,6 +934,12 @@ export default function Administracao({
   const [deliveryNoticeCount, setDeliveryNoticeCount] = React.useState(0);
   const [deliveryNoticeOpen, setDeliveryNoticeOpen] = React.useState(false);
   const wasSavingRef = React.useRef(false);
+
+  const [preRegEmail, setPreRegEmail] = React.useState('');
+  const [preRegCargo, setPreRegCargo] = React.useState('');
+  const [preRegDisciplina, setPreRegDisciplina] = React.useState('');
+  const [preRegAlocacao, setPreRegAlocacao] = React.useState('');
+  const [preRegContrato, setPreRegContrato] = React.useState('');
 
   const totalUsuarios = usuarios.length;
   const usuariosOnline = usuarios.filter((user) => user.online).length;
@@ -1343,6 +1363,147 @@ export default function Administracao({
         onDelete={onDeleteTerceirizada}
         pendingIds={pendingTerceirizadaIds}
       />
+      )}
+
+      {activeSection === 'pre-cadastro' && (
+        <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 lg:p-8 space-y-6">
+          <div>
+            <p className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">Pré-cadastro</p>
+            <h1 className="text-[24px] font-bold text-[#2D2D2D] mt-2">Pré-cadastro de Usuários</h1>
+            <p className="text-[14px] text-[#757575] mt-2 max-w-[840px] leading-relaxed">
+              Pré-configure o e-mail, cargo e disciplina de um usuário. Quando ele se cadastrar com esse e-mail, o acesso será aprovado automaticamente com as configurações definidas aqui.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="space-y-1">
+              <label className="text-[12px] font-medium text-[#757575]">E-mail</label>
+              <input
+                type="email"
+                value={preRegEmail}
+                onChange={(e) => setPreRegEmail(e.target.value)}
+                placeholder="usuario@empresa.com"
+                className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] placeholder:text-[#9CA3AF] focus:outline-none focus:border-[#F05D28] transition-colors"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[12px] font-medium text-[#757575]">Cargo</label>
+              <select
+                value={preRegCargo}
+                onChange={(e) => setPreRegCargo(e.target.value)}
+                className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
+              >
+                <option value="">Selecionar cargo</option>
+                {cargos.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[12px] font-medium text-[#757575]">Disciplina</label>
+              <select
+                value={preRegDisciplina}
+                onChange={(e) => setPreRegDisciplina(e.target.value)}
+                className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
+              >
+                <option value="">Selecionar disciplina</option>
+                {disciplinas.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[12px] font-medium text-[#757575]">Alocação (opcional)</label>
+              <select
+                value={preRegAlocacao}
+                onChange={(e) => setPreRegAlocacao(e.target.value)}
+                className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
+              >
+                <option value="">Nenhuma</option>
+                {alocacoes.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[12px] font-medium text-[#757575]">Contrato (opcional)</label>
+              <select
+                value={preRegContrato}
+                onChange={(e) => setPreRegContrato(e.target.value)}
+                className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
+              >
+                <option value="">Nenhum</option>
+                {contratos.map((c) => <option key={c.id} value={c.id}>{c.nome || c.id}</option>)}
+              </select>
+            </div>
+
+            <div className="flex items-end">
+              <button
+                type="button"
+                disabled={!preRegEmail.trim() || !preRegCargo || !preRegDisciplina}
+                onClick={() => {
+                  const email = preRegEmail.trim().toLowerCase();
+                  if (!email || !preRegCargo || !preRegDisciplina) return;
+                  onAddPreRegistration({ email, cargo: preRegCargo, disciplina: preRegDisciplina, alocacao: preRegAlocacao, contrato: preRegContrato });
+                  setPreRegEmail('');
+                  setPreRegCargo('');
+                  setPreRegDisciplina('');
+                  setPreRegAlocacao('');
+                  setPreRegContrato('');
+                }}
+                className="h-11 px-6 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center gap-2 disabled:opacity-50"
+              >
+                <Plus size={15} />
+                Adicionar
+              </button>
+            </div>
+          </div>
+
+          {preRegistrations.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-[13px] font-bold text-[#2D2D2D]">{preRegistrations.length} e-mail(s) pré-cadastrado(s)</p>
+              <div className="rounded-2xl border border-[#E5E7EB] overflow-hidden">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="bg-[#F9FAFB] border-b border-[#E5E7EB]">
+                      <th className="text-left px-4 py-3 font-semibold text-[#757575]">E-mail</th>
+                      <th className="text-left px-4 py-3 font-semibold text-[#757575]">Cargo</th>
+                      <th className="text-left px-4 py-3 font-semibold text-[#757575]">Disciplina</th>
+                      <th className="text-left px-4 py-3 font-semibold text-[#757575]">Alocação</th>
+                      <th className="text-left px-4 py-3 font-semibold text-[#757575]">Contrato</th>
+                      <th className="px-4 py-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preRegistrations.map((reg) => (
+                      <tr key={reg.email} className="border-b border-[#E5E7EB] last:border-0 hover:bg-[#F9FAFB] transition-colors">
+                        <td className="px-4 py-3 font-medium text-[#2D2D2D]">{reg.email}</td>
+                        <td className="px-4 py-3 text-[#757575]">{reg.cargo || '—'}</td>
+                        <td className="px-4 py-3 text-[#757575]">{reg.disciplina || '—'}</td>
+                        <td className="px-4 py-3 text-[#757575]">{reg.alocacao || '—'}</td>
+                        <td className="px-4 py-3 text-[#757575]">{reg.contrato || '—'}</td>
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() => onRemovePreRegistration(reg.email)}
+                            className="w-8 h-8 rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#B91C1C] hover:bg-[#FEE2E2] transition-colors inline-flex items-center justify-center"
+                            title="Remover pré-cadastro"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {preRegistrations.length === 0 && (
+            <div className="text-center py-10 text-[#9CA3AF] text-[13px]">
+              Nenhum pré-cadastro configurado ainda.
+            </div>
+          )}
+        </section>
       )}
 
       {activeSection === 'gerenciamento' && (

@@ -16,7 +16,8 @@ import {
   ShieldCheck,
   FileText,
   Clipboard,
-  CheckSquare
+  CheckSquare,
+  UserCheck,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type {
@@ -26,6 +27,7 @@ import type {
   DatabaseLinkRecord,
   TerceirizadaRecord,
   RoleTabPermissions,
+  PreRegistrationRecord,
 } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
 import { getAppVersionLabel } from './config/appVersion';
@@ -45,7 +47,6 @@ import {
   isFirebaseConfigured,
   hashPasswordLikeAppsScript,
   replaceFirebaseAppData,
-  upsertFirebaseAppData,
 } from './lib/firebaseDb';
 
 const Atividades = React.lazy(() => import('./components/Atividades'));
@@ -98,7 +99,7 @@ type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 
 type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'cronograma' | 'atividades' | 'os';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'cronograma';
 type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
-type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento';
+type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
   { key: 'nc2', label: 'Conformidade' },
@@ -747,6 +748,7 @@ function getAdminState(data: GlobalData) {
     })).filter((item: TerceirizadaRecord) => item.id && item.nome) : [],
     databaseLinks: Array.isArray(admin.databaseLinks) ? admin.databaseLinks : [],
     roleTabPermissions: admin.roleTabPermissions && typeof admin.roleTabPermissions === 'object' ? admin.roleTabPermissions as RoleTabPermissions : {},
+    preRegistrations: Array.isArray(admin.preRegistrations) ? admin.preRegistrations as PreRegistrationRecord[] : [],
   };
 }
 
@@ -1211,6 +1213,7 @@ export default function App() {
   const [pendingTerceirizadas, setPendingTerceirizadas] = useState<TerceirizadaRecord[]>([]);
   const [roleTabPermissions, setRoleTabPermissions] = useState<RoleTabPermissions>({});
   const [databaseLinks, setDatabaseLinks] = useState<DatabaseLinkRecord[]>([]);
+  const [preRegistrations, setPreRegistrations] = useState<PreRegistrationRecord[]>([]);
   const [dirtyUserIds, setDirtyUserIds] = useState<string[]>([]);
   const [adminHasPendingChanges, setAdminHasPendingChanges] = useState(false);
   const [isSavingAdminChanges, setIsSavingAdminChanges] = useState(false);
@@ -1255,6 +1258,7 @@ export default function App() {
     terceirizadas?: TerceirizadaRecord[];
     roleTabPermissions?: RoleTabPermissions;
     databaseLinks?: DatabaseLinkRecord[];
+    preRegistrations?: PreRegistrationRecord[];
   }) => {
     const snapshotUsers = overrides?.usuarios || usuarios;
     const snapshotDisciplineSettings = overrides?.disciplineSettings || disciplineSettings;
@@ -1288,8 +1292,9 @@ export default function App() {
       })),
       roleTabPermissions: overrides?.roleTabPermissions || roleTabPermissions,
       databaseLinks: overrides?.databaseLinks || databaseLinks,
+      preRegistrations: overrides?.preRegistrations || preRegistrations,
     };
-  }, [adminTerceirizadas, alocacoes, cargos, databaseLinks, disciplineSettings, roleTabPermissions, usuarios]);
+  }, [adminTerceirizadas, alocacoes, cargos, databaseLinks, disciplineSettings, preRegistrations, roleTabPermissions, usuarios]);
 
   const buildAuthFirebaseSnapshot = useCallback((sourceUsers?: UserAccessRecord[], existingAuth?: any) => {
     const users = sourceUsers || usuarios;
@@ -1335,7 +1340,7 @@ export default function App() {
 
   const writeAdminSnapshotToFirebase = useCallback(async (snapshot: Record<string, any>) => {
     if (!isFirebaseConfigured()) return;
-    await upsertFirebaseAppData('admin', snapshot);
+    await replaceFirebaseAppData('admin', snapshot);
   }, []);
 
   const syncAdminSnapshotToFirebase = useCallback(async (overrides?: Parameters<typeof buildAdminFirebaseSnapshot>[0]) => {
@@ -1687,6 +1692,24 @@ export default function App() {
     setAdminHasPendingChanges(true);
   }, []);
 
+  const addPreRegistration = useCallback((record: PreRegistrationRecord) => {
+    setPreRegistrations((prev) => {
+      const idx = prev.findIndex((r) => r.email.toLowerCase() === record.email.toLowerCase());
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = record;
+        return next;
+      }
+      return [...prev, record];
+    });
+    markAdminChangesPending();
+  }, [markAdminChangesPending]);
+
+  const removePreRegistration = useCallback((email: string) => {
+    setPreRegistrations((prev) => prev.filter((r) => r.email.toLowerCase() !== email.toLowerCase()));
+    markAdminChangesPending();
+  }, [markAdminChangesPending]);
+
   useEffect(() => {
     if (!globalData.admin) return;
     if (usuarios.length > 0 && disciplinas.length > 0) return;
@@ -1704,6 +1727,7 @@ export default function App() {
     if (Object.keys(roleTabPermissions).length === 0 && Object.keys(adminState.roleTabPermissions).length > 0) {
       setRoleTabPermissions(adminState.roleTabPermissions);
     }
+    if (preRegistrations.length === 0 && adminState.preRegistrations.length > 0) setPreRegistrations(adminState.preRegistrations);
   }, [
     alocacoes.length,
     cargos.length,
@@ -1711,6 +1735,7 @@ export default function App() {
     disciplinas.length,
     disciplineSettings.length,
     globalData,
+    preRegistrations.length,
     roleTabPermissions,
     terceirizadas.length,
     usuarios.length,
@@ -2120,6 +2145,7 @@ export default function App() {
         { key: 'usuarios', label: 'Usuários', icon: <Users size={16} />, active: adminSubTab === 'usuarios', onClick: () => setAdminSubTab('usuarios') },
         { key: 'terceirizadas', label: 'Terceirizadas', icon: <ShieldCheck size={16} />, active: adminSubTab === 'terceirizadas', onClick: () => setAdminSubTab('terceirizadas') },
         { key: 'gerenciamento', label: 'Gerenciamento', icon: <Settings size={16} />, active: adminSubTab === 'gerenciamento', onClick: () => setAdminSubTab('gerenciamento') },
+        { key: 'pre-cadastro', label: 'Pré-cadastro', icon: <UserCheck size={16} />, active: adminSubTab === 'pre-cadastro', onClick: () => setAdminSubTab('pre-cadastro') },
       ];
     }
 
@@ -2305,6 +2331,9 @@ export default function App() {
                   hasPendingChanges={adminHasPendingChanges}
                   isSavingChanges={isSavingAdminChanges}
                   onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onToggleDisciplineCharts={toggleDisciplineCharts} onAddCargo={addCargo} onRemoveCargo={removeCargo} onAddAlocacao={addAlocacao} onRemoveAlocacao={removeAlocacao} onSaveTerceirizada={saveTerceirizada} onDeleteTerceirizada={deleteTerceirizada} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
+                  preRegistrations={preRegistrations}
+                  onAddPreRegistration={addPreRegistration}
+                  onRemovePreRegistration={removePreRegistration}
                 />
               )}
             </React.Suspense>

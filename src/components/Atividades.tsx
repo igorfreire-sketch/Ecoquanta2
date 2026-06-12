@@ -2291,6 +2291,7 @@ function getActivityItemKey(activity: EngineeringActivity) {
 
 const CARD_DESIGN_WIDTH = 491;
 const CARD_DESIGN_HEIGHT = 218;
+const OS_GROUP_CARD_DESIGN_HEIGHT = 240;
 const BOARD_GAP = 8;
 
 function useResponsiveCardScale() {
@@ -2303,7 +2304,7 @@ function useResponsiveCardScale() {
 
     const updateScale = () => {
       const width = host.clientWidth || CARD_DESIGN_WIDTH;
-      const nextScale = width / CARD_DESIGN_WIDTH;
+      const nextScale = Math.min(1, width / CARD_DESIGN_WIDTH);
       setScale(Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 1);
     };
 
@@ -2461,6 +2462,125 @@ function ProductionCard({
   );
 }
 
+type OsActivityGroup = { osCodigo: string; osNome: string; activities: EngineeringActivity[] };
+
+const buildOsGroupsForColumn = (activities: EngineeringActivity[]): OsActivityGroup[] => {
+  const groupMap = new Map<string, OsActivityGroup>();
+  activities.forEach((activity) => {
+    const key = normalizeText(activity.osCodigo);
+    if (!groupMap.has(key)) groupMap.set(key, { osCodigo: activity.osCodigo, osNome: activity.osNome, activities: [] });
+    groupMap.get(key)!.activities.push(activity);
+  });
+  return Array.from(groupMap.values());
+};
+
+function OsGroupCard({ group, tipoLicitacao, onClick }: { group: OsActivityGroup; tipoLicitacao: string; onClick: () => void }) {
+  const { hostRef, scale } = useResponsiveCardScale();
+  const avgExec = Math.round(group.activities.reduce((s, a) => s + a.percentualRealizado, 0) / group.activities.length);
+  const avgPrev = Math.round(group.activities.reduce((s, a) => s + a.percentualPrevisto, 0) / group.activities.length);
+  const isBehind = avgExec < avgPrev;
+  const valueTone = isBehind ? 'text-[#EF4444]' : 'text-[#166534]';
+  const earliestStart = group.activities.reduce((m, a) => a.inicioPlanejado < m ? a.inicioPlanejado : m, group.activities[0].inicioPlanejado);
+  const latestEnd = group.activities.reduce((m, a) => a.terminoPlanejado > m ? a.terminoPlanejado : m, group.activities[0].terminoPlanejado);
+  const displayCode = extractVisualOsCode(group.activities[0]) || group.osCodigo;
+  const displayTitle = stripLodFromTitle(group.osNome, displayCode) || group.osNome;
+
+  const uniqueDisciplines = useMemo(() => {
+    const seen = new Map<string, { disciplina: string; lodAtual: LodLevel }>();
+    group.activities.forEach((a) => {
+      const key = normalizeText(a.disciplina || a.disciplinas?.[0] || '');
+      if (!seen.has(key)) seen.set(key, { disciplina: a.disciplina || a.disciplinas?.[0] || '', lodAtual: a.lodAtual });
+    });
+    return Array.from(seen.values());
+  }, [group.activities]);
+
+  const MAX_VISIBLE = 5;
+  const visibleDiscs = uniqueDisciplines.slice(0, MAX_VISIBLE);
+  const extraCount = Math.max(0, uniqueDisciplines.length - MAX_VISIBLE);
+
+  return (
+    <div ref={hostRef} className="relative w-full" style={{ height: `${OS_GROUP_CARD_DESIGN_HEIGHT * scale}px` }}>
+      <button
+        type="button"
+        onClick={onClick}
+        className="absolute left-0 top-0 block overflow-hidden rounded-[28px] border border-[#E7EDF4] bg-white px-4 py-3.5 text-left shadow-[0_9px_20px_rgba(45,45,45,0.22)] transition-[border-color,box-shadow] hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.14)] cursor-pointer"
+        style={{ width: `${CARD_DESIGN_WIDTH}px`, transform: scale !== null ? `scale(${scale})` : 'scale(1)', transformOrigin: 'top left', visibility: scale !== null ? 'visible' : 'hidden' }}
+      >
+        <div className="absolute right-[32px] top-0 flex flex-col items-center" aria-hidden="true">
+          <div className="h-[28px] w-4" style={{ backgroundColor: getOsAccentColor(group.osCodigo) }} />
+          <div className="h-0 w-0 border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent" style={{ borderTopColor: getOsAccentColor(group.osCodigo) }} />
+        </div>
+
+        <div className="flex min-h-[54px] items-center pr-8">
+          <p className="text-[18px] font-medium leading-[1.18] text-[#111827]">
+            {displayCode ? <span className="font-black text-[#F05D28]">{displayCode}</span> : null}
+            {displayCode ? ' - ' : ''}{displayTitle}
+          </p>
+        </div>
+
+        <div className="mt-2 grid grid-cols-[minmax(0,1fr)_190px] gap-2">
+          <div className="flex min-w-0 items-center gap-2 rounded-[12px] bg-[#F3F4F6] px-2.5 py-2">
+            {visibleDiscs.map((disc) => {
+              const icon = getDisciplineIconInfo(disc.disciplina);
+              const name = getDisciplineDisplayName(disc.disciplina);
+              const DIcon = icon.icon;
+              return (
+                <div key={disc.disciplina} className="flex flex-shrink-0 flex-col items-center gap-0.5">
+                  <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-[2px] text-[#F05D28] shadow-[0_3px_8px_rgba(240,93,40,0.10)]" title={name}>
+                    {icon.imageSrc ? <img src={icon.imageSrc} alt={name} className="h-full w-full rounded-full object-cover" /> : DIcon ? <DIcon size={26} strokeWidth={2.2} /> : null}
+                  </div>
+                  <p className="text-[7px] font-black uppercase tracking-[0.5px] text-[#7C8AA0]">LOD</p>
+                  <p className="text-[11px] font-black leading-none text-[#2D2D2D]">{disc.lodAtual}</p>
+                </div>
+              );
+            })}
+            {extraCount > 0 && (
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-[#CBD5E1] bg-white text-[10px] font-black text-[#64748B] shadow-[0_3px_8px_rgba(100,116,139,0.10)]">
+                +{extraCount}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col justify-between rounded-[12px] bg-[#DCF5E2] px-3 py-2">
+            <p className="text-[8px] font-black uppercase tracking-[0.5px] text-[#166534]">% de avanço da OS</p>
+            <div className="grid grid-cols-2 gap-1 text-center">
+              <div>
+                <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">Exec</p>
+                <p className={`mt-0.5 text-[15px] font-black leading-none ${valueTone}`}>{avgExec}%</p>
+              </div>
+              <div>
+                <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">Prev</p>
+                <p className={`mt-0.5 text-[15px] font-black leading-none ${valueTone}`}>{avgPrev}%</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-[12px] bg-[#F3F4F6] px-3 py-2">
+          <div className="grid grid-cols-4 gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Início</p>
+              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{formatDatePt(earliestStart)}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Término</p>
+              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{formatDatePt(latestEnd)}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Projeto</p>
+              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{extractProjectType(group.osNome) || 'Básico'}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Licitação</p>
+              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{tipoLicitacao || ''}</p>
+            </div>
+          </div>
+        </div>
+      </button>
+    </div>
+  );
+}
+
 export default function Atividades({
   currentUser,
   preloadedData,
@@ -2503,12 +2623,26 @@ export default function Atividades({
   const [filterContrato, setFilterContrato] = useState('Todos');
   const [filterOs, setFilterOs] = useState('Todos');
   const [filterDisciplinas, setFilterDisciplinas] = useState<string[]>(() => initialDisciplineFilter);
+
+  // Apply the auto-select once when user discipline data first becomes available.
+  // The useState initializer above only runs at mount; if currentUser.disciplina
+  // is populated later (admin data async load), this effect catches it.
+  const hasAutoSelectedDisciplineRef = useRef(false);
+  useEffect(() => {
+    if (!autoSelectUserDisciplineFilter) return;
+    if (hasAutoSelectedDisciplineRef.current) return;
+    if (initialDisciplineFilter.length > 0) {
+      setFilterDisciplinas(initialDisciplineFilter);
+      hasAutoSelectedDisciplineRef.current = true;
+    }
+  }, [autoSelectUserDisciplineFilter, initialDisciplineFilter]);
   const [filterEtapa, setFilterEtapa] = useState('Todos');
   const [filterLod, setFilterLod] = useState('Todos');
   const [filterStatus, setFilterStatus] = useState('Todos');
   const [filterPrioridade, setFilterPrioridade] = useState('Todos');
   const [filterShowCompleted, setFilterShowCompleted] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
+  const [selectedOsGroup, setSelectedOsGroup] = useState<OsActivityGroup | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedEapIndex, setSelectedEapIndex] = useState<number | null>(null);
   const [importResponsavel, setImportResponsavel] = useState(RESPONSAVEIS[0]);
@@ -3128,9 +3262,7 @@ export default function Atividades({
             <CompactStat icon={<AlertTriangle size={14} />} label="Bloqueadas" value={kpis.bloqueadas} tone="border-[#F7C7B7]" />
             <CompactStat icon={<CheckCircle2 size={14} />} label="Concluídas" value={kpis.concluidas} tone="border-[#BBF7D0]" />
             <div className="inline-flex min-w-0 items-center gap-2 rounded-[20px] border border-[#F7C7B7] bg-white px-2 py-1.5 shadow-sm">
-              <div className="text-[#F05D28]">
-                <Activity size={14} />
-              </div>
+              <div className="text-[#F05D28]"><Activity size={14} /></div>
               <div className="min-w-0 flex-1">
                 <p className="text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Escala</p>
                 <div className="mt-1 flex items-center gap-1">
@@ -3140,10 +3272,7 @@ export default function Atividades({
                       <button
                         key={label}
                         type="button"
-                        onClick={() => {
-                          setBoardZoomPercent(value);
-                          try { localStorage.setItem('atividades_boardZoom', String(value)); } catch {}
-                        }}
+                        onClick={() => { setBoardZoomPercent(value); try { localStorage.setItem('atividades_boardZoom', String(value)); } catch {} }}
                         className={`rounded-md px-2 py-0.5 text-[11px] font-black transition-colors ${boardZoomPercent === value ? 'bg-[#F05D28] text-white' : 'bg-[#F3F4F6] text-[#2D2D2D] hover:bg-[#F7C7B7]'}`}
                       >
                         {label}
@@ -3223,6 +3352,16 @@ export default function Atividades({
                         Sem atividade posicionada para este dia na semana filtrada.
                       </p>
                     </div>
+                  ) : showAllDisciplines ? (
+                    buildOsGroupsForColumn(column.activities).map((group) => (
+                      <React.Fragment key={group.osCodigo}>
+                        <OsGroupCard
+                          group={group}
+                          tipoLicitacao={osSettingsMap[group.osCodigo] || ''}
+                          onClick={() => setSelectedOsGroup(group)}
+                        />
+                      </React.Fragment>
+                    ))
                   ) : (
                     column.activities.map((activity) => (
                       <React.Fragment key={activity.id}>
@@ -3632,6 +3771,106 @@ export default function Atividades({
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedOsGroup && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedOsGroup(null)}
+              className="fixed inset-0 z-40 bg-[#2D2D2D]/35 backdrop-blur-[1px]"
+            />
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.98, y: 14 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.98, y: 14 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="flex max-h-[88vh] w-full max-w-[680px] flex-col overflow-hidden rounded-[28px] border border-[#E5E7EB] bg-white shadow-2xl"
+              >
+                <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white px-6 py-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-[#F05D28]">Ordem de Serviço</p>
+                      <h3 className="mt-2 text-[18px] font-black text-[#2D2D2D]">
+                        <span className="text-[#F05D28]">{extractVisualOsCode(selectedOsGroup.activities[0]) || selectedOsGroup.osCodigo}</span>
+                        {' - '}
+                        {stripLodFromTitle(selectedOsGroup.osNome, extractVisualOsCode(selectedOsGroup.activities[0]) || selectedOsGroup.osCodigo) || selectedOsGroup.osNome}
+                      </h3>
+                      <p className="mt-1 text-[12px] text-[#64748B]">{selectedOsGroup.activities.length} atividade(s) — agrupadas por disciplina. Clique para ver detalhes.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedOsGroup(null)}
+                      className="flex h-9 w-9 items-center justify-center rounded-full border border-[#E5E7EB] text-[#64748B] transition-colors hover:bg-[#F8FAFC] cursor-pointer"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-6 py-4">
+                  <div className="space-y-2">
+                    {(() => {
+                      const discMap = new Map<string, { disciplina: string; activities: EngineeringActivity[] }>();
+                      selectedOsGroup.activities.forEach((a) => {
+                        const key = normalizeText(a.disciplina || a.disciplinas?.[0] || '');
+                        if (!discMap.has(key)) discMap.set(key, { disciplina: a.disciplina || a.disciplinas?.[0] || '', activities: [] });
+                        discMap.get(key)!.activities.push(a);
+                      });
+                      return Array.from(discMap.values()).map((discGroup) => {
+                        const repActivity = discGroup.activities[0];
+                        const icon = getDisciplineIconInfo(discGroup.disciplina);
+                        const name = getDisciplineDisplayName(discGroup.disciplina);
+                        const DIcon = icon.icon;
+                        const avgExecDisc = Math.round(discGroup.activities.reduce((s, a) => s + a.percentualRealizado, 0) / discGroup.activities.length);
+                        const avgPrevDisc = Math.round(discGroup.activities.reduce((s, a) => s + a.percentualPrevisto, 0) / discGroup.activities.length);
+                        const maxLod = discGroup.activities.reduce((m, a) => a.lodAtual > m ? a.lodAtual : m, discGroup.activities[0].lodAtual);
+                        const behind = avgExecDisc < avgPrevDisc;
+                        const tone = behind ? 'text-[#EF4444]' : 'text-[#166534]';
+                        return (
+                          <button
+                            key={discGroup.disciplina}
+                            type="button"
+                            onClick={() => { setSelectedOsGroup(null); setSelectedActivityId(repActivity.id); }}
+                            className="flex w-full items-center gap-3 rounded-[16px] border border-[#E5E7EB] bg-white px-4 py-3 text-left transition-colors hover:border-[#F7C7B7] hover:bg-[#FFF7F3] cursor-pointer"
+                          >
+                            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-[3px] text-[#F05D28] shadow-sm">
+                              {icon.imageSrc ? <img src={icon.imageSrc} alt={name} className="h-full w-full rounded-full object-cover" /> : DIcon ? <DIcon size={28} strokeWidth={2.2} /> : null}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[13px] font-bold text-[#2D2D2D]">{name}</p>
+                              {discGroup.activities.length > 1 && (
+                                <p className="text-[11px] text-[#94A3B8]">{discGroup.activities.length} atividades</p>
+                              )}
+                            </div>
+                            <div className="flex flex-shrink-0 items-center gap-3 text-right">
+                              <div>
+                                <p className="text-[9px] font-black uppercase tracking-[0.5px] text-[#94A3B8]">LOD</p>
+                                <p className="text-[14px] font-black text-[#2D2D2D]">{maxLod}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] font-black uppercase tracking-[0.5px] text-[#94A3B8]">Exec</p>
+                                <p className={`text-[14px] font-black ${tone}`}>{avgExecDisc}%</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] font-black uppercase tracking-[0.5px] text-[#94A3B8]">Prev</p>
+                                <p className={`text-[14px] font-black ${tone}`}>{avgPrevDisc}%</p>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          </>
         )}
       </AnimatePresence>
     </div>

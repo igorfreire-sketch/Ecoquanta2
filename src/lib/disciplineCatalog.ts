@@ -66,6 +66,7 @@ const DISCIPLINE_SOURCE: Array<[string, string]> = [
   ['GER', 'Gerenciamento'],
   ['GECO', 'Gest\u00e3o do Contrato'],
   ['CONF', 'Conformidade'],
+  ['DEV', 'Desenvolvimento'],
 ];
 
 function normalizeText(value?: string) {

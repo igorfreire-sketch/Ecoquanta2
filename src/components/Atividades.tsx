@@ -12,6 +12,7 @@ import {
   Droplets,
   FileText,
   Fan,
+  Filter,
   House,
   Plus,
   Search,
@@ -19,7 +20,7 @@ import {
   X
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { DEFAULT_DISCIPLINES, getUserDisciplineList, getUserPrimaryDiscipline } from '../lib/disciplineCatalog';
+import { DEFAULT_DISCIPLINES, getUserDisciplineList, resolveDisciplineEntry } from '../lib/disciplineCatalog';
 
 export type ProductionStatus =
   | 'Não iniciado'
@@ -2612,30 +2613,12 @@ export default function Atividades({
   const [activities, setActivities] = useState<EngineeringActivity[]>(() => {
     return sourceActivities;
   });
-  const initialDisciplineFilter = useMemo(() => {
-    if (!autoSelectUserDisciplineFilter) return [];
-    const primaryDiscipline = getUserPrimaryDiscipline(currentUser || {});
-    return primaryDiscipline ? [primaryDiscipline] : [];
-  }, [autoSelectUserDisciplineFilter, currentUser?.disciplina, currentUser?.disciplinas]);
-
   const [searchText, setSearchText] = useState('');
   const [filterSemana, setFilterSemana] = useState(getCurrentWeekKey());
   const [filterContrato, setFilterContrato] = useState('Todos');
   const [filterOs, setFilterOs] = useState('Todos');
-  const [filterDisciplinas, setFilterDisciplinas] = useState<string[]>(() => initialDisciplineFilter);
-
-  // Apply the auto-select once when user discipline data first becomes available.
-  // The useState initializer above only runs at mount; if currentUser.disciplina
-  // is populated later (admin data async load), this effect catches it.
-  const hasAutoSelectedDisciplineRef = useRef(false);
-  useEffect(() => {
-    if (!autoSelectUserDisciplineFilter) return;
-    if (hasAutoSelectedDisciplineRef.current) return;
-    if (initialDisciplineFilter.length > 0) {
-      setFilterDisciplinas(initialDisciplineFilter);
-      hasAutoSelectedDisciplineRef.current = true;
-    }
-  }, [autoSelectUserDisciplineFilter, initialDisciplineFilter]);
+  const [filterDisciplinas, setFilterDisciplinas] = useState<string[]>([]);
+  const [showFiltersInternal, setShowFiltersInternal] = useState(false);
   const [filterEtapa, setFilterEtapa] = useState('Todos');
   const [filterLod, setFilterLod] = useState('Todos');
   const [filterStatus, setFilterStatus] = useState('Todos');
@@ -2643,6 +2626,7 @@ export default function Atividades({
   const [filterShowCompleted, setFilterShowCompleted] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [selectedOsGroup, setSelectedOsGroup] = useState<OsActivityGroup | null>(null);
+  const [selectedActivitySourceGroup, setSelectedActivitySourceGroup] = useState<OsActivityGroup | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedEapIndex, setSelectedEapIndex] = useState<number | null>(null);
   const [importResponsavel, setImportResponsavel] = useState(RESPONSAVEIS[0]);
@@ -2691,24 +2675,9 @@ export default function Atividades({
     [activitiesWithDiscipline, currentUser?.disciplina, currentUser?.disciplinas, showAllDisciplines]
   );
 
-  const autoDisciplineFilterAppliedRef = useRef(false);
-
   useEffect(() => {
     setActivities(sourceActivities);
   }, [sourceActivities]);
-
-  useEffect(() => {
-    autoDisciplineFilterAppliedRef.current = false;
-  }, [currentUser?.email, currentUser?.disciplina, currentUser?.disciplinas, autoSelectUserDisciplineFilter]);
-
-  useEffect(() => {
-    if (!autoSelectUserDisciplineFilter) return;
-    if (!initialDisciplineFilter.length) return;
-    if (autoDisciplineFilterAppliedRef.current) return;
-
-    setFilterDisciplinas(initialDisciplineFilter);
-    autoDisciplineFilterAppliedRef.current = true;
-  }, [autoSelectUserDisciplineFilter, initialDisciplineFilter]);
 
   useEffect(() => {
     if (filterContrato !== 'Todos' && filterOs !== 'Todos') {
@@ -2805,12 +2774,46 @@ export default function Atividades({
   }, [activitiesWithDiscipline, eapRegistry.osOptions, filterContrato]);
 
   const disciplinasDisponiveis = useMemo(() => {
+    const adminData = preloadedData?.admin;
+    if (adminData) {
+      const settingsSource = Array.isArray(adminData.disciplineSettings)
+        ? adminData.disciplineSettings
+        : Array.isArray(adminData.disciplinas)
+          ? adminData.disciplinas
+          : null;
+      if (settingsSource) {
+        const names = (settingsSource as any[])
+          .map((item) => (typeof item === 'string' ? item.trim() : String(item?.nome || item?.name || '').trim()))
+          .filter(Boolean);
+        if (names.length > 0) return names;
+      }
+    }
     const collected = new Set<string>();
     activitiesWithDiscipline.forEach((activity) => {
       splitDisciplinas(activity.disciplinas || activity.disciplina).forEach((item) => collected.add(item));
     });
     return Array.from(collected);
-  }, [activitiesWithDiscipline]);
+  }, [preloadedData?.admin, activitiesWithDiscipline]);
+
+  const disciplineAutoMatchedRef = useRef(false);
+  useEffect(() => {
+    disciplineAutoMatchedRef.current = false;
+    if (autoSelectUserDisciplineFilter) setFilterDisciplinas([]);
+  }, [currentUser?.email, autoSelectUserDisciplineFilter]);
+  useEffect(() => {
+    if (!autoSelectUserDisciplineFilter) return;
+    if (disciplineAutoMatchedRef.current) return;
+    if (!disciplinasDisponiveis.length) return;
+    const userDisciplines = getUserDisciplineList(currentUser || {});
+    if (!userDisciplines.length) return;
+    const matched = disciplinasDisponiveis.filter((d) =>
+      userDisciplines.some((ud) => resolveDisciplineEntry(d) === resolveDisciplineEntry(ud))
+    );
+    if (matched.length > 0) {
+      setFilterDisciplinas(matched);
+      disciplineAutoMatchedRef.current = true;
+    }
+  }, [autoSelectUserDisciplineFilter, disciplinasDisponiveis, currentUser]);
 
   const etapasDisponiveis = useMemo(() => ['Todos', ...TECHNICAL_STEPS], []);
 
@@ -2842,6 +2845,9 @@ export default function Atividades({
 
   const filteredActivities = useMemo(() => {
     const normalizedSearch = searchText.trim().toLowerCase();
+    const todayClear = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate());
+    const windowStart = addDays(todayClear, -7);
+    const windowEnd = addDays(todayClear, 15);
 
     return disciplineScopedActivities
       .filter((activity) => {
@@ -2858,12 +2864,18 @@ export default function Atividades({
         const activityDisciplinas = splitDisciplinas(activity.disciplinas || activity.disciplina);
         const matchesDisciplina = !disciplineFilterEnabled
           || filterDisciplinas.length === 0
-          || filterDisciplinas.some((discipline) => activityDisciplinas.includes(discipline));
+          || filterDisciplinas.some((fd) => activityDisciplinas.some((ad) => resolveDisciplineEntry(ad) === resolveDisciplineEntry(fd)));
         const matchesEtapa = filterEtapa === 'Todos' || activity.etapaTecnica === filterEtapa;
         const matchesLod = filterLod === 'Todos' || String(activity.lodAtual) === filterLod || String(activity.lodAlvoSemana) === filterLod;
         const matchesStatus = filterStatus === 'Todos' || getEffectiveStatus(activity) === filterStatus;
         const matchesPrioridade = filterPrioridade === 'Todos' || activity.prioridade === filterPrioridade;
         const matchesCompleted = filterShowCompleted || Number(activity.percentualRealizado || 0) < 100;
+
+        const actStart = parseDate(activity.inicioPlanejado);
+        const actEnd = parseDate(activity.terminoPlanejado);
+        const startedInWindow = actStart >= windowStart && actStart <= todayClear;
+        const endsInWindow = actEnd >= todayClear && actEnd <= windowEnd;
+        const matchesDateRange = startedInWindow || endsInWindow;
 
         return (
           matchesSearch &&
@@ -2874,7 +2886,8 @@ export default function Atividades({
           matchesLod &&
           matchesStatus &&
           matchesPrioridade &&
-          matchesCompleted
+          matchesCompleted &&
+          matchesDateRange
         );
       })
       .sort(compareActivities);
@@ -3165,7 +3178,7 @@ export default function Atividades({
 
   return (
     <div className="flex w-full flex-col gap-3 font-['Montserrat'] animate-in fade-in duration-500">
-      {(filtersAlwaysVisible || isHeaderFiltersOpen) && (
+      {(filtersAlwaysVisible || isHeaderFiltersOpen || showFiltersInternal) && (
         <motion.section
           initial={filtersAlwaysVisible ? false : { opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -3182,7 +3195,7 @@ export default function Atividades({
             {!filtersAlwaysVisible && (
               <button
                 type="button"
-                onClick={onCloseHeaderFilters}
+                onClick={() => { onCloseHeaderFilters?.(); setShowFiltersInternal(false); }}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] text-[#64748B] transition-colors hover:border-[#F7C7B7] hover:text-[#F05D28]"
                 aria-label="Fechar filtros"
               >
@@ -3283,6 +3296,16 @@ export default function Atividades({
               </div>
             </div>
           </div>
+          {!filtersAlwaysVisible && (
+            <button
+              type="button"
+              onClick={() => setShowFiltersInternal((prev) => !prev)}
+              className={`inline-flex flex-shrink-0 items-center gap-2 rounded-[20px] border px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.7px] shadow-sm transition-colors ${showFiltersInternal || isHeaderFiltersOpen ? 'border-[#F05D28] bg-[#F05D28] text-white' : 'border-[#E5E7EB] bg-white text-[#94A3B8] hover:border-[#F7C7B7] hover:text-[#F05D28]'}`}
+            >
+              <Filter size={13} />
+              Filtros
+            </button>
+          )}
         </div>
 
         <div className="mb-3">
@@ -3383,7 +3406,7 @@ export default function Atividades({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setSelectedActivityId(null)}
+              onClick={() => { setSelectedActivityId(null); setSelectedActivitySourceGroup(null); }}
               className="fixed inset-0 z-40 bg-[#2D2D2D]/35 backdrop-blur-[1px]"
             />
 
@@ -3420,41 +3443,45 @@ export default function Atividades({
                 transition={{ duration: 0.18, ease: 'easeOut' }}
                 className="flex max-h-[88vh] w-full max-w-[980px] flex-col overflow-hidden rounded-[28px] border border-[#E5E7EB] bg-white shadow-2xl"
               >
-              <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white px-6 py-5">
+              <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white px-6 py-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-[#F05D28]">Detalhamento operacional</p>
-                    <h3 className="mt-2 text-[18px] font-black text-[#2D2D2D]">
-                      {selectedActivityDisplayCode}
-                      {selectedActivityDisplayTitle ? ` · ${selectedActivityDisplayTitle}` : ''}
-                    </h3>
-                    <p className="mt-2 text-[12px] leading-relaxed text-[#64748B]">
-                      Painel lateral com os dados técnicos e operacionais da atividade selecionada.
-                    </p>
-                  </div>
-
-                  <div className="flex items-start gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
                     {selectedActivityDisciplineIcon ? (
                       <div
-                        className="flex h-[65px] w-[65px] items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-[4px] shadow-[0_4px_12px_rgba(240,93,40,0.12)]"
+                        className="flex h-[52px] w-[52px] flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-[4px] shadow-[0_4px_12px_rgba(240,93,40,0.12)]"
                         title={selectedActivityDisciplineName}
                         aria-label={selectedActivityDisciplineName}
                       >
                         {selectedActivityDisciplineIcon.imageSrc ? (
-                          <img
-                            src={selectedActivityDisciplineIcon.imageSrc}
-                            alt={selectedActivityDisciplineName}
-                            className="h-full w-full rounded-full object-cover"
-                          />
+                          <img src={selectedActivityDisciplineIcon.imageSrc} alt={selectedActivityDisciplineName} className="h-full w-full rounded-full object-cover" />
                         ) : selectedActivityDisciplineIcon.icon ? (
-                          <selectedActivityDisciplineIcon.icon size={46} className="scale-[1.05] text-[#F05D28]" />
+                          <selectedActivityDisciplineIcon.icon size={36} className="scale-[1.05] text-[#F05D28]" />
                         ) : null}
                       </div>
                     ) : null}
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-[#F05D28]">Detalhamento operacional</p>
+                      <h3 className="mt-1 text-[17px] font-black text-[#2D2D2D] leading-snug">
+                        {selectedActivityDisplayCode}
+                        {selectedActivityDisplayTitle ? ` · ${selectedActivityDisplayTitle}` : ''}
+                      </h3>
+                    </div>
+                  </div>
 
+                  <div className="flex flex-shrink-0 items-center gap-2">
+                    {selectedActivitySourceGroup && (
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedOsGroup(selectedActivitySourceGroup); setSelectedActivitySourceGroup(null); setSelectedActivityId(null); }}
+                        className="flex h-9 items-center gap-1.5 rounded-full border border-[#E5E7EB] bg-white px-3 text-[12px] font-bold text-[#64748B] transition-colors hover:border-[#F7C7B7] hover:text-[#F05D28] cursor-pointer"
+                      >
+                        <ChevronLeft size={14} />
+                        Voltar
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => setSelectedActivityId(null)}
+                      onClick={() => { setSelectedActivityId(null); setSelectedActivitySourceGroup(null); }}
                       className="flex h-9 w-9 items-center justify-center rounded-full border border-[#E5E7EB] text-[#64748B] transition-colors hover:bg-[#F8FAFC] cursor-pointer"
                     >
                       <X size={16} />
@@ -3836,7 +3863,7 @@ export default function Atividades({
                           <button
                             key={discGroup.disciplina}
                             type="button"
-                            onClick={() => { setSelectedOsGroup(null); setSelectedActivityId(repActivity.id); }}
+                            onClick={() => { setSelectedActivitySourceGroup(selectedOsGroup); setSelectedOsGroup(null); setSelectedActivityId(repActivity.id); }}
                             className="flex w-full items-center gap-3 rounded-[16px] border border-[#E5E7EB] bg-white px-4 py-3 text-left transition-colors hover:border-[#F7C7B7] hover:bg-[#FFF7F3] cursor-pointer"
                           >
                             <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-[3px] text-[#F05D28] shadow-sm">

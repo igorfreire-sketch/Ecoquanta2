@@ -2,7 +2,6 @@ import React from 'react';
 import {
   CalendarClock,
   ChevronRight,
-  Filter,
 } from 'lucide-react';
 import Atividades from './Atividades';
 import DashboardEngenharia from './CoordenacaoEngenharia/DashboardEngenharia';
@@ -78,7 +77,6 @@ function getLatestEapDisplayDate(eap?: any) {
 }
 
 export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
-  const [showPlanejamentoFilters, setShowPlanejamentoFilters] = React.useState(false);
   const effectiveSubTab = subTab === 'alertas' ? 'dashboard' : subTab;
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
@@ -92,48 +90,28 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
 
   return (
     <div className="w-full flex flex-col font-['Montserrat']">
-      <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-        <div className="flex min-w-0 flex-col gap-3">
-          <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
-            <span>Coordenacao de Engenharia</span>
-            <ChevronRight size={12} />
-            <span className="text-[#F05D28]">{tabs.find(t => t.id === effectiveSubTab)?.label}</span>
-          </div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
+          <span>Coordenacao de Engenharia</span>
+          <ChevronRight size={12} />
+          <span className="text-[#F05D28]">{tabs.find(t => t.id === effectiveSubTab)?.label}</span>
         </div>
-
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <div className="inline-flex w-fit items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
-            <CalendarClock size={14} className="text-[#F05D28]" />
-            <span>EAP atualizada em</span>
-            <span className="text-[#2D2D2D]">{latestEapDate}</span>
-          </div>
-          {effectiveSubTab === 'planejamento' && (
-            <button
-              type="button"
-              onClick={() => setShowPlanejamentoFilters((prev) => !prev)}
-              className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-bold transition-all ${
-                showPlanejamentoFilters
-                  ? 'border-[#F05D28] bg-[#F05D28] text-white'
-                  : 'border-[#E5E7EB] bg-white text-[#757575] hover:bg-[#F9FAFB]'
-              }`}
-            >
-              <Filter size={18} /> Filtros
-            </button>
-          )}
+        <div className="inline-flex items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
+          <CalendarClock size={13} className="text-[#F05D28]" />
+          <span>EAP atualizada em</span>
+          <span className="text-[#2D2D2D]">{latestEapDate}</span>
         </div>
       </div>
 
-      <div className="pb-10">
+      <div>
         {effectiveSubTab === 'dashboard' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="dashboard" activeContractCode={activeContractCode} />}
         {effectiveSubTab === 'profissionais' && <DashboardEngenharia filtrosAtivos={filtrosAtivos} preloadedData={preloadedData} mode="profissionais" activeContractCode={activeContractCode} />}
         {effectiveSubTab === 'planejamento' && (
-          <div className="space-y-3">
+          <div>
             <Atividades
               currentUser={currentUser}
               preloadedData={preloadedData}
               showAllDisciplines
-              isHeaderFiltersOpen={showPlanejamentoFilters}
-              onCloseHeaderFilters={() => setShowPlanejamentoFilters(false)}
               disciplineFilterEnabled
             />
           </div>

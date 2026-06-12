@@ -7,7 +7,6 @@ import {
   ChevronRight,
   ClipboardList,
   FileText,
-  Filter,
   FileWarning,
   GitBranch,
   PencilLine,
@@ -610,7 +609,6 @@ export default function Contrato({
   const [selectedOs, setSelectedOs] = useState('Todas');
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [showAtividadesFilters, setShowAtividadesFilters] = useState(false);
   const deferredSearch = useDeferredValue(search);
   const monthlyPriorityCycle = useMemo(() => getMonthlyPriorityCycleKey(), []);
   const monthlyPriorityCycleLabel = useMemo(() => formatMonthlyCycleLabel(monthlyPriorityCycle), [monthlyPriorityCycle]);
@@ -844,26 +842,16 @@ export default function Contrato({
       )}
 
       {activeView === 'atividades' && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-end">
-            <button
-              type="button"
-              onClick={() => setShowAtividadesFilters((prev) => !prev)}
-              className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-bold transition-all ${
-                showAtividadesFilters
-                  ? 'border-[#F05D28] bg-[#F05D28] text-white'
-                  : 'border-[#E5E7EB] bg-white text-[#757575] hover:bg-[#F9FAFB]'
-              }`}
-            >
-              <Filter size={18} /> Filtros
-            </button>
+        <div className="w-full flex flex-col font-['Montserrat']">
+          <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
+            <span>Contrato</span>
+            <ChevronRight size={12} />
+            <span className="text-[#F05D28]">Atividades</span>
           </div>
           <Atividades
             currentUser={_currentUser}
             preloadedData={preloadedData}
             showAllDisciplines
-            isHeaderFiltersOpen={showAtividadesFilters}
-            onCloseHeaderFilters={() => setShowAtividadesFilters(false)}
             disciplineFilterEnabled
           />
         </div>

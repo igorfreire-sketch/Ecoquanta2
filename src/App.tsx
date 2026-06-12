@@ -16,8 +16,7 @@ import {
   ShieldCheck,
   FileText,
   Clipboard,
-  CheckSquare,
-  Filter
+  CheckSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type {
@@ -1200,7 +1199,6 @@ export default function App() {
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('os');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
-  const [showFilters, setShowFilters] = React.useState(false);
   const [globalData, setGlobalData] = useState<GlobalData>({});
 
   // ADMIN
@@ -1487,11 +1485,6 @@ export default function App() {
     setFiltrosAtivos((prev) => ({ ...prev, contrato: 'Todos', os: 'Todos' }));
   }, [lockedContractCode]);
 
-  useEffect(() => {
-    if (activeTab !== 'registro' || areaTecnicaSubTab !== 'atividades') {
-      setShowFilters(false);
-    }
-  }, [activeTab, areaTecnicaSubTab]);
 
   const loadGlobalEnvironment = async (user: AuthUser, isBackgroundSync = false) => {
     let progressInterval: number | undefined;
@@ -1914,6 +1907,14 @@ export default function App() {
     setDisciplinas(nextDisciplinas);
     setAlocacoes(nextAlocacoes);
     if (nextDisciplineSettings) setDisciplineSettings(nextDisciplineSettings);
+    setGlobalData((prev) => ({
+      ...prev,
+      admin: {
+        ...prev.admin,
+        disciplinas: nextDisciplinas,
+        ...(nextDisciplineSettings ? { disciplineSettings: nextDisciplineSettings } : {}),
+      },
+    }));
     markAdminChangesPending();
   }, [markAdminChangesPending]);
 
@@ -2227,15 +2228,6 @@ export default function App() {
           )}
 
           <div className="flex items-center gap-4">
-            {activeTab === 'registro' && areaTecnicaSubTab === 'atividades' && (
-              <button
-                type="button"
-                onClick={() => setShowFilters((prev) => !prev)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border ${showFilters ? 'bg-[#F05D28] text-white border-[#F05D28]' : 'bg-white text-[#757575] border-[#E5E7EB] hover:bg-[#F9FAFB]'}`}
-              >
-                <Filter size={18} /> Filtros
-              </button>
-            )}
             <button
               type="button"
               onClick={() => currentUser && void refreshRealtimeEnvironment(currentUser)}
@@ -2252,12 +2244,12 @@ export default function App() {
           </div>
         </header>
 
-        <main className={`flex-1 overflow-y-auto ${activeTab === 'registro' && areaTecnicaSubTab === 'atividades' ? 'p-3' : 'p-8'} bg-[#F8F9FA]`}>
+        <main className={`flex-1 overflow-y-auto ${ (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ? 'p-3' : 'p-8' } bg-[#F8F9FA]`}>
           <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'atividades'
-                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines autoSelectUserDisciplineFilter isHeaderFiltersOpen={showFilters} onCloseHeaderFilters={() => setShowFilters(false)} disciplineFilterEnabled />
+                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines autoSelectUserDisciplineFilter disciplineFilterEnabled />
                   : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />}
@@ -2265,7 +2257,16 @@ export default function App() {
                 planejamentoSubTab === 'dashboard'
                   ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="dashboard" activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                   : planejamentoSubTab === 'atividades'
-                    ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines filtersAlwaysVisible disciplineFilterEnabled />
+                    ? (
+                      <div className="w-full flex flex-col font-['Montserrat']">
+                        <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
+                          <span>Planejamento</span>
+                          <ChevronRight size={12} />
+                          <span className="text-[#F05D28]">Atividades</span>
+                        </div>
+                        <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled />
+                      </div>
+                    )
                     : planejamentoSubTab === 'os'
                       ? <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView="os" />
                       : planejamentoSubTab === 'cronograma'

@@ -1267,7 +1267,7 @@ export default function Cronograma({
     [ganttVisibleTasks, selectedGanttTaskCode],
   );
 
-  const GANTT_ROW_HEIGHT = 76;
+  const GANTT_ROW_HEIGHT = 96;
   const GANTT_HEADER_HEIGHT = 72;
   const ganttTimelineWidth = useMemo(
     () => Math.max(ganttModel.unitCount * ganttModel.unitPx, 720),
@@ -1431,76 +1431,41 @@ export default function Cronograma({
     return (
       <>
       <div
-        className="fixed inset-0 z-[200] bg-slate-950/70 backdrop-blur-sm p-3 md:p-5"
+        className="fixed inset-0 z-[200] bg-slate-950/70 backdrop-blur-sm"
         style={showGantt ? undefined : { visibility: 'hidden', pointerEvents: 'none' }}
       >
-        <div className="flex h-full w-full flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
-          <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 md:flex-row md:items-start md:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-3">
-                <Maximize2 size={20} className="text-[#F05D28]" />
-                <div>
-                  <h2 className="text-[18px] font-black text-[#1F2937]">Modo Gantt</h2>
-                  <p className="text-[12px] text-[#64748B]">
-                    Estrutura em cascata a esquerda, cronologia e dependencias a direita.
-                  </p>
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[1px] text-[#64748B]">
-                <span className="rounded-full bg-[#F8FAFC] px-3 py-1">{ganttVisibleTasks.length} tarefa(s)</span>
-                <label className="inline-flex items-center gap-2 rounded-full bg-[#F8FAFC] px-3 py-1">
-                  <span>Escala</span>
-                  <select
-                    value={ganttScaleMode}
-                    onChange={(event) => setGanttScaleMode(event.target.value as GanttScaleMode)}
-                    className="bg-transparent text-[11px] font-black uppercase tracking-[1px] text-[#334155] outline-none"
-                  >
-                    <option value="day">Dias</option>
-                    <option value="week">Semanas</option>
-                    <option value="month">Meses</option>
-                    <option value="year">Anos</option>
-                  </select>
-                </label>
-                {ganttModel.issues.length > 0 && (
-                  <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">{ganttModel.issues.length} inconsistencia(s)</span>
-                )}
-              </div>
-            </div>
-
+        <div className="flex h-full w-full flex-col overflow-hidden bg-white">
+          <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-2.5">
             <div className="flex items-center gap-3">
-              <div className="hidden rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-right md:block">
-                <div className="text-[10px] font-black uppercase tracking-[1.2px] text-slate-400">Legenda</div>
-                <div className="mt-1 text-[12px] text-slate-500">
-                  Concluido, andamento, futuro, marco e critico
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedGanttTaskCode(null);
-                  setShowGantt(false);
-                }}
-                className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-[13px] font-bold text-slate-600 transition-all hover:border-slate-300 hover:bg-slate-50"
-              >
-                <X size={18} />
-                Fechar
-              </button>
+              <Maximize2 size={16} className="text-[#F05D28]" />
+              <h2 className="text-[15px] font-black text-[#1F2937]">Modo Gantt</h2>
+              <span className="text-[11px] text-slate-400">{ganttVisibleTasks.length} tarefa(s)</span>
+              <label className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.8px] text-slate-600">
+                <span>Escala</span>
+                <select
+                  value={ganttScaleMode}
+                  onChange={(event) => setGanttScaleMode(event.target.value as GanttScaleMode)}
+                  className="bg-transparent text-[11px] font-black uppercase tracking-[0.8px] text-[#334155] outline-none"
+                >
+                  <option value="day">Dias</option>
+                  <option value="week">Semanas</option>
+                  <option value="month">Meses</option>
+                  <option value="year">Anos</option>
+                </select>
+              </label>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedGanttTaskCode(null);
+                setShowGantt(false);
+              }}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-[12px] font-bold text-slate-600 transition-all hover:border-slate-300 hover:bg-slate-50"
+            >
+              <X size={14} />
+              Fechar
+            </button>
           </div>
-
-          {ganttModel.issues.length > 0 && (
-            <div className="border-b border-amber-200 bg-amber-50 px-5 py-3">
-              <div className="flex items-center gap-2 text-[12px] font-black uppercase tracking-[1px] text-amber-800">
-                <AlertTriangle size={15} />
-                Inconsistencias encontradas
-              </div>
-              <ul className="mt-2 space-y-1 text-[12px] text-amber-900">
-                {ganttModel.issues.map((issue) => (
-                  <li key={issue}>- {issue}</li>
-                ))}
-              </ul>
-            </div>
-          )}
 
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <div
@@ -1508,9 +1473,9 @@ export default function Cronograma({
               style={{ width: `${leftWidth}px`, minWidth: `${leftWidth}px` }}
             >
               <div className="flex h-full flex-col">
-                <div className="grid grid-cols-[1.2fr_0.8fr] gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-[1.1px] text-slate-500">
-                  <span>Atividade</span>
-                  <span className="text-right">Datas / Progresso</span>
+                <div className="grid grid-cols-[1.2fr_0.8fr] gap-2 border-b border-slate-200 bg-slate-50 px-4 text-[10px] font-black uppercase tracking-[1.1px] text-slate-500" style={{ height: `${headerHeight}px`, display: 'flex', alignItems: 'center' }}>
+                  <span className="flex-1">Atividade</span>
+                  <span className="text-right" style={{ width: '120px' }}>Datas / Progresso</span>
                 </div>
                 <div
                   ref={ganttLeftScrollRef}
@@ -1532,11 +1497,11 @@ export default function Cronograma({
                       return (
                         <div
                           key={task.code}
-                          className="grid grid-cols-[1.2fr_0.8fr] gap-2 border-b border-slate-100 px-4 py-3"
-                          style={{ minHeight: `${rowHeight}px` }}
+                          className="grid grid-cols-[1.2fr_0.8fr] items-center gap-2 border-b border-slate-100 px-4 overflow-hidden"
+                          style={{ height: `${rowHeight}px` }}
                           onClick={() => setSelectedGanttTaskCode(task.code)}
                         >
-                          <div className="min-w-0">
+                          <div className="min-w-0 py-2">
                             <button
                               type="button"
                               onClick={(event) => {
@@ -1731,8 +1696,8 @@ export default function Cronograma({
                   {ganttVisibleTasks.map((task) => {
                     const progress = toPercent(task.progress);
                     const geometry = ganttBarGeometries.get(task.code) ?? getGanttBarGeometry(ganttModel, task.start, task.end);
-                    const top = 72 + task.rowIndex * rowHeight + 22;
                     const barHeight = 26;
+                    const top = task.rowIndex * rowHeight + Math.floor((rowHeight - barHeight) / 2);
                     const barTone = task.critical
                       ? '#F43F5E'
                       : progress >= 100

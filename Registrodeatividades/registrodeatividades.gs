@@ -337,6 +337,7 @@ function doPost(e) {
 
       loginSheet.appendRow(row);
       logAuth_(ss, 'INFO', 'registerUser ok', email);
+      forwardRegistrationToEap_(name, email, password);
       flushAndSchedulePublicJsonPublish_(); return json_({ success: true, message: 'Cadastro realizado com sucesso. Aguarde aprovação.' });
     }
 
@@ -2457,6 +2458,39 @@ function runFullPublicJsonRefreshByTrigger() {
     return eapResult + " Publicacao do Registro agendada para depois da EAP.";
   } finally {
     cleanupFullPublicJsonRefreshTriggers_();
+  }
+}
+
+function forwardRegistrationToEap_(name, email, password) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var url = String(props.getProperty("eap_apps_script_url") || DEFAULT_EAP_APPS_SCRIPT_URL || "").trim();
+    if (!url) return false;
+
+    var response = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      payload: JSON.stringify({
+        action: "registerUser",
+        name: name,
+        email: email,
+        password: password
+      })
+    });
+
+    var status = response.getResponseCode();
+    if (status < 200 || status >= 300) {
+      Logger.log("forwardRegistrationToEap_: HTTP " + status + " - " + response.getContentText().slice(0, 200));
+      return false;
+    }
+
+    var body = {};
+    try { body = JSON.parse(response.getContentText() || "{}"); } catch (e) {}
+    return Boolean(body && body.success);
+  } catch (err) {
+    Logger.log("forwardRegistrationToEap_ falhou: " + String(err));
+    return false;
   }
 }
 

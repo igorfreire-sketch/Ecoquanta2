@@ -2078,11 +2078,14 @@ export default function App() {
   const acceptUser = useCallback(async (userId: string) => {
     const user = usuarios.find((item) => item.id === userId);
     if (!user) return;
-    const nextUsers = usuarios.map((item) => item.id === userId ? { ...item, status: 'approved' } : item);
+    // Auto-apply role tabs on acceptance; fall back to ['registro'] so the user can always access the app
+    const roleTabs = user.cargo ? applyRolePresetTabs(user.cargo) : [];
+    const autoTabs: AppTabKey[] = user.allowedTabs.length > 0 ? user.allowedTabs : (roleTabs.length > 0 ? roleTabs : ['registro' as AppTabKey]);
+    const nextUsers = usuarios.map((item) => item.id === userId ? { ...item, status: 'approved', allowedTabs: autoTabs } : item);
     setUsuarios(nextUsers);
     markUserDirty(userId);
     markAdminChangesPending();
-  }, [markAdminChangesPending, markUserDirty, usuarios]);
+  }, [applyRolePresetTabs, markAdminChangesPending, markUserDirty, usuarios]);
 
   const blockUser = useCallback(async (userId: string) => {
     const user = usuarios.find((item) => item.id === userId);

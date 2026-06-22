@@ -56,6 +56,7 @@ export interface UserAccessRecord {
   onlyThirdParty: boolean;
   status: UserStatus;
   allowedTabs: AppTabKey[];
+  sessionVersion?: string;
 }
 
 export interface DatabaseLinkRecord {

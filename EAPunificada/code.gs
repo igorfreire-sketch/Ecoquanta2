@@ -9,7 +9,6 @@
 //   velocidade nao deve abrir janela publica para dados sensiveis.
 var PUBLIC_JSON_FOLDER = "Publica";
 var EAP_PUBLIC_JSON_FILE = "";
-var DEFAULT_REGISTRO_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec";
 var PUBLIC_JSON_FAST_DELAY_MS = 1000;
 var DEFAULT_FIREBASE_PROJECT_ID = "ecoquanta-c2720";
 var DEFAULT_FIREBASE_API_KEY = "AIzaSyCGJ4UHPGyaf1GqayvTXUhvn3eLdu9ZW9g";
@@ -195,11 +194,6 @@ function publishCompressedDataToFirebaseNow() {
   firestoreCleanupAppData_("eap", data);
   firestoreSetAppData_("menu", buildEapMenuData_(data, publishedAt));
   firestoreSetAppData_("eap", data);
-  try {
-    publishLoginDataToFirebaseNow();
-  } catch (err) {
-    logAuth_(ss, 'ERROR', 'publishLoginDataToFirebaseNow falhou', String(err));
-  }
   return "EAP publicada no Firebase. Versao: " + version;
 }
 
@@ -351,91 +345,15 @@ function cleanupFullPublicJsonRefreshTriggers_() {
 }
 
 function scheduleRegistroPublicJsonPublish_() {
-  try {
-    var props = PropertiesService.getScriptProperties();
-    var url = String(props.getProperty("registro_apps_script_url") || DEFAULT_REGISTRO_APPS_SCRIPT_URL || "").trim();
-
-    if (!url) {
-      return "Registro nao agendado: URL do Apps Script nao configurada.";
-    }
-
-    var response = UrlFetchApp.fetch(url, {
-      method: "post",
-      contentType: "application/json",
-      muteHttpExceptions: true,
-      payload: JSON.stringify({ action: "schedulePublicJsonPublish" })
-    });
-
-    var status = response.getResponseCode();
-    if (status < 200 || status >= 300) {
-      return "Registro nao agendado (" + status + "): " + response.getContentText().slice(0, 200);
-    }
-
-    return "Publicacao do Registro agendada.";
-  } catch (err) {
-    return "Registro nao agendado: " + String(err);
-  }
+  return "Registrodeatividades desativado.";
 }
 
 function requestRegistroImmediateSync_() {
-  try {
-    var props = PropertiesService.getScriptProperties();
-    var url = String(props.getProperty("registro_apps_script_url") || DEFAULT_REGISTRO_APPS_SCRIPT_URL || "").trim();
-
-    if (!url) {
-      return "Registro nao sincronizado: URL do Apps Script nao configurada.";
-    }
-
-    var response = UrlFetchApp.fetch(url, {
-      method: "post",
-      contentType: "application/json",
-      muteHttpExceptions: true,
-      payload: JSON.stringify({ action: "publishFullDatabaseToPublicJsonNow" })
-    });
-
-    var status = response.getResponseCode();
-    if (status < 200 || status >= 300) {
-      return "Registro nao sincronizado (" + status + "): " + response.getContentText().slice(0, 200);
-    }
-
-    return "Registro sincronizado agora.";
-  } catch (err) {
-    return "Registro nao sincronizado: " + String(err);
-  }
+  return "Registrodeatividades desativado.";
 }
 
 function forwardAdminSnapshotToRegistro_(snapshot) {
-  var props = PropertiesService.getScriptProperties();
-  var url = String(props.getProperty("registro_apps_script_url") || "").trim();
-
-  if (!url) {
-    return false;
-  }
-
-  var response = UrlFetchApp.fetch(url, {
-    method: "post",
-    contentType: "application/json",
-    muteHttpExceptions: true,
-    payload: JSON.stringify({
-      action: "syncAdminSnapshot",
-      snapshot: snapshot || {}
-    })
-  });
-
-  var status = response.getResponseCode();
-  if (status < 200 || status >= 300) {
-    throw new Error("Falha ao espelhar administracao no Registro (" + status + "): " + response.getContentText().slice(0, 200));
-  }
-
-  var body = {};
-  try {
-    body = JSON.parse(response.getContentText() || "{}");
-  } catch (err) {}
-  if (body && body.success === false) {
-    throw new Error(String(body.error || "Falha ao espelhar administracao no Registro."));
-  }
-
-  return true;
+  return false;
 }
 
 // --- PUBLICACAO ---
@@ -530,6 +448,10 @@ function doPost(e) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var payload = JSON.parse(e.postData.contents);
     var action = String(payload.action || '').trim();
+
+    if (isFirebaseAuthAction_(action)) {
+      return handleFirebaseAuthAction_(payload);
+    }
 
     if (action === 'heartbeat') {
       var hbEmail = normalizeEmail_(payload.email);
@@ -861,7 +783,13 @@ function doPost(e) {
 
     if (action === 'syncAdminSnapshot') {
       var adminSnapshot = payload.snapshot || {};
-      syncUsersSnapshotToLoginSheet_(ss, adminSnapshot.users || adminSnapshot.usuarios || []);
+      var adminUsersSnapshot = adminSnapshot.users || adminSnapshot.usuarios || [];
+      if ((!Array.isArray(adminUsersSnapshot) || adminUsersSnapshot.length === 0) && adminSnapshot.usersByEmail && typeof adminSnapshot.usersByEmail === 'object') {
+        adminUsersSnapshot = Object.keys(adminSnapshot.usersByEmail).map(function(key) {
+          return adminSnapshot.usersByEmail[key];
+        });
+      }
+      syncUsersSnapshotToLoginSheet_(ss, adminUsersSnapshot);
       if (Array.isArray(adminSnapshot.preRegistrations)) {
         savePreRegistrationsToSheet_(ss, adminSnapshot.preRegistrations);
       }
@@ -2032,6 +1960,583 @@ function firestoreToValue_(value) {
   return { stringValue: String(value) };
 }
 
+function firestoreValueToJs_(value) {
+  if (!value) return undefined;
+  if (value.stringValue !== undefined) return value.stringValue;
+  if (value.integerValue !== undefined) return Number(value.integerValue);
+  if (value.doubleValue !== undefined) return Number(value.doubleValue);
+  if (value.booleanValue !== undefined) return Boolean(value.booleanValue);
+  if (value.timestampValue !== undefined) return value.timestampValue;
+  if (value.nullValue !== undefined) return null;
+  if (value.arrayValue !== undefined) {
+    return (value.arrayValue.values || []).map(function(item) {
+      return firestoreValueToJs_(item);
+    });
+  }
+  if (value.mapValue !== undefined) {
+    return firestoreFieldsToObject_(value.mapValue.fields || {});
+  }
+  return undefined;
+}
+
+function firestoreFieldsToObject_(fields) {
+  var out = {};
+  fields = fields || {};
+  for (var key in fields) {
+    if (Object.prototype.hasOwnProperty.call(fields, key)) {
+      out[key] = firestoreValueToJs_(fields[key]);
+    }
+  }
+  return out;
+}
+
+function firestoreGetDocument_(documentPath) {
+  var url = firestoreGetBaseUrl_() + "/" + String(documentPath || '').replace(/^\/+/, '');
+  var response = UrlFetchApp.fetch(url, {
+    method: "get",
+    muteHttpExceptions: true,
+    headers: { Authorization: "Bearer " + firestoreGetIdToken_() }
+  });
+  var status = response.getResponseCode();
+  if (status === 404) return null;
+  if (status < 200 || status >= 300) {
+    throw new Error("Firestore GET " + documentPath + " falhou (" + status + "): " + response.getContentText().slice(0, 500));
+  }
+  return JSON.parse(response.getContentText() || "{}");
+}
+
+function firestoreGetAppData_(name) {
+  var doc = firestoreGetDocument_("appData/" + encodeURIComponent(name));
+  if (!doc || !doc.fields) return null;
+  if (doc.fields.data) return firestoreValueToJs_(doc.fields.data);
+  if (doc.fields.chunked && Number(firestoreValueToJs_(doc.fields.chunkCount) || 0) > 0) {
+    var chunkText = firestoreGetAppDataChunkText_(name);
+    return chunkText ? JSON.parse(chunkText) : null;
+  }
+  if (doc.fields.dataJson) {
+    return JSON.parse(String(firestoreValueToJs_(doc.fields.dataJson) || '{}'));
+  }
+  return firestoreFieldsToObject_(doc.fields);
+}
+
+function firestoreGetAppDataChunkText_(name) {
+  var url = firestoreGetBaseUrl_() + "/appData/" + encodeURIComponent(name) + "/chunks";
+  var response = UrlFetchApp.fetch(url, {
+    method: "get",
+    muteHttpExceptions: true,
+    headers: { Authorization: "Bearer " + firestoreGetIdToken_() }
+  });
+  var status = response.getResponseCode();
+  if (status === 404) return "";
+  if (status < 200 || status >= 300) {
+    throw new Error("Firestore chunks appData/" + name + " falhou (" + status + "): " + response.getContentText().slice(0, 500));
+  }
+  var body = JSON.parse(response.getContentText() || "{}");
+  return (body.documents || [])
+    .sort(function(a, b) { return String(a.name || '').localeCompare(String(b.name || '')); })
+    .map(function(doc) { return String(firestoreValueToJs_(doc.fields && doc.fields.value) || ''); })
+    .join('');
+}
+
+function firestoreSetAppDataDirect_(name, data) {
+  var url = firestoreGetBaseUrl_() + "/appData/" + encodeURIComponent(name);
+  var response = UrlFetchApp.fetch(url, {
+    method: "patch",
+    contentType: "application/json",
+    muteHttpExceptions: true,
+    headers: { Authorization: "Bearer " + firestoreGetIdToken_() },
+    payload: JSON.stringify({
+      fields: firestoreObjectToFields_({
+        data: data || {},
+        updatedAt: new Date()
+      })
+    })
+  });
+  var status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    throw new Error("Firestore appData/" + name + " falhou (" + status + "): " + response.getContentText().slice(0, 500));
+  }
+}
+
+function isFirebaseAuthAction_(action) {
+  return [
+    'heartbeat',
+    'registerUser',
+    'authUser',
+    'forgotPassword',
+    'resetPassword',
+    'approveUser',
+    'blockUser',
+    'saveUserAccess',
+    'syncAdminSnapshot',
+    'adminResetPassword'
+  ].indexOf(String(action || '').trim()) !== -1;
+}
+
+function handleFirebaseAuthAction_(payload) {
+  var action = String(payload.action || '').trim();
+  try {
+    if (action === 'heartbeat') return firebaseHeartbeat_(payload);
+    if (action === 'registerUser') return firebaseRegisterUser_(payload);
+    if (action === 'authUser') return firebaseAuthUser_(payload);
+    if (action === 'forgotPassword') return firebaseForgotPassword_(payload);
+    if (action === 'resetPassword') return firebaseResetPassword_(payload);
+    if (action === 'adminResetPassword') return firebaseAdminResetPassword_(payload);
+    if (action === 'approveUser') return firebaseApproveUser_(payload);
+    if (action === 'blockUser') return firebaseBlockUser_(payload);
+    if (action === 'saveUserAccess') return firebaseSaveUserAccess_(payload);
+    if (action === 'syncAdminSnapshot') return firebaseSyncAdminSnapshot_(payload);
+  } catch (err) {
+    logAuth_(null, 'ERROR', action + ' firebase', String(err));
+    return json_({ success: false, error: String(err && err.message ? err.message : err) });
+  }
+  return json_({ success: false, error: 'Acao invalida.' });
+}
+
+function firebaseGetAuthUsers_(authData) {
+  if (Array.isArray(authData && authData.users)) return authData.users;
+  if (authData && authData.usersByEmail && typeof authData.usersByEmail === 'object') {
+    return Object.keys(authData.usersByEmail).map(function(key) {
+      return authData.usersByEmail[key];
+    });
+  }
+  return [];
+}
+
+function firebaseGetSnapshotUsers_(snapshot) {
+  if (Array.isArray(snapshot && snapshot.users)) return snapshot.users;
+  if (Array.isArray(snapshot && snapshot.usuarios)) return snapshot.usuarios;
+  if (snapshot && snapshot.usersByEmail && typeof snapshot.usersByEmail === 'object') {
+    return Object.keys(snapshot.usersByEmail).map(function(key) {
+      return snapshot.usersByEmail[key];
+    });
+  }
+  return [];
+}
+
+function firebaseFindUserIndex_(users, email) {
+  var normalized = normalizeEmail_(email);
+  for (var i = 0; i < users.length; i++) {
+    if (normalizeEmail_(users[i] && (users[i].email || users[i].id)) === normalized) return i;
+  }
+  return -1;
+}
+
+function firebaseBool_(value) {
+  if (typeof value === 'boolean') return value;
+  return parseBool_(value);
+}
+
+function firebaseNormalizeUser_(raw) {
+  raw = raw || {};
+  var email = normalizeEmail_(raw.email || raw.id);
+  var disciplines = normalizeUserDisciplines_(raw.disciplinas || raw.disciplina || raw.discipline || '');
+  var tabs = normalizeAllowedTabs_(raw.allowedTabs || raw.abas || []);
+  var resetExpires = raw.resetExpires !== undefined ? raw.resetExpires : raw.resetexpires;
+  var lastSeen = raw.lastSeen !== undefined ? raw.lastSeen : raw.lastseen;
+  var passwordHash = String(raw.passwordHash || raw.passwordhash || '');
+  var resetCode = String(raw.resetCode || raw.resetcode || '');
+  var sessionVersion = String(raw.sessionVersion || raw.sessionversion || '');
+
+  return {
+    id: email,
+    data: raw.data || '',
+    nome: String(raw.nome || raw.name || ''),
+    email: email,
+    cargo: String(raw.cargo || raw.role || ''),
+    role: String(raw.role || raw.cargo || ''),
+    disciplina: disciplines.length > 0 ? disciplines[0] : String(raw.disciplina || raw.discipline || ''),
+    disciplinas: disciplines,
+    contrato: String(raw.contrato || raw.contract || ''),
+    contract: String(raw.contract || raw.contrato || ''),
+    status: String(raw.status || 'pending'),
+    alocacao: String(raw.alocacao || raw.allocation || ''),
+    allowedTabs: tabs,
+    abas: tabs,
+    isAdmin: firebaseBool_(raw.isAdmin),
+    online: firebaseBool_(raw.online),
+    sessionVersion: sessionVersion,
+    passwordHash: passwordHash,
+    resetCode: resetCode,
+    resetExpires: resetExpires || '',
+    lastSeen: lastSeen || '',
+    onlyThirdParty: firebaseBool_(raw.onlyThirdParty || raw.onlyThirdPartyUsers || raw.somenteTerceirizados),
+    showInCharts: raw.showInCharts === undefined ? true : raw.showInCharts !== false
+  };
+}
+
+function firebaseBuildAuthData_(authData, users) {
+  var normalizedUsers = (Array.isArray(users) ? users : []).map(firebaseNormalizeUser_).filter(function(user) {
+    return Boolean(user.email);
+  });
+  var usersByEmail = {};
+  normalizedUsers.forEach(function(user) {
+    usersByEmail[String(user.email).replace(/[.#$\[\]]/g, '_')] = user;
+  });
+  return {
+    source: 'EAPunificada-Firebase',
+    publishedAt: new Date().toISOString(),
+    users: normalizedUsers,
+    usersByEmail: usersByEmail
+  };
+}
+
+function firebaseWriteAuthUsers_(authData, users) {
+  firestoreSetAppDataDirect_('auth', firebaseBuildAuthData_(authData, users));
+}
+
+function firebaseReadAuth_() {
+  var authData = firestoreGetAppData_('auth') || {};
+  var users = firebaseGetAuthUsers_(authData).map(firebaseNormalizeUser_);
+  return { authData: authData, users: users };
+}
+
+function firebaseAuthResponseUser_(user) {
+  var normalized = firebaseNormalizeUser_(user);
+  return {
+    id: normalized.id,
+    data: normalized.data,
+    nome: normalized.nome,
+    email: normalized.email,
+    cargo: normalized.cargo,
+    role: normalized.role,
+    disciplina: normalized.disciplina,
+    disciplinas: normalized.disciplinas,
+    contrato: normalized.contrato,
+    contract: normalized.contract,
+    status: normalized.status,
+    alocacao: normalized.alocacao,
+    allowedTabs: normalized.allowedTabs,
+    abas: normalized.abas,
+    isAdmin: normalized.isAdmin,
+    online: normalized.online,
+    sessionVersion: normalized.sessionVersion,
+    onlyThirdParty: normalized.onlyThirdParty,
+    showInCharts: normalized.showInCharts
+  };
+}
+
+function firebaseFindPreRegistration_(email) {
+  var adminData = firestoreGetAppData_('admin') || {};
+  var records = Array.isArray(adminData.preRegistrations) ? adminData.preRegistrations : [];
+  var normalized = normalizeEmail_(email);
+  for (var i = 0; i < records.length; i++) {
+    if (normalizeEmail_(records[i] && records[i].email) === normalized) {
+      return {
+        email: normalized,
+        cargo: String(records[i].cargo || ''),
+        disciplina: String(records[i].disciplina || ''),
+        alocacao: String(records[i].alocacao || ''),
+        contrato: String(records[i].contrato || ''),
+        allowedTabs: normalizeAllowedTabs_(records[i].allowedTabs || [])
+      };
+    }
+  }
+  return null;
+}
+
+function firebaseRegisterUser_(payload) {
+  var name = String(payload.name || '').trim();
+  var email = normalizeEmail_(payload.email);
+  var password = String(payload.password || '');
+  if (!name) return json_({ success: false, error: 'Informe o nome.' });
+  if (!email) return json_({ success: false, error: 'E-mail invalido.' });
+  if (password.length < 6) return json_({ success: false, error: 'Senha muito curta (min. 6).' });
+
+  var state = firebaseReadAuth_();
+  if (firebaseFindUserIndex_(state.users, email) >= 0) {
+    return json_({ success: false, error: 'Este e-mail ja esta cadastrado.' });
+  }
+
+  var preReg = firebaseFindPreRegistration_(email);
+  var approved = isCorporateEmail_(email) || !!preReg;
+  var tabs = preReg ? normalizeAllowedTabs_(preReg.allowedTabs || []) : [];
+  var disciplines = preReg ? normalizeUserDisciplines_(preReg.disciplina || '') : [];
+  var user = firebaseNormalizeUser_({
+    id: email,
+    data: new Date().toISOString(),
+    nome: name,
+    email: email,
+    cargo: preReg ? preReg.cargo : '',
+    role: preReg ? preReg.cargo : '',
+    disciplina: preReg ? preReg.disciplina : '',
+    disciplinas: disciplines,
+    alocacao: preReg ? preReg.alocacao : '',
+    contrato: preReg ? preReg.contrato : '',
+    contract: preReg ? preReg.contrato : '',
+    status: approved ? 'approved' : 'pending',
+    allowedTabs: tabs,
+    abas: tabs,
+    passwordHash: makePasswordHash_(password),
+    resetCode: '',
+    resetExpires: '',
+    isAdmin: false,
+    online: false,
+    lastSeen: '',
+    sessionVersion: newSessionVersion_(),
+    onlyThirdParty: false,
+    showInCharts: true
+  });
+
+  state.users.push(user);
+  firebaseWriteAuthUsers_(state.authData, state.users);
+  logAuth_(null, 'INFO', 'registerUser firebase ok', email + (preReg ? ' (pre-cadastro)' : ''));
+  return json_({
+    success: true,
+    message: approved
+      ? 'Acesso liberado! Entre com suas credenciais.'
+      : 'Cadastro realizado com sucesso. Aguarde aprovacao.'
+  });
+}
+
+function firebaseAuthUser_(payload) {
+  var email = normalizeEmail_(payload.email);
+  var password = String(payload.password || '');
+  if (!email || !password) return json_({ success: false, error: 'Informe e-mail e senha.' });
+
+  var state = firebaseReadAuth_();
+  var index = firebaseFindUserIndex_(state.users, email);
+  if (index < 0) {
+    logAuth_(null, 'WARN', 'authUser firebase email nao encontrado', email);
+    return json_({ success: false, error: 'E-mail ou senha invalidos.' });
+  }
+
+  var user = firebaseNormalizeUser_(state.users[index]);
+  if (!user.passwordHash) {
+    logAuth_(null, 'ERROR', 'authUser firebase sem PasswordHash', email);
+    return json_({ success: false, error: 'Conta invalida (senha nao cadastrada).' });
+  }
+  if (!verifyPassword_(password, user.passwordHash)) {
+    logAuth_(null, 'WARN', 'authUser firebase senha invalida', email);
+    return json_({ success: false, error: 'E-mail ou senha invalidos.' });
+  }
+  if (normalizeEmail_(user.status) === 'pending') {
+    return json_({ success: false, error: 'Seu cadastro ainda esta aguardando aprovacao do administrador.' });
+  }
+  if (normalizeEmail_(user.status) === 'blocked') {
+    return json_({ success: false, error: 'Seu acesso esta bloqueado. Procure um administrador.' });
+  }
+
+  if (!user.sessionVersion) user.sessionVersion = newSessionVersion_();
+  user.lastSeen = Date.now();
+  user.online = true;
+  state.users[index] = user;
+  firebaseWriteAuthUsers_(state.authData, state.users);
+  logAuth_(null, 'INFO', 'authUser firebase ok', email);
+  return json_({ success: true, user: firebaseAuthResponseUser_(user) });
+}
+
+function firebaseHeartbeat_(payload) {
+  var email = normalizeEmail_(payload.email);
+  if (!email) return json_({ success: false, error: 'E-mail invalido.' });
+  var state = firebaseReadAuth_();
+  var index = firebaseFindUserIndex_(state.users, email);
+  if (index < 0) return json_({ success: true, sessionVersion: '' });
+
+  var user = firebaseNormalizeUser_(state.users[index]);
+  var requestedVersion = String(payload.sessionVersion || '').trim();
+  if (requestedVersion && user.sessionVersion && requestedVersion !== user.sessionVersion) {
+    return json_({ success: false, error: 'Sessao expirada.', sessionVersion: user.sessionVersion });
+  }
+  user.lastSeen = Date.now();
+  user.online = true;
+  state.users[index] = user;
+  firebaseWriteAuthUsers_(state.authData, state.users);
+  return json_({ success: true, sessionVersion: user.sessionVersion || '' });
+}
+
+function firebaseForgotPassword_(payload) {
+  var email = normalizeEmail_(payload.email);
+  if (!email) return json_({ success: false, error: 'E-mail invalido.' });
+  var state = firebaseReadAuth_();
+  var index = firebaseFindUserIndex_(state.users, email);
+  if (index < 0) return json_({ success: true });
+
+  var user = firebaseNormalizeUser_(state.users[index]);
+  var resetCode = randomCode_(6);
+  user.resetCode = resetCode;
+  user.resetExpires = Date.now() + 15 * 60 * 1000;
+  state.users[index] = user;
+  firebaseWriteAuthUsers_(state.authData, state.users);
+
+  try {
+    sendResetCodeEmail_(email, resetCode, 15);
+  } catch (mailErr) {
+    logAuth_(null, 'ERROR', 'forgotPassword firebase falha MailApp', String(mailErr));
+    return json_({ success: false, error: 'Falha ao enviar e-mail. Verifique as permissoes do Apps Script.' });
+  }
+
+  logAuth_(null, 'INFO', 'forgotPassword firebase code enviado', email);
+  return json_({ success: true });
+}
+
+function firebaseResetPassword_(payload) {
+  var email = normalizeEmail_(payload.email);
+  var code = String(payload.code || '').trim();
+  var newPassword = String(payload.newPassword || '');
+  if (!email) return json_({ success: false, error: 'E-mail invalido.' });
+  if (!code) return json_({ success: false, error: 'Informe o codigo.' });
+  if (newPassword.length < 6) return json_({ success: false, error: 'Senha muito curta (min. 6).' });
+
+  var state = firebaseReadAuth_();
+  var index = firebaseFindUserIndex_(state.users, email);
+  if (index < 0) return json_({ success: false, error: 'Codigo invalido.' });
+
+  var user = firebaseNormalizeUser_(state.users[index]);
+  if (!user.resetCode || user.resetCode !== code) return json_({ success: false, error: 'Codigo invalido.' });
+  if (!Number(user.resetExpires || 0) || Date.now() > Number(user.resetExpires || 0)) {
+    return json_({ success: false, error: 'Codigo expirado.' });
+  }
+
+  user.passwordHash = makePasswordHash_(newPassword);
+  user.resetCode = '';
+  user.resetExpires = '';
+  user.lastSeen = '';
+  user.online = false;
+  user.sessionVersion = newSessionVersion_();
+  state.users[index] = user;
+  firebaseWriteAuthUsers_(state.authData, state.users);
+  logAuth_(null, 'INFO', 'resetPassword firebase ok', email);
+  return json_({ success: true, message: 'Senha redefinida com sucesso.' });
+}
+
+function firebaseAdminResetPassword_(payload) {
+  var email = normalizeEmail_(payload.email);
+  if (!email) return json_({ success: false, error: 'E-mail invalido.' });
+  var state = firebaseReadAuth_();
+  var index = firebaseFindUserIndex_(state.users, email);
+  if (index < 0) return json_({ success: false, error: 'Usuario nao encontrado.' });
+
+  var tempPassword = randomTemporaryPassword_();
+  var user = firebaseNormalizeUser_(state.users[index]);
+  user.passwordHash = makePasswordHash_(tempPassword);
+  user.resetCode = '';
+  user.resetExpires = '';
+  user.lastSeen = '';
+  user.online = false;
+  user.sessionVersion = newSessionVersion_();
+  state.users[index] = user;
+  firebaseWriteAuthUsers_(state.authData, state.users);
+
+  try {
+    sendAdminTemporaryPasswordEmail_(email, tempPassword);
+  } catch (mailErr) {
+    logAuth_(null, 'ERROR', 'adminResetPassword firebase falha MailApp', String(mailErr));
+    return json_({ success: false, error: 'Falha ao enviar senha temporaria por e-mail.' });
+  }
+
+  logAuth_(null, 'INFO', 'adminResetPassword firebase ok', email);
+  return json_({ success: true, message: 'Senha temporaria enviada por e-mail.' });
+}
+
+function firebasePatchUser_(email, patch) {
+  var state = firebaseReadAuth_();
+  var index = firebaseFindUserIndex_(state.users, email);
+  if (index < 0) return null;
+  var user = firebaseNormalizeUser_(state.users[index]);
+  for (var key in patch) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) user[key] = patch[key];
+  }
+  user.lastSeen = '';
+  user.online = false;
+  user.sessionVersion = newSessionVersion_();
+  state.users[index] = user;
+  firebaseWriteAuthUsers_(state.authData, state.users);
+  return user;
+}
+
+function firebaseApproveUser_(payload) {
+  var email = normalizeEmail_(payload.email);
+  if (!email) return json_({ success: false, error: 'E-mail invalido.' });
+  var patch = { status: 'approved' };
+  if (payload.name !== undefined) patch.nome = String(payload.name || '');
+  if (payload.role !== undefined) { patch.cargo = String(payload.role || ''); patch.role = String(payload.role || ''); }
+  if (payload.discipline !== undefined) {
+    patch.disciplinas = normalizeUserDisciplines_(payload.discipline);
+    patch.disciplina = patch.disciplinas.length > 0 ? patch.disciplinas[0] : '';
+  }
+  if (payload.allowedTabs !== undefined) { patch.allowedTabs = normalizeAllowedTabs_(payload.allowedTabs); patch.abas = patch.allowedTabs; }
+  if (payload.allocation !== undefined) patch.alocacao = String(payload.allocation || '');
+  if (payload.contract !== undefined) { patch.contrato = String(payload.contract || ''); patch.contract = String(payload.contract || ''); }
+  if (payload.isAdmin !== undefined) patch.isAdmin = firebaseBool_(payload.isAdmin);
+  var user = firebasePatchUser_(email, patch);
+  if (!user) return json_({ success: false, error: 'Usuario nao encontrado.' });
+  logAuth_(null, 'INFO', 'approveUser firebase ok', email);
+  return json_({ success: true });
+}
+
+function firebaseBlockUser_(payload) {
+  var email = normalizeEmail_(payload.email);
+  if (!email) return json_({ success: false, error: 'E-mail invalido.' });
+  var user = firebasePatchUser_(email, { status: 'blocked' });
+  if (!user) return json_({ success: false, error: 'Usuario nao encontrado.' });
+  logAuth_(null, 'INFO', 'blockUser firebase ok', email);
+  return json_({ success: true });
+}
+
+function firebaseSaveUserAccess_(payload) {
+  var email = normalizeEmail_(payload.email);
+  if (!email) return json_({ success: false, error: 'E-mail invalido.' });
+  var patch = {};
+  if (payload.name !== undefined) patch.nome = String(payload.name || '');
+  if (payload.role !== undefined) { patch.cargo = String(payload.role || ''); patch.role = String(payload.role || ''); }
+  if (payload.discipline !== undefined) {
+    patch.disciplinas = normalizeUserDisciplines_(payload.discipline);
+    patch.disciplina = patch.disciplinas.length > 0 ? patch.disciplinas[0] : '';
+  }
+  if (payload.allowedTabs !== undefined) { patch.allowedTabs = normalizeAllowedTabs_(payload.allowedTabs); patch.abas = patch.allowedTabs; }
+  if (payload.allocation !== undefined) patch.alocacao = String(payload.allocation || '');
+  if (payload.contract !== undefined) { patch.contrato = String(payload.contract || ''); patch.contract = String(payload.contract || ''); }
+  if (payload.isAdmin !== undefined) patch.isAdmin = firebaseBool_(payload.isAdmin);
+  if (payload.onlyThirdParty !== undefined) patch.onlyThirdParty = firebaseBool_(payload.onlyThirdParty);
+  if (payload.showInCharts !== undefined) patch.showInCharts = payload.showInCharts !== false;
+  if (payload.status !== undefined) patch.status = String(payload.status || 'pending');
+  var user = firebasePatchUser_(email, patch);
+  if (!user) return json_({ success: false, error: 'Usuario nao encontrado.' });
+  logAuth_(null, 'INFO', 'saveUserAccess firebase ok', email);
+  return json_({ success: true });
+}
+
+function firebaseSyncAdminSnapshot_(payload) {
+  var snapshot = payload.snapshot || {};
+  var snapshotUsers = firebaseGetSnapshotUsers_(snapshot);
+  var state = firebaseReadAuth_();
+  if (snapshotUsers.length === 0 && state.users.length > 0) {
+    throw new Error('Protecao de dados: syncAdminSnapshot recebeu zero usuarios e nao vai publicar lista vazia.');
+  }
+
+  var existingByEmail = {};
+  state.users.forEach(function(user) {
+    existingByEmail[normalizeEmail_(user.email || user.id)] = user;
+  });
+
+  var nextUsers = [];
+  var seen = {};
+  snapshotUsers.forEach(function(raw) {
+    var email = normalizeEmail_(raw && (raw.email || raw.id));
+    if (!email) return;
+    var existing = existingByEmail[email] || {};
+    var merged = firebaseNormalizeUser_(raw);
+    merged.passwordHash = String(existing.passwordHash || existing.passwordhash || merged.passwordHash || '');
+    merged.resetCode = String(existing.resetCode || existing.resetcode || merged.resetCode || '');
+    merged.resetExpires = existing.resetExpires || existing.resetexpires || merged.resetExpires || '';
+    merged.lastSeen = existing.lastSeen || existing.lastseen || merged.lastSeen || '';
+    merged.sessionVersion = String(merged.sessionVersion || existing.sessionVersion || existing.sessionversion || '');
+    nextUsers.push(merged);
+    seen[email] = true;
+  });
+
+  state.users.forEach(function(existing) {
+    var email = normalizeEmail_(existing.email || existing.id);
+    if (email && !seen[email]) nextUsers.push(firebaseNormalizeUser_(existing));
+  });
+
+  firestoreSetAppDataDirect_('admin', snapshot);
+  firebaseWriteAuthUsers_(state.authData, nextUsers);
+  logAuth_(null, 'INFO', 'syncAdminSnapshot firebase ok', 'users=' + nextUsers.length);
+  return json_({ success: true });
+}
+
 function publishEncryptedJsonToGithub_(fileName, payloadObj) {
   var cfg = getGithubPublisherConfig_();
   var body = buildFastPublicJsonBody_(payloadObj);
@@ -2412,6 +2917,10 @@ function syncUsersSnapshotToLoginSheet_(ss, items) {
     rows.push(row);
   }
 
+  if (rows.length === 0 && existingValues.length > 1) {
+    throw new Error('Protecao de dados: syncAdminSnapshot recebeu zero usuarios e nao vai limpar a aba login.');
+  }
+
   loginSheet.clearContents();
   var headerRow = [];
   for (var key in header) {
@@ -2591,6 +3100,10 @@ function ensureAuthLogSheet_(ss) {
 
 function logAuth_(ss, level, eventName, detail) {
   try {
+    if (!ss) {
+      Logger.log('[AUTH][' + String(level || 'INFO') + '] ' + String(eventName || '') + ' ' + String(detail || ''));
+      return;
+    }
     ensureAuthLogSheet_(ss).appendRow([
       new Date().toISOString(),
       String(level || 'INFO'),
@@ -2619,6 +3132,7 @@ function sendAdminTemporaryPasswordEmail_(to, tempPassword) {
 }
 
 // JSON publico desativado: a EAP agora permanece somente no Firebase.
+function publishLoginDataToFirebaseNow() { return "Login via planilha desativado. Use appData/auth no Firebase."; }
 function scheduleCompressedDataPublicJson() { return "Publicacao JSON desativada."; }
 function scheduleCompressedDataPublicJson_() { return "Publicacao JSON desativada."; }
 function scheduleFullPublicJsonRefresh() { return "Publicacao JSON desativada."; }

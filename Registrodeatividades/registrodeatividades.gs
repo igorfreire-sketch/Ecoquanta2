@@ -103,6 +103,11 @@ function onOpen() {
 }
 
 function doPost(e) {
+  return json_({
+    success: false,
+    error: 'Registrodeatividades.gs foi desativado. Use EAPunificada/Firebase para esta acao.'
+  });
+
   try {
     var data = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1394,6 +1399,10 @@ function syncUsersSnapshotToLoginSheet_(ss, items) {
     rows.push(row);
   }
 
+  if (rows.length === 0 && existingValues.length > 1) {
+    throw new Error('Protecao de dados: syncAdminSnapshot recebeu zero usuarios e nao vai limpar a aba login.');
+  }
+
   loginSheet.clearContents();
   var headerRow = [];
   for (var key in header) {
@@ -1429,7 +1438,13 @@ function syncAdminSnapshotToSheets_(ss, snapshot) {
   saveRoleTabPermissions_(ss, snapshot.roleTabPermissions || {});
   syncDatabaseLinksSnapshotToSheet_(ss, snapshot.databaseLinks || []);
   syncTerceirizadasSnapshotToSheet_(ss, snapshot.terceirizadas || []);
-  syncUsersSnapshotToLoginSheet_(ss, snapshot.users || snapshot.usuarios || []);
+  var snapshotUsers = snapshot.users || snapshot.usuarios || [];
+  if ((!Array.isArray(snapshotUsers) || snapshotUsers.length === 0) && snapshot.usersByEmail && typeof snapshot.usersByEmail === 'object') {
+    snapshotUsers = Object.keys(snapshot.usersByEmail).map(function(key) {
+      return snapshot.usersByEmail[key];
+    });
+  }
+  syncUsersSnapshotToLoginSheet_(ss, snapshotUsers);
 }
 
 function buildTerceirizadaProfessionalId_(id) {
@@ -3732,6 +3747,16 @@ function computeSha256Hex_(text) {
 }
 
 // JSON publico desativado: o sistema agora usa somente Firebase.
+function registroDisabledMessage_() { return "Registrodeatividades.gs desativado. Use EAPunificada/Firebase."; }
+function onOpen() { return registroDisabledMessage_(); }
+function doPost(e) { return json_({ success: false, error: registroDisabledMessage_() }); }
+function handlePublicJsonSpreadsheetEdit(e) { return registroDisabledMessage_(); }
+function handlePublicJsonSpreadsheetChange(e) { return registroDisabledMessage_(); }
+function syncFirebaseNow() { return registroDisabledMessage_(); }
+function scheduleFirebaseSync_() { return registroDisabledMessage_(); }
+function syncFirebaseByTrigger() { return registroDisabledMessage_(); }
+function publishFullDatabaseToFirebaseNow() { return registroDisabledMessage_(); }
+function syncRegistroAtividadesFirebaseNow() { return registroDisabledMessage_(); }
 function schedulePublicJsonPublish() { return "Publicacao JSON desativada."; }
 function schedulePublicJsonPublish_() { return "Publicacao JSON desativada."; }
 function flushAndSchedulePublicJsonPublish_() { return "Publicacao JSON desativada."; }

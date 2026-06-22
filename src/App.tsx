@@ -57,7 +57,6 @@ const Cronograma = React.lazy(() => import('./components/Cronograma'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
 const Administracao = React.lazy(() => import('./components/Administracao'));
 
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl1TyOHEuhWV-twFybZ3wQ1k7IOb4Ob-lvjNtODiK9rxgZB4TA4iVtFbRjXorhaK5G/exec';
 const EAP_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
 const APP_VERSION_LABEL = getAppVersionLabel();
 const DEFAULT_ALOCACOES = [
@@ -164,6 +163,17 @@ interface PublicModulePayload {
   source?: string;
   publishedAt?: string;
   data?: Partial<GlobalData>;
+}
+
+interface AdminSnapshotState {
+  usuarios: UserAccessRecord[];
+  disciplineSettings: DisciplineSettingRecord[];
+  cargos: string[];
+  alocacoes: string[];
+  terceirizadas: TerceirizadaRecord[];
+  roleTabPermissions: RoleTabPermissions;
+  databaseLinks: DatabaseLinkRecord[];
+  preRegistrations: PreRegistrationRecord[];
 }
 
 function normalizeEapCode(value: any) {
@@ -491,6 +501,10 @@ function clearSession() {
   sessionStorage.removeItem(key);
 }
 
+function wasSessionRemembered() {
+  return Boolean(localStorage.getItem(getStorageKey()));
+}
+
 async function postToAppsScript<T>(payload: Record<string, unknown>): Promise<T> {
   const allowedActions = new Set([
     'heartbeat',
@@ -499,23 +513,13 @@ async function postToAppsScript<T>(payload: Record<string, unknown>): Promise<T>
     'forgotPassword',
     'resetPassword',
     'adminResetPassword',
-    'approveUser',
-    'blockUser',
-    'saveUserAccess',
-    'saveConfigOptions',
-    'saveRoleTabPermissions',
-    'saveDatabaseLink',
-    'deleteDatabaseLink',
-    'saveTerceirizada',
-    'deleteTerceirizada',
     'savePlannerApprovals',
-    'syncAdminSnapshot',
   ]);
   const action = String(payload.action || '').trim();
   if (!allowedActions.has(action)) {
     throw new Error('Esta acao nao usa mais a planilha pelo site. Atualize os dados diretamente no Firebase ou pela interface administrativa da planilha.');
   }
-  const response = await fetch(APPS_SCRIPT_URL, {
+  const response = await fetch(EAP_APPS_SCRIPT_URL, {
     method: 'POST', body: JSON.stringify(payload),
   });
   
@@ -531,6 +535,13 @@ function assertSuccess(response: GenericResponse, fallbackMessage = 'Falha ao sa
   if (!response?.success) {
     throw new Error(response?.error || response?.message || fallbackMessage);
   }
+}
+
+function createSessionVersion() {
+  try {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  } catch (error) {}
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function createDraftId(prefix: string) {
@@ -643,6 +654,90 @@ function getAuthUsersList(authData: any) {
   return [];
 }
 
+function getAdminUsersList(adminData: any) {
+  if (Array.isArray(adminData?.users)) return adminData.users;
+  if (Array.isArray(adminData?.usuarios)) return adminData.usuarios;
+  if (adminData?.usersByEmail && typeof adminData.usersByEmail === 'object') {
+    return Object.values(adminData.usersByEmail);
+  }
+  return [];
+}
+
+function getRecordSessionVersion(value: any) {
+  return String(value?.sessionVersion || value?.sessionversion || '').trim();
+}
+
+function getAuthUserByEmail(authData: any, email: string) {
+  const normalizedEmail = normalizeUserText(email);
+  return getAuthUsersList(authData).find((item: any) => normalizeUserText(item?.email || item?.id) === normalizedEmail) || null;
+}
+
+function normalizeUserAccessRecord(raw: any): UserAccessRecord {
+  const allowedTabsSource = Array.isArray(raw?.allowedTabs)
+    ? raw.allowedTabs
+    : Array.isArray(raw?.abas)
+      ? raw.abas
+      : String(raw?.allowedTabs || raw?.abas || '').split(/[|,]/);
+
+  return {
+    id: String(raw?.id || raw?.email || ''),
+    nome: String(raw?.nome || raw?.name || ''),
+    email: String(raw?.email || raw?.id || ''),
+    online: Boolean(raw?.online),
+    disciplina: getPrimaryDisciplineValue(raw?.disciplina || raw?.discipline || raw?.disciplinas || ''),
+    disciplinas: getUserDisciplineList(raw),
+    cargo: String(raw?.cargo || raw?.role || ''),
+    alocacao: String(raw?.alocacao || raw?.allocation || ''),
+    contrato: String(raw?.contrato || raw?.contract || ''),
+    isAdmin: Boolean(raw?.isAdmin),
+    showInCharts: raw?.showInCharts !== false,
+    onlyThirdParty: Boolean(raw?.onlyThirdParty || raw?.onlyThirdPartyUsers || raw?.somenteTerceirizados),
+    status: String(raw?.status || 'pending') as UserAccessRecord['status'],
+    allowedTabs: allowedTabsSource
+      .map((tab: any) => String(tab).trim())
+      .filter(Boolean) as AppTabKey[],
+    sessionVersion: getRecordSessionVersion(raw),
+  };
+}
+
+function mergeUserAccessRecords(...sources: any[][]): UserAccessRecord[] {
+  const byEmail = new Map<string, UserAccessRecord>();
+
+  sources.forEach((source) => {
+    source.forEach((raw) => {
+      if (!raw || !(raw.email || raw.id)) return;
+      const user = normalizeUserAccessRecord(raw);
+      const email = normalizeUserText(user.email || user.id);
+      if (!email || byEmail.has(email)) return;
+      byEmail.set(email, user);
+    });
+  });
+
+  return Array.from(byEmail.values());
+}
+
+function authRecordInvalidatesSession(savedUser: AuthUser, authRecord: any) {
+  if (!authRecord) return true;
+
+  const status = normalizeUserText(authRecord.status || '');
+  if (status === 'pending' || status === 'blocked') return true;
+
+  const currentVersion = getRecordSessionVersion(authRecord);
+  return Boolean(currentVersion && getRecordSessionVersion(savedUser) !== currentVersion);
+}
+
+function normalizeAuthRecordForSession(raw: any): AuthUser {
+  return normalizeUser({
+    ...raw,
+    abas: raw?.allowedTabs || raw?.abas || [],
+    cargo: raw?.role || raw?.cargo || '',
+    role: raw?.role || raw?.cargo || '',
+    disciplinas: raw?.disciplinas || raw?.disciplina || '',
+    disciplina: raw?.disciplina || '',
+    sessionVersion: getRecordSessionVersion(raw),
+  });
+}
+
 function getUserInitials(nome: string) {
   return nome.split(' ').filter(Boolean).slice(0, 2).map((parte) => parte[0]?.toUpperCase() || '').join('');
 }
@@ -680,36 +775,15 @@ function getFirstAccessibleTab(user: AuthUser, roleTabPermissions: RoleTabPermis
 
 function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
   const admin = data.admin || {};
-  const usersSource = Array.isArray(admin.users)
-    ? admin.users
-    : Array.isArray(admin.usuarios)
-      ? admin.usuarios
-    : admin.usersByEmail && typeof admin.usersByEmail === 'object'
-      ? Object.values(admin.usersByEmail)
-      : Array.isArray(data.registro?.usersSummary)
-        ? data.registro.usersSummary
-        : [];
+  const usersSource = getAdminUsersList(admin).length > 0
+    ? getAdminUsersList(admin)
+    : Array.isArray(data.registro?.usersSummary)
+      ? data.registro.usersSummary
+      : [];
 
   return usersSource
     .filter((u: any) => u && (u.email || u.id))
-    .map((u: any) => ({
-      id: String(u.id || u.email || ''),
-      nome: String(u.nome || u.name || ''),
-      email: String(u.email || u.id || ''),
-      online: Boolean(u.online),
-      disciplina: getPrimaryDisciplineValue(u.disciplina || u.discipline || u.disciplinas || ''),
-      disciplinas: getUserDisciplineList(u),
-      cargo: String(u.cargo || u.role || ''),
-      alocacao: String(u.alocacao || u.allocation || ''),
-      contrato: String(u.contrato || u.contract || ''),
-      isAdmin: Boolean(u.isAdmin),
-      showInCharts: u.showInCharts !== false,
-      onlyThirdParty: Boolean(u.onlyThirdParty || u.onlyThirdPartyUsers || u.somenteTerceirizados),
-      status: String(u.status || 'pending') as UserAccessRecord['status'],
-      allowedTabs: (Array.isArray(u.allowedTabs) ? u.allowedTabs : Array.isArray(u.abas) ? u.abas : [])
-        .map((tab: any) => String(tab).trim())
-        .filter(Boolean) as AppTabKey[],
-    }));
+    .map(normalizeUserAccessRecord);
 }
 
 function normalizeLoadedAdmin(admin: any, data: GlobalData) {
@@ -755,6 +829,44 @@ function getAdminState(data: GlobalData) {
           allowedTabs: Array.isArray(r.allowedTabs) ? r.allowedTabs as AppTabKey[] : [],
         }) as PreRegistrationRecord)
       : [],
+    };
+}
+
+function hasObjectEntries(value: any) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0);
+}
+
+function mergeAdminStateWithRemote(
+  draftState: AdminSnapshotState,
+  existingAdmin: any,
+  existingAuth: any,
+): AdminSnapshotState {
+  const remoteAdminState = getAdminState({ admin: existingAdmin || {} });
+  const remoteAuthUsers = getAuthUsersList(existingAuth);
+  const mergedUsers = mergeUserAccessRecords(
+    draftState.usuarios,
+    remoteAdminState.usuarios,
+    remoteAuthUsers,
+  );
+  const remoteUserCount = remoteAdminState.usuarios.length + remoteAuthUsers.length;
+
+  if (remoteUserCount > 0 && mergedUsers.length === 0) {
+    throw new Error('Protecao de dados: o salvamento administrativo tentou publicar uma lista vazia de usuarios.');
+  }
+
+  return {
+    usuarios: mergedUsers,
+    disciplineSettings: draftState.disciplineSettings.length > 0
+      ? draftState.disciplineSettings
+      : remoteAdminState.disciplineSettings,
+    cargos: draftState.cargos.length > 0 ? draftState.cargos : remoteAdminState.cargos,
+    alocacoes: draftState.alocacoes.length > 0 ? draftState.alocacoes : remoteAdminState.alocacoes,
+    terceirizadas: draftState.terceirizadas.length > 0 ? draftState.terceirizadas : remoteAdminState.terceirizadas,
+    roleTabPermissions: hasObjectEntries(draftState.roleTabPermissions)
+      ? draftState.roleTabPermissions
+      : remoteAdminState.roleTabPermissions,
+    databaseLinks: draftState.databaseLinks.length > 0 ? draftState.databaseLinks : remoteAdminState.databaseLinks,
+    preRegistrations: draftState.preRegistrations.length > 0 ? draftState.preRegistrations : remoteAdminState.preRegistrations,
   };
 }
 
@@ -1226,6 +1338,7 @@ export default function App() {
   const [loadedModules, setLoadedModules] = useState<Record<string, boolean>>({});
   const adminAutoLoadAttemptRef = React.useRef(false);
   const adminDraftVersionRef = React.useRef(0);
+  const adminDraftRef = React.useRef<AdminSnapshotState | null>(null);
 
   // Filter States (Dashboard/Tech Mock)
   const [filtrosAtivos, setFiltrosAtivos] = React.useState({ contrato: 'Todos', os: 'Todos', disciplina: 'Todos' });
@@ -1256,18 +1369,37 @@ export default function App() {
     return [...terceirizadas, ...pendingTerceirizadas];
   }, [pendingTerceirizadas, terceirizadas]);
 
-  const buildAdminFirebaseSnapshot = useCallback((overrides?: {
-    usuarios?: UserAccessRecord[];
-    disciplineSettings?: DisciplineSettingRecord[];
-    cargos?: string[];
-    alocacoes?: string[];
-    terceirizadas?: TerceirizadaRecord[];
-    roleTabPermissions?: RoleTabPermissions;
-    databaseLinks?: DatabaseLinkRecord[];
-    preRegistrations?: PreRegistrationRecord[];
-  }) => {
-    const snapshotUsers = overrides?.usuarios || usuarios;
-    const snapshotDisciplineSettings = overrides?.disciplineSettings || disciplineSettings;
+  const getAdminSnapshotState = useCallback((): AdminSnapshotState => ({
+    usuarios,
+    disciplineSettings,
+    cargos,
+    alocacoes,
+    terceirizadas: adminTerceirizadas,
+    roleTabPermissions,
+    databaseLinks,
+    preRegistrations,
+  }), [adminTerceirizadas, alocacoes, cargos, databaseLinks, disciplineSettings, preRegistrations, roleTabPermissions, usuarios]);
+
+  React.useEffect(() => {
+    adminDraftRef.current = getAdminSnapshotState();
+  }, [getAdminSnapshotState]);
+
+  const updateAdminDraftRef = useCallback((patch: Partial<AdminSnapshotState>) => {
+    const next = {
+      ...(adminDraftRef.current || getAdminSnapshotState()),
+      ...patch,
+    };
+    adminDraftRef.current = next;
+    return next;
+  }, [getAdminSnapshotState]);
+
+  const buildAdminFirebaseSnapshot = useCallback((overrides?: Partial<AdminSnapshotState>) => {
+    const snapshotState = {
+      ...(adminDraftRef.current || getAdminSnapshotState()),
+      ...(overrides || {}),
+    };
+    const snapshotUsers = snapshotState.usuarios;
+    const snapshotDisciplineSettings = snapshotState.disciplineSettings;
     return {
       users: snapshotUsers.map((user) => ({
         id: user.id,
@@ -1284,23 +1416,24 @@ export default function App() {
         onlyThirdParty: user.onlyThirdParty,
         status: user.status,
         allowedTabs: user.allowedTabs,
+        sessionVersion: user.sessionVersion || '',
       })),
       disciplinas: snapshotDisciplineSettings.map((item) => ({
         nome: item.nome,
         showInCharts: item.showInCharts,
       })),
-      cargos: overrides?.cargos || cargos,
-      alocacoes: overrides?.alocacoes || alocacoes,
-      terceirizadas: (overrides?.terceirizadas || adminTerceirizadas).map((item) => ({
+      cargos: snapshotState.cargos,
+      alocacoes: snapshotState.alocacoes,
+      terceirizadas: snapshotState.terceirizadas.map((item) => ({
         id: item.id,
         nome: item.nome,
         disciplina: item.disciplina,
       })),
-      roleTabPermissions: overrides?.roleTabPermissions || roleTabPermissions,
-      databaseLinks: overrides?.databaseLinks || databaseLinks,
-      preRegistrations: overrides?.preRegistrations || preRegistrations,
+      roleTabPermissions: snapshotState.roleTabPermissions,
+      databaseLinks: snapshotState.databaseLinks,
+      preRegistrations: snapshotState.preRegistrations,
     };
-  }, [adminTerceirizadas, alocacoes, cargos, databaseLinks, disciplineSettings, preRegistrations, roleTabPermissions, usuarios]);
+  }, [getAdminSnapshotState]);
 
   const buildAuthFirebaseSnapshot = useCallback((sourceUsers?: UserAccessRecord[], existingAuth?: any) => {
     const users = sourceUsers || usuarios;
@@ -1329,20 +1462,42 @@ export default function App() {
         online: user.online,
         onlyThirdParty: user.onlyThirdParty,
         showInCharts: user.showInCharts !== false,
-        sessionVersion: String((existing as any).sessionVersion || user.sessionVersion || ''),
+        sessionVersion: String(user.sessionVersion || (existing as any).sessionVersion || (existing as any).sessionversion || ''),
         passwordHash: String((existing as any).passwordHash || (existing as any).passwordhash || ''),
         resetCode: String((existing as any).resetCode || (existing as any).resetcode || ''),
         resetExpires: (existing as any).resetExpires || (existing as any).resetexpires || '',
         lastSeen: (existing as any).lastSeen || (existing as any).lastseen || '',
       };
     });
+    const mappedEmails = new Set(mappedUsers.map((user: any) => normalizeUserText(user.email)).filter(Boolean));
+    const preservedExistingUsers = existingUsers.filter((item: any) => {
+      const email = normalizeUserText(item?.email || item?.id);
+      return email && !mappedEmails.has(email);
+    });
 
     return {
-      users: mappedUsers,
+      users: [...mappedUsers, ...preservedExistingUsers],
       publishedAt: new Date().toISOString(),
       source: 'EcoQuanta-Web',
     };
   }, [usuarios]);
+
+  const prepareAdminSnapshotForSave = useCallback(async (draftState: AdminSnapshotState) => {
+    const [existingAdmin, existingAuth] = isFirebaseConfigured()
+      ? await Promise.all([
+          fetchFirebaseAppData<any>('admin'),
+          fetchFirebaseAppData<any>('auth'),
+        ])
+      : [null, null];
+    const mergedState = mergeAdminStateWithRemote(draftState, existingAdmin, existingAuth);
+    const snapshot = buildAdminFirebaseSnapshot(mergedState);
+
+    return {
+      snapshot,
+      state: mergedState,
+      existingAuth,
+    };
+  }, [buildAdminFirebaseSnapshot]);
 
   const writeAdminSnapshotToFirebase = useCallback(async (snapshot: Record<string, any>) => {
     if (!isFirebaseConfigured()) return;
@@ -1350,41 +1505,27 @@ export default function App() {
   }, []);
 
   const syncAdminSnapshotToFirebase = useCallback(async (overrides?: Parameters<typeof buildAdminFirebaseSnapshot>[0]) => {
-    const snapshot = buildAdminFirebaseSnapshot(overrides);
+    const draftState = {
+      ...(adminDraftRef.current || getAdminSnapshotState()),
+      ...(overrides || {}),
+    };
+    const { snapshot } = await prepareAdminSnapshotForSave(draftState);
     await writeAdminSnapshotToFirebase(snapshot);
     return snapshot;
-  }, [buildAdminFirebaseSnapshot, writeAdminSnapshotToFirebase]);
+  }, [getAdminSnapshotState, prepareAdminSnapshotForSave, writeAdminSnapshotToFirebase]);
 
-  const syncAuthSnapshotToFirebase = useCallback(async (overrideUsers?: UserAccessRecord[]) => {
+  const syncAuthSnapshotToFirebase = useCallback(async (overrideUsers?: UserAccessRecord[], existingAuthOverride?: any) => {
     if (!isFirebaseConfigured()) return;
-    const existingAuth = await fetchFirebaseAppData<any>('auth');
+    const existingAuth = existingAuthOverride ?? await fetchFirebaseAppData<any>('auth');
     await replaceFirebaseAppData('auth', buildAuthFirebaseSnapshot(overrideUsers, existingAuth));
   }, [buildAuthFirebaseSnapshot]);
 
   const syncAdminSnapshotToAppsScript = useCallback(async () => {
-    const snapshot = buildAdminFirebaseSnapshot();
-    const response = await fetch(EAP_APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'syncAdminSnapshot', snapshot }),
-    });
-    const text = await response.text();
-    let result: GenericResponse;
-    try { result = JSON.parse(text) as GenericResponse; } catch { result = { success: false, error: text }; }
-    assertSuccess(result, 'Falha ao espelhar a administracao na planilha.');
-  }, [buildAdminFirebaseSnapshot]);
+    return;
+  }, []);
 
-  const syncAdminSnapshotToAppsScriptInBackground = useCallback((snapshot: Record<string, any>) => {
-    void fetch(EAP_APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'syncAdminSnapshot', snapshot }),
-    })
-      .then((r) => r.json())
-      .then((response: GenericResponse) => {
-        assertSuccess(response, 'Falha ao espelhar a administracao na planilha.');
-      })
-      .catch((error) => {
-        console.warn('Espelhamento administrativo em segundo plano falhou:', error);
-      });
+  const syncAdminSnapshotToAppsScriptInBackground = useCallback((_snapshot: Record<string, any>) => {
+    return;
   }, []);
 
   const applyLoadedGlobalData = useCallback((fullData: GlobalData, options?: { resetLoadedModules?: boolean }) => {
@@ -1408,6 +1549,17 @@ export default function App() {
       setPendingTerceirizadas([]);
       setRoleTabPermissions(adminState.roleTabPermissions);
       setDatabaseLinks(adminState.databaseLinks);
+      setPreRegistrations(adminState.preRegistrations);
+      adminDraftRef.current = {
+        usuarios: adminState.usuarios,
+        disciplineSettings: adminState.disciplineSettings,
+        cargos: adminState.cargos,
+        alocacoes: adminState.alocacoes,
+        terceirizadas: adminState.terceirizadas,
+        roleTabPermissions: adminState.roleTabPermissions,
+        databaseLinks: adminState.databaseLinks,
+        preRegistrations: adminState.preRegistrations,
+      };
       setCurrentUser((prev) => prev ? applyAdminUserContext(prev, normalizedData.admin) : prev);
     }
     setDirtyUserIds([]);
@@ -1561,10 +1713,56 @@ export default function App() {
   };
 
   useEffect(() => {
-    const savedUser = readSession();
-    if (savedUser) { setCurrentUser(savedUser); void loadGlobalEnvironment(savedUser); }
-    else { setBooting(false); }
-  }, [applyLoadedGlobalData, loadCollaborationData]);
+    let cancelled = false;
+
+    const restoreSavedSession = async () => {
+      const savedUser = readSession();
+      if (!savedUser) {
+        setBooting(false);
+        return;
+      }
+
+      try {
+        if (isFirebaseConfigured()) {
+          const authData = await fetchFirebaseAppData<any>('auth');
+          if (authData) {
+            const authRecord = getAuthUserByEmail(authData, savedUser.email);
+
+            if (authRecordInvalidatesSession(savedUser, authRecord)) {
+              clearSession();
+              if (!cancelled) {
+                setCurrentUser(null);
+                setGlobalData({});
+                setBooting(false);
+                setPreloading(false);
+              }
+              return;
+            }
+
+            const refreshedUser = normalizeAuthRecordForSession(authRecord);
+            saveSession(refreshedUser, wasSessionRemembered());
+            if (!cancelled) {
+              setCurrentUser(refreshedUser);
+              await loadGlobalEnvironment(refreshedUser);
+            }
+            return;
+          }
+        }
+      } catch (error) {
+        console.warn('Nao foi possivel validar a sessao salva antes de carregar:', error);
+      }
+
+      if (!cancelled) {
+        setCurrentUser(savedUser);
+        await loadGlobalEnvironment(savedUser);
+      }
+    };
+
+    void restoreSavedSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!currentUser || !isFirebaseConfigured() || adminHasPendingChanges) return;
@@ -1577,6 +1775,44 @@ export default function App() {
       window.clearInterval(autoRefreshInterval);
     };
   }, [adminHasPendingChanges, currentUser, refreshRealtimeEnvironment]);
+
+  useEffect(() => {
+    if (!currentUser || !isFirebaseConfigured()) return;
+
+    let cancelled = false;
+
+    const validateActiveSession = async () => {
+      try {
+        const authData = await fetchFirebaseAppData<any>('auth');
+        if (!authData) return;
+        const authRecord = getAuthUserByEmail(authData, currentUser.email);
+        if (!authRecordInvalidatesSession(currentUser, authRecord)) return;
+
+        clearSession();
+        if (!cancelled) {
+          setCurrentUser(null);
+          setGlobalData({});
+          setLoadedModules({});
+          setDirtyUserIds([]);
+          setPendingTerceirizadas([]);
+          setAdminHasPendingChanges(false);
+          setIsSavingAdminChanges(false);
+          adminDraftRef.current = null;
+        }
+      } catch (error) {
+        console.warn('Nao foi possivel validar a sessao ativa:', error);
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void validateActiveSession();
+    }, 2 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [currentUser]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -1667,16 +1903,42 @@ export default function App() {
     }
 
     try {
-      const adminSnapshot = buildAdminFirebaseSnapshot();
+      const draftState = adminDraftRef.current || getAdminSnapshotState();
+      const {
+        snapshot: adminSnapshot,
+        state: safeDraftState,
+        existingAuth,
+      } = await prepareAdminSnapshotForSave(draftState);
       await Promise.all([
         writeAdminSnapshotToFirebase(adminSnapshot),
-        syncAuthSnapshotToFirebase(usuarios),
+        syncAuthSnapshotToFirebase(safeDraftState.usuarios, existingAuth),
       ]);
       syncAdminSnapshotToAppsScriptInBackground(adminSnapshot);
 
       if (adminDraftVersionRef.current === versionToSave) {
-        setTerceirizadas(adminTerceirizadas);
+        const savedAdminState = getAdminState({ admin: adminSnapshot });
+        setUsuarios(savedAdminState.usuarios);
+        setDisciplineSettings(savedAdminState.disciplineSettings);
+        setDisciplinas(savedAdminState.disciplinas);
+        setCargos(savedAdminState.cargos);
+        setAlocacoes(savedAdminState.alocacoes);
+        setTerceirizadas(savedAdminState.terceirizadas);
         setPendingTerceirizadas([]);
+        setRoleTabPermissions(savedAdminState.roleTabPermissions);
+        setDatabaseLinks(savedAdminState.databaseLinks);
+        setPreRegistrations(savedAdminState.preRegistrations);
+        adminDraftRef.current = {
+          usuarios: savedAdminState.usuarios,
+          disciplineSettings: savedAdminState.disciplineSettings,
+          cargos: savedAdminState.cargos,
+          alocacoes: savedAdminState.alocacoes,
+          terceirizadas: savedAdminState.terceirizadas,
+          roleTabPermissions: savedAdminState.roleTabPermissions,
+          databaseLinks: savedAdminState.databaseLinks,
+          preRegistrations: savedAdminState.preRegistrations,
+        };
+        setGlobalData((prev) => mergeGlobalData(prev, { admin: adminSnapshot }));
+        setCurrentUser((prev) => prev ? applyAdminUserContext(prev, adminSnapshot) : prev);
         setDirtyUserIds([]);
         setAdminHasPendingChanges(false);
       }
@@ -1691,7 +1953,7 @@ export default function App() {
         setIsBackgroundSyncing(false);
       }
     }
-  }, [adminTerceirizadas, buildAdminFirebaseSnapshot, currentUser, syncAdminSnapshotToAppsScriptInBackground, syncAuthSnapshotToFirebase, usuarios, writeAdminSnapshotToFirebase]);
+  }, [currentUser, getAdminSnapshotState, prepareAdminSnapshotForSave, syncAdminSnapshotToAppsScriptInBackground, syncAuthSnapshotToFirebase, writeAdminSnapshotToFirebase]);
 
   const saveAdminChanges = useCallback(async () => {
     await persistAdminChanges();
@@ -1703,22 +1965,24 @@ export default function App() {
   }, []);
 
   const addPreRegistration = useCallback((record: PreRegistrationRecord) => {
-    setPreRegistrations((prev) => {
-      const idx = prev.findIndex((r) => r.email.toLowerCase() === record.email.toLowerCase());
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = record;
-        return next;
-      }
-      return [...prev, record];
-    });
+    const source = adminDraftRef.current?.preRegistrations || preRegistrations;
+    const idx = source.findIndex((r) => r.email.toLowerCase() === record.email.toLowerCase());
+    const next = idx >= 0
+      ? source.map((item, index) => index === idx ? record : item)
+      : [...source, record];
+
+    setPreRegistrations(next);
+    updateAdminDraftRef({ preRegistrations: next });
     markAdminChangesPending();
-  }, [markAdminChangesPending]);
+  }, [markAdminChangesPending, preRegistrations, updateAdminDraftRef]);
 
   const removePreRegistration = useCallback((email: string) => {
-    setPreRegistrations((prev) => prev.filter((r) => r.email.toLowerCase() !== email.toLowerCase()));
+    const source = adminDraftRef.current?.preRegistrations || preRegistrations;
+    const next = source.filter((r) => r.email.toLowerCase() !== email.toLowerCase());
+    setPreRegistrations(next);
+    updateAdminDraftRef({ preRegistrations: next });
     markAdminChangesPending();
-  }, [markAdminChangesPending]);
+  }, [markAdminChangesPending, preRegistrations, updateAdminDraftRef]);
 
   useEffect(() => {
     if (!globalData.admin) return;
@@ -1852,6 +2116,7 @@ export default function App() {
     setPendingTerceirizadas([]);
     setAdminHasPendingChanges(false);
     setIsSavingAdminChanges(false);
+    adminDraftRef.current = null;
   };
 
   const handleRegister = async (name: string, email: string, password: string) => {
@@ -1885,14 +2150,26 @@ export default function App() {
     setDirtyUserIds((prev) => prev.includes(userId) ? prev : [...prev, userId]);
   }, []);
 
+  const invalidateUserSession = useCallback((user: UserAccessRecord): UserAccessRecord => ({
+    ...user,
+    online: false,
+    sessionVersion: createSessionVersion(),
+  }), []);
+
   const updateUsuarioDraft = useCallback((userId: string, patch: Partial<UserAccessRecord>) => {
-    const nextUsers = usuarios.map((user) => {
+    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+    const nextUsers = sourceUsers.map((user) => {
       if (user.id !== userId) return user;
-      const nextUser = { ...user, ...patch };
+      const nextUser = invalidateUserSession({ ...user, ...patch });
 
       if (Object.prototype.hasOwnProperty.call(patch, 'cargo')) {
         const cargo = String(patch.cargo || '').trim();
-        nextUser.allowedTabs = cargo ? applyRolePresetTabs(cargo) : [];
+        const roleTabs = cargo ? applyRolePresetTabs(cargo) : [];
+        if (!cargo) {
+          nextUser.allowedTabs = [];
+        } else if (roleTabs.length > 0) {
+          nextUser.allowedTabs = roleTabs;
+        }
       }
 
       if (Object.prototype.hasOwnProperty.call(patch, 'disciplina') || Object.prototype.hasOwnProperty.call(patch, 'disciplinas')) {
@@ -1905,137 +2182,187 @@ export default function App() {
     });
 
     setUsuarios(nextUsers);
+    updateAdminDraftRef({ usuarios: nextUsers });
     markUserDirty(userId);
     markAdminChangesPending();
-  }, [applyRolePresetTabs, markAdminChangesPending, markUserDirty, usuarios]);
+  }, [applyRolePresetTabs, invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
   const toggleUsuarioAdminDraft = useCallback((userId: string, checked: boolean) => {
-    const nextUsers = usuarios.map((user) => user.id === userId ? { ...user, isAdmin: checked } : user);
+    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+    const nextUsers = sourceUsers.map((user) => user.id === userId ? invalidateUserSession({ ...user, isAdmin: checked }) : user);
     setUsuarios(nextUsers);
+    updateAdminDraftRef({ usuarios: nextUsers });
     markUserDirty(userId);
     markAdminChangesPending();
-  }, [markAdminChangesPending, markUserDirty, usuarios]);
+  }, [invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
   const toggleUsuarioOnlyThirdPartyDraft = useCallback((userId: string, checked: boolean) => {
-    const nextUsers = usuarios.map((user) => user.id === userId ? { ...user, onlyThirdParty: checked } : user);
+    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+    const nextUsers = sourceUsers.map((user) => user.id === userId ? invalidateUserSession({ ...user, onlyThirdParty: checked }) : user);
     setUsuarios(nextUsers);
+    updateAdminDraftRef({ usuarios: nextUsers });
     markUserDirty(userId);
     markAdminChangesPending();
-  }, [markAdminChangesPending, markUserDirty, usuarios]);
+  }, [invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
   const toggleUsuarioTabDraft = useCallback((userId: string, tab: AppTabKey) => {
-    const nextUsers = usuarios.map((user) => {
+    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+    const nextUsers = sourceUsers.map((user) => {
       if (user.id !== userId) return user;
       const nextTabs = user.allowedTabs.includes(tab)
         ? user.allowedTabs.filter((item) => item !== tab)
         : [...user.allowedTabs, tab];
-      return { ...user, allowedTabs: nextTabs };
+      return invalidateUserSession({ ...user, allowedTabs: nextTabs });
     });
 
     setUsuarios(nextUsers);
+    updateAdminDraftRef({ usuarios: nextUsers });
     markUserDirty(userId);
     markAdminChangesPending();
-  }, [markAdminChangesPending, markUserDirty, usuarios]);
+  }, [invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
   const saveConfigOptions = useCallback((nextCargos: string[], nextDisciplinas: string[], nextAlocacoes: string[], nextDisciplineSettings?: DisciplineSettingRecord[]) => {
+    const nextSettings = nextDisciplineSettings || adminDraftRef.current?.disciplineSettings || disciplineSettings;
     setCargos(nextCargos);
     setDisciplinas(nextDisciplinas);
     setAlocacoes(nextAlocacoes);
-    if (nextDisciplineSettings) setDisciplineSettings(nextDisciplineSettings);
+    setDisciplineSettings(nextSettings);
+    updateAdminDraftRef({
+      cargos: nextCargos,
+      disciplineSettings: nextSettings,
+      alocacoes: nextAlocacoes,
+    });
     setGlobalData((prev) => ({
       ...prev,
       admin: {
         ...prev.admin,
+        cargos: nextCargos,
         disciplinas: nextDisciplinas,
-        ...(nextDisciplineSettings ? { disciplineSettings: nextDisciplineSettings } : {}),
+        disciplineSettings: nextSettings,
+        alocacoes: nextAlocacoes,
       },
     }));
     markAdminChangesPending();
-  }, [markAdminChangesPending]);
+  }, [disciplineSettings, markAdminChangesPending, updateAdminDraftRef]);
 
   const saveRoleTabPermissions = useCallback((nextPermissions: RoleTabPermissions) => {
     setRoleTabPermissions(nextPermissions);
+    updateAdminDraftRef({ roleTabPermissions: nextPermissions });
     markAdminChangesPending();
-  }, [markAdminChangesPending]);
+  }, [markAdminChangesPending, updateAdminDraftRef]);
 
   const addDisciplina = useCallback(async (value: string) => {
     const item = value.trim();
     if (!item) return;
+    const draftState = adminDraftRef.current || getAdminSnapshotState();
+    const draftDisciplinas = getDisciplineNamesFromSettings(draftState.disciplineSettings);
     const nextDisciplineSettings = normalizeDisciplineSettings([
-      ...disciplineSettings,
+      ...draftState.disciplineSettings,
       { nome: item, showInCharts: true },
     ]);
-    await saveConfigOptions(cargos, Array.from(new Set([...disciplinas, item])), alocacoes, nextDisciplineSettings);
-  }, [alocacoes, cargos, disciplineSettings, disciplinas, saveConfigOptions]);
+    await saveConfigOptions(draftState.cargos, Array.from(new Set([...draftDisciplinas, item])), draftState.alocacoes, nextDisciplineSettings);
+  }, [getAdminSnapshotState, saveConfigOptions]);
 
   const removeDisciplina = useCallback(async (value: string) => {
-    const nextDisciplineSettings = disciplineSettings.filter((item) => item.nome !== value);
-    await saveConfigOptions(cargos, disciplinas.filter((item) => item !== value), alocacoes, nextDisciplineSettings);
-  }, [alocacoes, cargos, disciplineSettings, disciplinas, saveConfigOptions]);
+    const draftState = adminDraftRef.current || getAdminSnapshotState();
+    const nextDisciplineSettings = draftState.disciplineSettings.filter((item) => item.nome !== value);
+    await saveConfigOptions(
+      draftState.cargos,
+      getDisciplineNamesFromSettings(nextDisciplineSettings),
+      draftState.alocacoes,
+      nextDisciplineSettings,
+    );
+  }, [getAdminSnapshotState, saveConfigOptions]);
 
   const toggleDisciplineCharts = useCallback(async (value: string, checked: boolean) => {
+    const draftState = adminDraftRef.current || getAdminSnapshotState();
     const nextDisciplineSettings = normalizeDisciplineSettings(
-      disciplineSettings.some((item) => item.nome === value)
-        ? disciplineSettings.map((item) => item.nome === value ? { ...item, showInCharts: checked } : item)
-        : [...disciplineSettings, { nome: value, showInCharts: checked }]
+      draftState.disciplineSettings.some((item) => item.nome === value)
+        ? draftState.disciplineSettings.map((item) => item.nome === value ? { ...item, showInCharts: checked } : item)
+        : [...draftState.disciplineSettings, { nome: value, showInCharts: checked }]
     );
-    await saveConfigOptions(cargos, disciplinas, alocacoes, nextDisciplineSettings);
-  }, [alocacoes, cargos, disciplineSettings, disciplinas, saveConfigOptions]);
+    await saveConfigOptions(draftState.cargos, getDisciplineNamesFromSettings(nextDisciplineSettings), draftState.alocacoes, nextDisciplineSettings);
+  }, [getAdminSnapshotState, saveConfigOptions]);
 
   const addCargo = useCallback(async (value: string) => {
     const item = value.trim();
     if (!item) return;
-    saveConfigOptions(Array.from(new Set([...cargos, item])), disciplinas, alocacoes);
+    const draftState = adminDraftRef.current || getAdminSnapshotState();
+    saveConfigOptions(
+      Array.from(new Set([...draftState.cargos, item])),
+      getDisciplineNamesFromSettings(draftState.disciplineSettings),
+      draftState.alocacoes,
+      draftState.disciplineSettings,
+    );
     saveRoleTabPermissions({
-      ...roleTabPermissions,
-      [item]: [],
+      ...draftState.roleTabPermissions,
+      [item]: draftState.roleTabPermissions[item] || [],
     });
-  }, [alocacoes, cargos, disciplinas, roleTabPermissions, saveConfigOptions, saveRoleTabPermissions]);
+  }, [getAdminSnapshotState, saveConfigOptions, saveRoleTabPermissions]);
 
   const addAlocacao = useCallback(async (value: string) => {
     const item = value.trim();
     if (!item) return;
-    saveConfigOptions(cargos, disciplinas, Array.from(new Set([...alocacoes, item])));
-  }, [alocacoes, cargos, disciplinas, saveConfigOptions]);
+    const draftState = adminDraftRef.current || getAdminSnapshotState();
+    saveConfigOptions(
+      draftState.cargos,
+      getDisciplineNamesFromSettings(draftState.disciplineSettings),
+      Array.from(new Set([...draftState.alocacoes, item])),
+      draftState.disciplineSettings,
+    );
+  }, [getAdminSnapshotState, saveConfigOptions]);
 
   const removeAlocacao = useCallback(async (value: string) => {
-    saveConfigOptions(cargos, disciplinas, alocacoes.filter((item) => item !== value));
-  }, [alocacoes, cargos, disciplinas, saveConfigOptions]);
+    const draftState = adminDraftRef.current || getAdminSnapshotState();
+    saveConfigOptions(
+      draftState.cargos,
+      getDisciplineNamesFromSettings(draftState.disciplineSettings),
+      draftState.alocacoes.filter((item) => item !== value),
+      draftState.disciplineSettings,
+    );
+  }, [getAdminSnapshotState, saveConfigOptions]);
 
   const removeCargo = useCallback(async (value: string) => {
-    const nextPermissions = { ...roleTabPermissions };
+    const draftState = adminDraftRef.current || getAdminSnapshotState();
+    const nextPermissions = { ...draftState.roleTabPermissions };
     delete nextPermissions[value];
-    const nextCargos = cargos.filter((item) => item !== value);
+    const nextCargos = draftState.cargos.filter((item) => item !== value);
     setCargos(nextCargos);
     setRoleTabPermissions(nextPermissions);
+    updateAdminDraftRef({ cargos: nextCargos, roleTabPermissions: nextPermissions });
     markAdminChangesPending();
-  }, [cargos, markAdminChangesPending, roleTabPermissions]);
+  }, [getAdminSnapshotState, markAdminChangesPending, updateAdminDraftRef]);
 
   const toggleRoleTabPermission = useCallback(async (cargo: string, tab: AppTabKey) => {
-    const currentTabs = roleTabPermissions[cargo] || [];
+    const draftState = adminDraftRef.current || getAdminSnapshotState();
+    const currentTabs = draftState.roleTabPermissions[cargo] || [];
     const nextTabs = currentTabs.includes(tab)
       ? currentTabs.filter((item) => item !== tab)
       : [...currentTabs, tab];
 
     saveRoleTabPermissions({
-      ...roleTabPermissions,
+      ...draftState.roleTabPermissions,
       [cargo]: nextTabs,
     });
-  }, [roleTabPermissions, saveRoleTabPermissions]);
+  }, [getAdminSnapshotState, saveRoleTabPermissions]);
 
   const saveDatabaseLink = useCallback(async (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => {
+    const sourceLinks = adminDraftRef.current?.databaseLinks || databaseLinks;
     const nextDatabaseLinks = payload.id
-      ? databaseLinks.map((item) => item.id === payload.id ? { ...item, ...payload } : item)
-      : [...databaseLinks, { id: payload.id || createDraftId('db-link'), ...payload }];
+      ? sourceLinks.map((item) => item.id === payload.id ? { ...item, ...payload } : item)
+      : [...sourceLinks, { id: payload.id || createDraftId('db-link'), ...payload }];
     setDatabaseLinks(nextDatabaseLinks);
+    updateAdminDraftRef({ databaseLinks: nextDatabaseLinks });
     markAdminChangesPending();
-  }, [databaseLinks, markAdminChangesPending]);
+  }, [databaseLinks, markAdminChangesPending, updateAdminDraftRef]);
 
   const deleteDatabaseLink = useCallback(async (id: string) => {
-    const nextDatabaseLinks = databaseLinks.filter((item) => item.id !== id);
+    const sourceLinks = adminDraftRef.current?.databaseLinks || databaseLinks;
+    const nextDatabaseLinks = sourceLinks.filter((item) => item.id !== id);
     setDatabaseLinks(nextDatabaseLinks);
+    updateAdminDraftRef({ databaseLinks: nextDatabaseLinks });
     markAdminChangesPending();
-  }, [databaseLinks, markAdminChangesPending]);
+  }, [databaseLinks, markAdminChangesPending, updateAdminDraftRef]);
 
   const saveTerceirizada = useCallback(async (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => {
     const nome = String(payload.nome || '').trim();
@@ -2044,7 +2371,8 @@ export default function App() {
 
     const normalizedNome = normalizeUserText(nome);
     const normalizedDisciplina = normalizeUserText(disciplina);
-    const mergedBase = [...terceirizadas, ...pendingTerceirizadas].filter((item) => (
+    const sourceTerceirizadas = adminDraftRef.current?.terceirizadas || [...terceirizadas, ...pendingTerceirizadas];
+    const mergedBase = sourceTerceirizadas.filter((item) => (
       payload.id
         ? item.id !== payload.id
         : !(normalizeUserText(item.nome) === normalizedNome && normalizeUserText(item.disciplina) === normalizedDisciplina)
@@ -2060,8 +2388,9 @@ export default function App() {
 
     setTerceirizadas(nextTerceirizadas);
     setPendingTerceirizadas([]);
+    updateAdminDraftRef({ terceirizadas: nextTerceirizadas });
     markAdminChangesPending();
-  }, [markAdminChangesPending, pendingTerceirizadas, terceirizadas]);
+  }, [markAdminChangesPending, pendingTerceirizadas, terceirizadas, updateAdminDraftRef]);
 
   const deleteTerceirizada = useCallback(async (id: string) => {
     if (id.indexOf('draft-terceirizada:') === 0) {
@@ -2070,31 +2399,37 @@ export default function App() {
       return;
     }
 
-    const nextTerceirizadas = terceirizadas.filter((item) => item.id !== id);
+    const sourceTerceirizadas = adminDraftRef.current?.terceirizadas || terceirizadas;
+    const nextTerceirizadas = sourceTerceirizadas.filter((item) => item.id !== id);
     setTerceirizadas(nextTerceirizadas);
+    updateAdminDraftRef({ terceirizadas: nextTerceirizadas });
     markAdminChangesPending();
-  }, [markAdminChangesPending, terceirizadas]);
+  }, [markAdminChangesPending, terceirizadas, updateAdminDraftRef]);
 
   const acceptUser = useCallback(async (userId: string) => {
-    const user = usuarios.find((item) => item.id === userId);
+    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+    const user = sourceUsers.find((item) => item.id === userId);
     if (!user) return;
     // Auto-apply role tabs on acceptance; fall back to ['registro'] so the user can always access the app
     const roleTabs = user.cargo ? applyRolePresetTabs(user.cargo) : [];
     const autoTabs: AppTabKey[] = user.allowedTabs.length > 0 ? user.allowedTabs : (roleTabs.length > 0 ? roleTabs : ['registro' as AppTabKey]);
-    const nextUsers = usuarios.map((item) => item.id === userId ? { ...item, status: 'approved', allowedTabs: autoTabs } : item);
+    const nextUsers = sourceUsers.map((item) => item.id === userId ? invalidateUserSession({ ...item, status: 'approved', allowedTabs: autoTabs }) : item);
     setUsuarios(nextUsers);
+    updateAdminDraftRef({ usuarios: nextUsers });
     markUserDirty(userId);
     markAdminChangesPending();
-  }, [applyRolePresetTabs, markAdminChangesPending, markUserDirty, usuarios]);
+  }, [applyRolePresetTabs, invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
   const blockUser = useCallback(async (userId: string) => {
-    const user = usuarios.find((item) => item.id === userId);
+    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+    const user = sourceUsers.find((item) => item.id === userId);
     if (!user) return;
-    const nextUsers = usuarios.map((item) => item.id === userId ? { ...item, status: 'blocked', online: false } : item);
+    const nextUsers = sourceUsers.map((item) => item.id === userId ? invalidateUserSession({ ...item, status: 'blocked', online: false }) : item);
     setUsuarios(nextUsers);
+    updateAdminDraftRef({ usuarios: nextUsers });
     markUserDirty(userId);
     markAdminChangesPending();
-  }, [markAdminChangesPending, markUserDirty, usuarios]);
+  }, [invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
   const resetUserPassword = useCallback(async (user: UserAccessRecord) => {
     const response = await postToAppsScript<GenericResponse>({ action: 'adminResetPassword', email: user.email });

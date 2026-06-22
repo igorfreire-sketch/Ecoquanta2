@@ -2350,24 +2350,26 @@ function firebaseForgotPassword_(payload) {
   if (!email) return json_({ success: false, error: 'E-mail invalido.' });
   var state = firebaseReadAuth_();
   var index = firebaseFindUserIndex_(state.users, email);
-  if (index < 0) return json_({ success: true });
+  if (index < 0) return json_({ success: true, message: 'Se o e-mail estiver cadastrado, o codigo foi enviado.' });
 
   var user = firebaseNormalizeUser_(state.users[index]);
   var resetCode = randomCode_(6);
-  user.resetCode = resetCode;
-  user.resetExpires = Date.now() + 15 * 60 * 1000;
-  state.users[index] = user;
-  firebaseWriteAuthUsers_(state.authData, state.users);
 
   try {
     sendResetCodeEmail_(email, resetCode, 15);
   } catch (mailErr) {
     logAuth_(null, 'ERROR', 'forgotPassword firebase falha MailApp', String(mailErr));
-    return json_({ success: false, error: 'Falha ao enviar e-mail. Verifique as permissoes do Apps Script.' });
+    return json_({ success: false, error: recoveryEmailErrorMessage_(mailErr) });
   }
 
+  // So invalida o codigo anterior depois que o provedor aceitou o novo e-mail.
+  user.resetCode = resetCode;
+  user.resetExpires = Date.now() + 15 * 60 * 1000;
+  state.users[index] = user;
+  firebaseWriteAuthUsers_(state.authData, state.users);
+
   logAuth_(null, 'INFO', 'forgotPassword firebase code enviado', email);
-  return json_({ success: true });
+  return json_({ success: true, message: 'Codigo enviado. Confira a caixa de entrada e o spam.' });
 }
 
 function firebaseResetPassword_(payload) {
@@ -3116,11 +3118,28 @@ function logAuth_(ss, level, eventName, detail) {
 }
 
 function sendResetCodeEmail_(to, code, minutesValid) {
+  var quota = MailApp.getRemainingDailyQuota();
+  if (Number(quota || 0) < 1) {
+    throw new Error('EMAIL_QUOTA_EXHAUSTED');
+  }
   MailApp.sendEmail({
     to: String(to || ''),
     subject: 'EcoQuanta - Codigo de recuperacao',
-    body: 'Seu codigo de recuperacao e: ' + String(code || '') + '\n\nValidade: ' + String(minutesValid || 15) + ' minutos.'
+    name: 'EcoQuanta',
+    body: 'Recebemos uma solicitacao para redefinir sua senha no EcoQuanta.\n\nCodigo: ' + String(code || '') + '\nValidade: ' + String(minutesValid || 15) + ' minutos.\n\nSe nao foi voce, ignore este e-mail.',
+    htmlBody: '<div style="font-family:Arial,sans-serif;color:#2d2d2d;line-height:1.5"><h2 style="color:#f05d28">EcoQuanta</h2><p>Recebemos uma solicitacao para redefinir sua senha.</p><p>Seu codigo e:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">' + String(code || '') + '</p><p>Validade: ' + String(minutesValid || 15) + ' minutos.</p><p style="color:#757575">Se nao foi voce, ignore este e-mail.</p></div>'
   });
+}
+
+function recoveryEmailErrorMessage_(error) {
+  var detail = String(error && error.message ? error.message : error || '');
+  if (detail.indexOf('EMAIL_QUOTA_EXHAUSTED') !== -1 || /quota|limit|too many/i.test(detail)) {
+    return 'O limite diario de e-mails de recuperacao foi atingido. Tente novamente apos a renovacao da cota ou solicite uma redefinicao ao administrador.';
+  }
+  if (/authorization|permission|scope|access denied|not authorized/i.test(detail)) {
+    return 'O envio de recuperacao precisa ser reautorizado pelo administrador do Apps Script.';
+  }
+  return 'Nao foi possivel enviar o e-mail de recuperacao agora. Tente novamente em alguns minutos.';
 }
 
 function sendAdminTemporaryPasswordEmail_(to, tempPassword) {

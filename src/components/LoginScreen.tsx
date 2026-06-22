@@ -263,6 +263,8 @@ export default function LoginScreen({
                   e.preventDefault();
                   void runAction(async () => {
                     const msg = await onForgotPassword(forgotEmail);
+                    setResetEmail(forgotEmail.trim());
+                    setMode('reset');
                     setMessage(msg);
                   });
                 }}
@@ -323,8 +325,11 @@ export default function LoginScreen({
                     className="bentham-input !pl-11"
                     type="text"
                     value={resetCode}
-                    onChange={(e) => setResetCode(e.target.value)}
+                    onChange={(e) => setResetCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     placeholder="Código de 6 dígitos"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="[0-9]{6}"
                     required
                   />
                 </InputGroup>
@@ -336,6 +341,8 @@ export default function LoginScreen({
                     value={resetPassword}
                     onChange={(e) => setResetPasswordValue(e.target.value)}
                     placeholder="Nova senha"
+                    minLength={6}
+                    autoComplete="new-password"
                     required
                   />
                 </InputGroup>

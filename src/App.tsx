@@ -2132,7 +2132,7 @@ export default function App() {
   const handleForgotPassword = async (email: string) => {
     const response = await postToAppsScript<GenericResponse>({ action: 'forgotPassword', email });
     if (!response.success) throw new Error(response.error || 'Falha ao solicitar recuperação.');
-    return 'Código enviado (se e-mail existir).';
+    return response.message || 'Se o e-mail estiver cadastrado, o código foi enviado. Confira também o spam.';
   };
 
   const handleResetPassword = async (email: string, code: string, newPassword: string) => {

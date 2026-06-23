@@ -284,6 +284,7 @@ function buildAlocacoes(preloadedData?: AlocacoesProps['preloadedData'], contrat
 const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode, dadosTabela }) => {
   const [filtroAtivo, setFiltroAtivo] = useState<string[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const assignments = useMemo(() => buildAssignments(preloadedData, activeContractCode, dadosTabela), [preloadedData, activeContractCode, dadosTabela]);
   const contratos = useMemo(() => getContratosAtivos(assignments), [assignments]);
   const dadosAlocacoes = useMemo(() => buildAlocacoes(preloadedData, contratos, activeContractCode), [preloadedData, contratos, activeContractCode]);
@@ -292,6 +293,12 @@ const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode
   const visibleLabels = useMemo(() => {
     return disciplinasLista;
   }, [disciplinasLista]);
+
+  const filteredLabels = useMemo(() => {
+    const query = normalizeText(search);
+    if (!query) return visibleLabels;
+    return visibleLabels.filter((disciplina) => normalizeText(disciplina).includes(query));
+  }, [visibleLabels, search]);
 
   const cardsFiltrados = filtroAtivo.length > 0
     ? dadosAlocacoes.filter((d) => filtroAtivo.includes(d.disciplina))
@@ -318,13 +325,21 @@ const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode
 
           {menuOpen && (
             <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-full rounded-2xl border border-[#E5E7EB] bg-white p-2 shadow-xl shadow-black/5">
+              <input
+                type="text"
+                autoFocus
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Pesquisar..."
+                className="mb-2 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 py-2 text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] placeholder:text-[#9CA3AF]"
+              />
               <div className="max-h-[280px] overflow-y-auto">
-                {visibleLabels.length === 0 ? (
+                {visibleLabels.length === 0 || filteredLabels.length === 0 ? (
                   <div className="px-3 py-2 text-[12px] text-[#757575]">
                     Nenhuma disciplina disponivel.
                   </div>
                 ) : (
-                  visibleLabels.map((disciplina) => {
+                  filteredLabels.map((disciplina) => {
                     const checked = filtroAtivo.includes(disciplina);
                     return (
                       <label

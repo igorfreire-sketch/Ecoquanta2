@@ -1,3 +1,4 @@
+import SearchableSelect from './SearchableSelect';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
@@ -412,7 +413,7 @@ export default function EmergenciaCenter({
                   className="h-11 w-full rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] pl-10 pr-4 text-[13px] outline-none focus:border-[#F05D28]"
                 />
               </div>
-              <select
+              <SearchableSelect
                 value={selectedContract}
                 onChange={(event) => setSelectedContract(event.target.value)}
                 disabled={Boolean(lockedContractCode)}
@@ -424,8 +425,8 @@ export default function EmergenciaCenter({
                     {contract.nome || contract.codigo}
                   </option>
                 ))}
-              </select>
-              <select
+              </SearchableSelect>
+              <SearchableSelect
                 value={selectedOs}
                 onChange={(event) => setSelectedOs(event.target.value)}
                 className="h-11 rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] px-4 text-[13px] outline-none focus:border-[#F05D28]"
@@ -436,8 +437,8 @@ export default function EmergenciaCenter({
                     {os.nome || os.codigo}
                   </option>
                 ))}
-              </select>
-              <select
+              </SearchableSelect>
+              <SearchableSelect
                 value={selectedDisciplina}
                 onChange={(event) => setSelectedDisciplina(event.target.value)}
                 className="h-11 rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] px-4 text-[13px] outline-none focus:border-[#F05D28]"
@@ -448,7 +449,7 @@ export default function EmergenciaCenter({
                     {disciplina}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
           </div>
 

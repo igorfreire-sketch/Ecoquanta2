@@ -1,3 +1,4 @@
+import SearchableSelect from '../SearchableSelect';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Send } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
@@ -386,7 +387,7 @@ export default function Preenchimento({
 
             <div className="space-y-2">
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Contrato *</label>
-              <select
+              <SearchableSelect
                 value={formData.contrato}
                 onChange={(e) => setFormData({ ...formData, contrato: e.target.value, os: '', objetoOs: '', objetoOsCodigo: '', origemAtividade: '' })}
                 disabled={Boolean(lockedContractCode)}
@@ -402,12 +403,12 @@ export default function Preenchimento({
                     </option>
                   );
                 })}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div className="space-y-2">
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">OS *</label>
-              <select
+              <SearchableSelect
                 value={formData.os}
                 onChange={(e) => setFormData({ ...formData, os: e.target.value, objetoOs: '', objetoOsCodigo: '', origemAtividade: '' })}
                 className={`w-full h-11 px-3 bg-[#F9FAFB] border ${formData.os ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'} rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer`}
@@ -422,12 +423,12 @@ export default function Preenchimento({
                     </option>
                   );
                 })}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div className="space-y-2 md:col-span-2">
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Atividade *</label>
-              <select
+              <SearchableSelect
                 value={formData.objetoOsCodigo}
                 onChange={(e) => {
                   const selected = filteredItemOptions.find((item) => normalizeText(getItemCode(item)) === normalizeText(e.target.value));
@@ -450,12 +451,12 @@ export default function Preenchimento({
                     </option>
                   );
                 })}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div className="space-y-2">
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Disciplina *</label>
-              <select
+              <SearchableSelect
                 value={formData.disciplina}
                 onChange={(e) => setFormData({ ...formData, disciplina: e.target.value, origemAtividade: '' })}
                 className="w-full h-11 px-3 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer"
@@ -467,7 +468,7 @@ export default function Preenchimento({
                     {disciplina}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
           </div>
 

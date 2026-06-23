@@ -1,3 +1,4 @@
+import SearchableSelect from './SearchableSelect';
 import React from 'react';
 import { ChevronRight, Plus, Trash2, Users } from 'lucide-react';
 import type { TerceirizadaRecord } from './Administracao';
@@ -70,7 +71,7 @@ export default function TerceirizadasCadastro({
 
           <div>
             <label className="bentham-label">Disciplina</label>
-            <select
+            <SearchableSelect
               value={disciplina}
               onChange={(e) => setDisciplina(e.target.value)}
               className="bentham-select"
@@ -81,7 +82,7 @@ export default function TerceirizadasCadastro({
                   {item}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           <button

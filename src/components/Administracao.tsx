@@ -1,3 +1,5 @@
+import SearchableSelect from './SearchableSelect';
+import SearchableMultiSelect from './SearchableMultiSelect';
 import React from 'react';
 import {
   Check,
@@ -178,52 +180,15 @@ function DisciplineMultiSelect({
   options: string[];
   onChange: (nextValue: string[]) => void;
 }) {
-  const selected = Array.isArray(value) ? value : [];
-  const selectedPreview = selected.length > 0 ? selected.slice(0, 2).join(' | ') : 'Selecionar';
-
-  const toggleValue = (item: string) => {
-    const exists = selected.includes(item);
-    const next = exists ? selected.filter((entry) => entry !== item) : [...selected, item];
-    onChange(next);
-  };
-
   return (
-    <details className="group relative">
-      <summary className="h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center justify-between gap-3 cursor-pointer list-none hover:border-[#F05D28] transition-colors [&::-webkit-details-marker]:hidden">
-        <span className={`min-w-0 flex-1 text-[13px] font-medium truncate ${selected.length > 0 ? 'text-[#2D2D2D]' : 'text-[#9CA3AF]'}`}>
-          {selected.length > 0 ? `${selectedPreview}${selected.length > 2 ? ` +${selected.length - 2}` : ''}` : 'Selecionar'}
-        </span>
-        <span className="shrink-0 text-[11px] font-bold text-[#757575]">
-          {selected.length || 0}
-        </span>
-      </summary>
-
-      <div className="absolute z-20 mt-2 w-full min-w-[280px] rounded-2xl border border-[#E5E7EB] bg-white shadow-xl shadow-black/5 p-2 max-h-[280px] overflow-y-auto">
-        {options.length === 0 && (
-          <div className="px-3 py-2 text-[12px] text-[#757575]">
-            Nenhuma disciplina disponivel.
-          </div>
-        )}
-
-        {options.map((item) => {
-          const checked = selected.includes(item);
-          return (
-            <label
-              key={item}
-              className="flex items-start justify-between gap-3 rounded-xl px-3 py-2.5 hover:bg-[#F9FAFB] cursor-pointer transition-colors"
-            >
-              <span className="text-[12px] font-medium text-[#2D2D2D] leading-tight">{item}</span>
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={() => toggleValue(item)}
-                className="w-4 h-4 accent-[#F05D28] cursor-pointer shrink-0 mt-0.5"
-              />
-            </label>
-          );
-        })}
-      </div>
-    </details>
+    <SearchableMultiSelect
+      value={Array.isArray(value) ? value : []}
+      options={options}
+      onChange={onChange}
+      placeholder="Selecionar"
+      emptyMessage="Nenhuma disciplina disponivel."
+      className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28] placeholder:text-[#9CA3AF]"
+    />
   );
 }
 
@@ -804,7 +769,7 @@ function TerceirizadasManager({
 
           <div>
             <label className="bentham-label">Disciplina</label>
-            <select
+            <SearchableSelect
               value={disciplina}
               onChange={(e) => setDisciplina(e.target.value)}
               className="bentham-select"
@@ -815,7 +780,7 @@ function TerceirizadasManager({
                   {item}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           <button
@@ -1088,7 +1053,7 @@ export default function Administracao({
 
           <div>
             <label className="bentham-label">Filtrar disciplina</label>
-            <select
+            <SearchableSelect
               value={disciplinaFiltro}
               onChange={(e) => setDisciplinaFiltro(e.target.value)}
               className="bentham-select"
@@ -1099,12 +1064,12 @@ export default function Administracao({
                   {disciplina}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           <div>
             <label className="bentham-label">Filtrar cargo</label>
-            <select
+            <SearchableSelect
               value={cargoFiltro}
               onChange={(e) => setCargoFiltro(e.target.value)}
               className="bentham-select"
@@ -1115,7 +1080,7 @@ export default function Administracao({
                   {cargo}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           <button
@@ -1218,7 +1183,7 @@ export default function Administracao({
 
                 <div className="flex flex-col gap-1.5">
                   <label className="bentham-label">Cargo</label>
-                  <select
+                  <SearchableSelect
                     className="bentham-select"
                     value={user.cargo}
                     onChange={(e) => onUpdateUsuario(user.id, { cargo: e.target.value })}
@@ -1229,12 +1194,12 @@ export default function Administracao({
                         {cargo}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
                   <label className="bentham-label">Alocação</label>
-                  <select
+                  <SearchableSelect
                     className="bentham-select"
                     value={user.alocacao}
                     onChange={(e) => onUpdateUsuario(user.id, { alocacao: e.target.value })}
@@ -1245,12 +1210,12 @@ export default function Administracao({
                         {alocacao}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
                   <label className="bentham-label">Contrato</label>
-                  <select
+                  <SearchableSelect
                     className="bentham-select"
                     value={user.contrato}
                     onChange={(e) => onUpdateUsuario(user.id, { contrato: e.target.value })}
@@ -1261,7 +1226,7 @@ export default function Administracao({
                         {contrato.nome}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
@@ -1392,50 +1357,50 @@ export default function Administracao({
 
             <div className="space-y-1">
               <label className="text-[12px] font-medium text-[#757575]">Cargo</label>
-              <select
+              <SearchableSelect
                 value={preRegCargo}
                 onChange={(e) => setPreRegCargo(e.target.value)}
                 className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
               >
                 <option value="">Selecionar cargo</option>
                 {cargos.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div className="space-y-1">
               <label className="text-[12px] font-medium text-[#757575]">Disciplina</label>
-              <select
+              <SearchableSelect
                 value={preRegDisciplina}
                 onChange={(e) => setPreRegDisciplina(e.target.value)}
                 className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
               >
                 <option value="">Selecionar disciplina</option>
                 {disciplinas.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div className="space-y-1">
               <label className="text-[12px] font-medium text-[#757575]">Alocação (opcional)</label>
-              <select
+              <SearchableSelect
                 value={preRegAlocacao}
                 onChange={(e) => setPreRegAlocacao(e.target.value)}
                 className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
               >
                 <option value="">Nenhuma</option>
                 {alocacoes.map((a) => <option key={a} value={a}>{a}</option>)}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div className="space-y-1">
               <label className="text-[12px] font-medium text-[#757575]">Contrato (opcional)</label>
-              <select
+              <SearchableSelect
                 value={preRegContrato}
                 onChange={(e) => setPreRegContrato(e.target.value)}
                 className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
               >
                 <option value="">Nenhum</option>
                 {contratos.map((c) => <option key={c.id} value={c.id}>{c.nome || c.id}</option>)}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div className="flex items-end">

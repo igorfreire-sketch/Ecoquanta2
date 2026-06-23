@@ -1,4 +1,5 @@
 import React, { useDeferredValue, useMemo, useState } from 'react';
+import SearchableSelect from '../SearchableSelect';
 import {
   AlertTriangle,
   Building2,
@@ -791,7 +792,7 @@ export default function Contrato({
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(220px,280px)_minmax(220px,280px)_minmax(0,1fr)] gap-4">
             <div>
               <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Contrato</label>
-              <select
+              <SearchableSelect
                 value={selectedContract}
                 disabled={locked}
                 onChange={(event) => {
@@ -806,12 +807,12 @@ export default function Contrato({
                     {contract.nome || contract.id}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div>
               <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">OS</label>
-              <select
+              <SearchableSelect
                 value={selectedOs}
                 onChange={(event) => setSelectedOs(event.target.value)}
                 className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none"
@@ -822,7 +823,7 @@ export default function Contrato({
                     {os.nome || os.codigo}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div>
@@ -867,7 +868,7 @@ export default function Contrato({
                 <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Ordens de Serviço</h3>
               </div>
               {!locked && (
-                <select
+                <SearchableSelect
                   value={selectedContract}
                   onChange={(e) => setSelectedContract(e.target.value)}
                   className="h-9 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[12px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
@@ -876,7 +877,7 @@ export default function Contrato({
                   {contracts.map((c) => (
                     <option key={c.id} value={c.id}>{c.nome || c.id}</option>
                   ))}
-                </select>
+                </SearchableSelect>
               )}
             </div>
             <div className="divide-y divide-[#E5E7EB] xl:overflow-y-auto xl:max-h-[calc(100vh-14rem)]">
@@ -945,7 +946,7 @@ export default function Contrato({
                 <div className="space-y-3">
                   <div>
                     <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Tipo de Projeto</label>
-                    <select
+                    <SearchableSelect
                       value={osDraft.tipoProjeto}
                       onChange={(e) => setOsDraft((prev) => prev ? { ...prev, tipoProjeto: e.target.value } : prev)}
                       className="mt-1 w-full h-10 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
@@ -953,11 +954,11 @@ export default function Contrato({
                       {TIPO_PROJETO_OPTIONS.map((opt) => (
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Tipo de Licitação</label>
-                    <select
+                    <SearchableSelect
                       value={osDraft.tipoLicitacao}
                       onChange={(e) => setOsDraft((prev) => prev ? { ...prev, tipoLicitacao: e.target.value } : prev)}
                       className="mt-1 w-full h-10 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
@@ -965,7 +966,7 @@ export default function Contrato({
                       {TIPO_LICITACAO_OPTIONS.map((opt) => (
                         <option key={opt} value={opt}>{opt || 'Não definido'}</option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Responsável</label>
@@ -1204,7 +1205,7 @@ export default function Contrato({
 
               <div>
                 <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">OS impactada</label>
-                <select
+                <SearchableSelect
                   value={interferenciaDraft.osImpactada}
                   onChange={(event) => setInterferenciaDraft((prev) => ({ ...prev, osImpactada: event.target.value }))}
                   className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] px-3 text-[13px] font-medium outline-none focus:border-[#F05D28]"
@@ -1215,7 +1216,7 @@ export default function Contrato({
                       {os.codigo && os.nome && os.nome !== os.codigo ? `${os.codigo} - ${os.nome}` : os.nome || os.codigo}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
 
               <div>

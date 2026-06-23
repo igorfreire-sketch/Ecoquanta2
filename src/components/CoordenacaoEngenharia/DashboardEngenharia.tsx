@@ -1,3 +1,4 @@
+import SearchableSelect from '../SearchableSelect';
 import React from 'react';
 import {
   Search,
@@ -676,13 +677,13 @@ function FilterField({
   return (
     <div className="space-y-1.5">
       <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">{label}</label>
-      <select
+      <SearchableSelect
         className="w-full h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[12px] font-semibold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
         {children}
-      </select>
+      </SearchableSelect>
     </div>
   );
 }

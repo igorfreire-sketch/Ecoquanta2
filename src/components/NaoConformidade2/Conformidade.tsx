@@ -1,3 +1,4 @@
+import SearchableSelect from '../SearchableSelect';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Bar,
@@ -257,7 +258,7 @@ function Dashboard({
         <div className="bg-white border border-[#E5E7EB] rounded-xl p-5 shadow-sm">
           <label className="block text-[11px] font-bold text-[#757575] uppercase tracking-[1px] mb-3">FILTRAR POR CONTRATO</label>
           <div className="relative mb-4">
-            <select
+            <SearchableSelect
               value={selectedContract}
               onChange={(event) => {
                 setSelectedContract(event.target.value);
@@ -275,13 +276,13 @@ function Dashboard({
                   </option>
                 );
               })}
-            </select>
+            </SearchableSelect>
             <ChevronRight size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#757575] pointer-events-none rotate-90" />
           </div>
 
           <label className="block text-[11px] font-bold text-[#757575] uppercase tracking-[1px] mb-3">FILTRAR POR OS</label>
           <div className="relative">
-            <select
+            <SearchableSelect
               value={selectedOs}
               onChange={(event) => setSelectedOs(event.target.value)}
               className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-[14px] font-medium text-[#2D2D2D] appearance-none focus:border-[#F05D28] focus:ring-2 focus:ring-[#F05D28]/20 outline-none transition-all cursor-pointer"
@@ -295,7 +296,7 @@ function Dashboard({
                   </option>
                 );
               })}
-            </select>
+            </SearchableSelect>
             <ChevronRight size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#757575] pointer-events-none rotate-90" />
           </div>
         </div>

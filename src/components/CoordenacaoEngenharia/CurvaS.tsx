@@ -1,3 +1,4 @@
+import SearchableSelect from '../SearchableSelect';
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList
@@ -681,10 +682,10 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
         <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Contrato</label>
-            <select value={selectedContract} disabled={Boolean(normalizeKey(lockedContractCode || ''))} onChange={(e) => { setSelectedContract(e.target.value); setSelectedOsList([]); setOsExpanded(false); setOsSearch(''); }} className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px] disabled:opacity-70">
+            <SearchableSelect value={selectedContract} disabled={Boolean(normalizeKey(lockedContractCode || ''))} onChange={(e) => { setSelectedContract(e.target.value); setSelectedOsList([]); setOsExpanded(false); setOsSearch(''); }} className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px] disabled:opacity-70">
               {!effectiveContractCode && <option value="TODOS">Selecione...</option>}
               {hierarchy.map(c => <option key={c.code} value={c.code}>{c.code} - {c.name}</option>)}
-            </select>
+            </SearchableSelect>
           </div>
           <div ref={osDropdownRef} className="flex flex-col gap-1.5 relative">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Ordem de Serviço</label>
@@ -735,9 +736,9 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Eixo X</label>
-            <select value={viewMode} onChange={(e) => setViewMode(e.target.value)} className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px]">
+            <SearchableSelect value={viewMode} onChange={(e) => setViewMode(e.target.value)} className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px]">
               <option value="mensal">Mensal (MM/YY)</option><option value="semanal">Semanal (DD/MM)</option>
-            </select>
+            </SearchableSelect>
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase flex items-center gap-1"><CalendarIcon size={12}/> Início</label>

@@ -1,3 +1,4 @@
+import SearchableSelect from '../SearchableSelect';
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
@@ -1186,33 +1187,33 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
           <div className="space-y-6">
             <div className="w-full">
               <label className="bentham-label">1. CONTRATO</label>
-              <select className="bentham-select" value={formData.contratoCodigo} disabled={Boolean(String(currentUser.contrato || '').trim())} onChange={(e) => setFormData((prev) => ({ ...prev, contratoCodigo: e.target.value, osCodigo: '', itemCodigo: '', todoId: '' }))}>
+              <SearchableSelect className="bentham-select" value={formData.contratoCodigo} disabled={Boolean(String(currentUser.contrato || '').trim())} onChange={(e) => setFormData((prev) => ({ ...prev, contratoCodigo: e.target.value, osCodigo: '', itemCodigo: '', todoId: '' }))}>
                 <option value="">{String(currentUser.contrato || '').trim() ? 'Contrato fixo' : 'Selecione...'}</option>
                 {contracts.map((item) => (<option key={item.codigo} value={item.codigo}>{item.nome || item.codigo}</option>))}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6">
               <div>
                 <label className="bentham-label">2. OS</label>
-                <select className="bentham-select" value={formData.osCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, osCodigo: e.target.value, itemCodigo: '', todoId: '' }))}>
+                <SearchableSelect className="bentham-select" value={formData.osCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, osCodigo: e.target.value, itemCodigo: '', todoId: '' }))}>
                   <option value="">Selecione...</option>
                   {filteredOs.map((item) => (<option key={item.codigo} value={item.codigo}>{item.nome}</option>))}
-                </select>
+                </SearchableSelect>
               </div>
               <div><label className="bentham-label">3. SETOR</label><input value="Engenharia" className="bentham-input" readOnly /></div>
               <div>
                 <label className="bentham-label">4. ATIVIDADE</label>
-                <select className="bentham-select" value={formData.itemCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, itemCodigo: e.target.value, todoId: '' }))}>
+                <SearchableSelect className="bentham-select" value={formData.itemCodigo} onChange={(e) => setFormData((prev) => ({ ...prev, itemCodigo: e.target.value, todoId: '' }))}>
                   <option value="">{formData.osCodigo ? 'Selecione...' : 'Aguardando OS...'}</option>
                   {filteredItems.map((item) => (<option key={item.codigo} value={item.codigo}>{item.nome}</option>))}
-                </select>
+                </SearchableSelect>
               </div>
               <div>
                 <label className="bentham-label">7. DIFICULDADE</label>
-                <select className="bentham-select" value={formData.dificuldade} onChange={(e) => setFormData((prev) => ({ ...prev, dificuldade: e.target.value as DifficultyLevel }))}>
+                <SearchableSelect className="bentham-select" value={formData.dificuldade} onChange={(e) => setFormData((prev) => ({ ...prev, dificuldade: e.target.value as DifficultyLevel }))}>
                   <option value="">Selecione...</option><option value="Facil">Fácil</option><option value="Moderada">Moderada</option><option value="Dificil">Difícil</option>
-                </select>
+                </SearchableSelect>
               </div>
               <div>
                 <label className="bentham-label">9. % INICIAL</label>
@@ -1352,9 +1353,9 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
                       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                         <div>
                           <label className="bentham-label">AVALIAÇÃO</label>
-                          <select className="bentham-select" value={draft.avaliacaoAtual} onChange={(e) => updatePendingDraft(activity, { avaliacaoAtual: e.target.value as EvaluationType })}>
+                          <SearchableSelect className="bentham-select" value={draft.avaliacaoAtual} onChange={(e) => updatePendingDraft(activity, { avaliacaoAtual: e.target.value as EvaluationType })}>
                             <option value="">Selecione...</option><option value="Dentro do esperado">Dentro do esperado</option><option value="Melhor que o esperado">Melhor que o esperado</option><option value="Pior que o esperado">Pior que o esperado</option><option value="Problema/Bloqueio">Problema/Bloqueio</option>
-                          </select>
+                          </SearchableSelect>
                         </div>
                         <div>
                           <label className="bentham-label">DIFICULDADE</label>

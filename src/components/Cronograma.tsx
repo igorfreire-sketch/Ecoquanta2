@@ -1,3 +1,4 @@
+import SearchableSelect from './SearchableSelect';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, ChevronDown, ChevronRight, Filter, Maximize2, X, AlertTriangle, Clock3, ListChecks } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -1442,7 +1443,7 @@ export default function Cronograma({
               <span className="text-[11px] text-slate-400">{ganttVisibleTasks.length} tarefa(s)</span>
               <label className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.8px] text-slate-600">
                 <span>Escala</span>
-                <select
+                <SearchableSelect
                   value={ganttScaleMode}
                   onChange={(event) => setGanttScaleMode(event.target.value as GanttScaleMode)}
                   className="bg-transparent text-[11px] font-black uppercase tracking-[0.8px] text-[#334155] outline-none"
@@ -1451,7 +1452,7 @@ export default function Cronograma({
                   <option value="week">Semanas</option>
                   <option value="month">Meses</option>
                   <option value="year">Anos</option>
-                </select>
+                </SearchableSelect>
               </label>
             </div>
             <button
@@ -1910,7 +1911,7 @@ export default function Cronograma({
           <div>
             <label className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">Contrato</label>
             <div className="relative mt-1.5">
-              <select
+              <SearchableSelect
                 value={contractFilter}
                 disabled={Boolean(normalizeText(lockedContractCode))}
                 onChange={(event) => {
@@ -1925,7 +1926,7 @@ export default function Cronograma({
                     {contract.name || contract.code}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
               <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#757575] pointer-events-none" />
             </div>
           </div>
@@ -1933,7 +1934,7 @@ export default function Cronograma({
           <div>
             <label className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">OS</label>
             <div className="relative mt-1.5">
-              <select
+              <SearchableSelect
                 value={osFilter}
                 onChange={(event) => setOsFilter(event.target.value)}
                 className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-[14px] font-medium text-[#2D2D2D] appearance-none focus:border-[#F05D28] focus:ring-2 focus:ring-[#F05D28]/20 outline-none"
@@ -1946,7 +1947,7 @@ export default function Cronograma({
                       {os.name || os.code}
                     </option>
                   ))}
-              </select>
+              </SearchableSelect>
               <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#757575] pointer-events-none" />
             </div>
           </div>
@@ -2038,7 +2039,7 @@ export default function Cronograma({
             <div>
               <label className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">Contrato</label>
               <div className="relative mt-1.5">
-                <select
+                <SearchableSelect
                   value={contractFilter}
                   disabled={Boolean(normalizeText(lockedContractCode))}
                   onChange={(event) => {
@@ -2053,7 +2054,7 @@ export default function Cronograma({
                       {contract.name || contract.code}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
                 <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#757575] pointer-events-none" />
               </div>
             </div>
@@ -2061,7 +2062,7 @@ export default function Cronograma({
             <div>
               <label className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">OS</label>
               <div className="relative mt-1.5">
-                <select
+                <SearchableSelect
                   value={osFilter}
                   onChange={(event) => setOsFilter(event.target.value)}
                   className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-[14px] font-medium text-[#2D2D2D] appearance-none focus:border-[#F05D28] focus:ring-2 focus:ring-[#F05D28]/20 outline-none"
@@ -2074,7 +2075,7 @@ export default function Cronograma({
                         {os.name || os.code}
                       </option>
                     ))}
-                </select>
+                </SearchableSelect>
                 <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#757575] pointer-events-none" />
               </div>
             </div>

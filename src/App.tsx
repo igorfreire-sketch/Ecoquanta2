@@ -2849,7 +2849,7 @@ export default function App() {
             <React.Suspense fallback={<TabLoadingFallback />}>
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'atividades'
-                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines autoSelectUserDisciplineFilter disciplineFilterEnabled />
+                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines autoSelectUserDisciplineFilter disciplineFilterEnabled splitOsCardsByDiscipline />
                   : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />}

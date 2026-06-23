@@ -1,3 +1,4 @@
+import SearchableSelect from './SearchableSelect';
 ﻿import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
@@ -125,6 +126,8 @@ interface AtividadesProps {
   filtersAlwaysVisible?: boolean;
   disciplineFilterEnabled?: boolean;
   autoSelectUserDisciplineFilter?: boolean;
+  // Área Técnica: divide os cards de OS por disciplina (1 card por disciplina, OS repete).
+  splitOsCardsByDiscipline?: boolean;
 }
 
 const STORAGE_KEY = 'quanta_producao_tecnica_cards';
@@ -1565,7 +1568,7 @@ function FilterSelect({
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#757575]">{label}</label>
-      <select
+      <SearchableSelect
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="h-11 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none transition-colors focus:border-[#F05D28]"
@@ -1581,7 +1584,7 @@ function FilterSelect({
             })()}
           </option>
         ))}
-      </select>
+      </SearchableSelect>
     </div>
   );
 }
@@ -1614,7 +1617,11 @@ function FilterMultiSelectDropdown({
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, []);
 
+  const [search, setSearch] = useState('');
   const selectedLabels = options.filter((option) => value.includes(option));
+  const filteredOptions = search
+    ? options.filter((option) => normalizeText(getDisciplineFilterLabel(option)).includes(normalizeText(search)))
+    : options;
   const toggleValue = (option: string) => {
     if (value.includes(option)) {
       onChange(value.filter((item) => item !== option));
@@ -1652,13 +1659,23 @@ function FilterMultiSelectDropdown({
           exit={{ opacity: 0, y: -6, scale: 0.98 }}
           className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_20px_48px_rgba(15,76,129,0.14)]"
         >
+          <div className="border-b border-[#F1F5F9] p-2">
+            <input
+              type="text"
+              autoFocus
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Pesquisar..."
+              className="w-full rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] placeholder:text-[#94A3B8]"
+            />
+          </div>
           <div className="max-h-[280px] overflow-y-auto p-2">
-            {options.length === 0 ? (
+            {options.length === 0 || filteredOptions.length === 0 ? (
               <div className="rounded-xl bg-[#F8FAFC] px-3 py-3 text-[12px] text-[#94A3B8]">
                 Nenhuma disciplina encontrada.
               </div>
             ) : (
-              options.map((option) => {
+              filteredOptions.map((option) => {
                 const checked = value.includes(option);
                 return (
                   <button
@@ -1717,9 +1734,13 @@ function MultiCheckboxDropdown({
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, []);
 
+  const [search, setSearch] = useState('');
   const selectedLabels = options
     .filter((option) => value.includes(option.nome))
     .map((option) => option.nome);
+  const filteredOptions = search
+    ? options.filter((option) => normalizeText(`${option.nome} ${option.email} ${option.disciplina}`).includes(normalizeText(search)))
+    : options;
 
   const toggleValue = (nome: string) => {
     if (value.includes(nome)) {
@@ -1759,13 +1780,23 @@ function MultiCheckboxDropdown({
           exit={{ opacity: 0, y: -6, scale: 0.98 }}
           className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_20px_48px_rgba(15,76,129,0.14)]"
         >
+          <div className="border-b border-[#F1F5F9] p-2">
+            <input
+              type="text"
+              autoFocus
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Pesquisar por nome ou e-mail..."
+              className="w-full rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] placeholder:text-[#94A3B8]"
+            />
+          </div>
           <div className="max-h-[280px] overflow-y-auto p-2">
-            {options.length === 0 ? (
+            {options.length === 0 || filteredOptions.length === 0 ? (
               <div className="rounded-xl bg-[#F8FAFC] px-3 py-3 text-[12px] text-[#94A3B8]">
                 Nenhuma pessoa encontrada neste setor.
               </div>
             ) : (
-              options.map((option) => {
+              filteredOptions.map((option) => {
                 const checked = value.includes(option.nome);
                 return (
                   <button
@@ -2463,13 +2494,33 @@ function ProductionCard({
   );
 }
 
-type OsActivityGroup = { osCodigo: string; osNome: string; activities: EngineeringActivity[] };
+type OsActivityGroup = { key: string; osCodigo: string; osNome: string; disciplina?: string; activities: EngineeringActivity[] };
 
-const buildOsGroupsForColumn = (activities: EngineeringActivity[]): OsActivityGroup[] => {
+const buildOsGroupsForColumn = (activities: EngineeringActivity[], splitByDiscipline = false): OsActivityGroup[] => {
   const groupMap = new Map<string, OsActivityGroup>();
   activities.forEach((activity) => {
+    if (splitByDiscipline) {
+      // Área Técnica: a OS se repete — um card por disciplina citada nela.
+      const rawList = Array.isArray(activity.disciplinas) && activity.disciplinas.length > 0
+        ? activity.disciplinas
+        : splitDisciplinas(activity.disciplina);
+      const meaningful = rawList.filter(isMeaningfulDisciplineToken);
+      const disciplinas = meaningful.length > 0 ? meaningful : [activity.disciplina || 'Sem disciplina'];
+      const seenForActivity = new Set<string>();
+      disciplinas.forEach((disc) => {
+        const discKey = normalizeText(disc);
+        if (seenForActivity.has(discKey)) return;
+        seenForActivity.add(discKey);
+        const key = `${normalizeText(activity.osCodigo)}|${discKey}`;
+        if (!groupMap.has(key)) {
+          groupMap.set(key, { key, osCodigo: activity.osCodigo, osNome: activity.osNome, disciplina: disc, activities: [] });
+        }
+        groupMap.get(key)!.activities.push(activity);
+      });
+      return;
+    }
     const key = normalizeText(activity.osCodigo);
-    if (!groupMap.has(key)) groupMap.set(key, { osCodigo: activity.osCodigo, osNome: activity.osNome, activities: [] });
+    if (!groupMap.has(key)) groupMap.set(key, { key, osCodigo: activity.osCodigo, osNome: activity.osNome, activities: [] });
     groupMap.get(key)!.activities.push(activity);
   });
   return Array.from(groupMap.values());
@@ -2487,13 +2538,17 @@ function OsGroupCard({ group, tipoLicitacao, onClick }: { group: OsActivityGroup
   const displayTitle = stripLodFromTitle(group.osNome, displayCode) || group.osNome;
 
   const uniqueDisciplines = useMemo(() => {
+    // Modo Área Técnica: o card representa uma única disciplina da OS.
+    if (group.disciplina) {
+      return [{ disciplina: group.disciplina, lodAtual: group.activities[0].lodAtual }];
+    }
     const seen = new Map<string, { disciplina: string; lodAtual: LodLevel }>();
     group.activities.forEach((a) => {
       const key = normalizeText(a.disciplina || a.disciplinas?.[0] || '');
       if (!seen.has(key)) seen.set(key, { disciplina: a.disciplina || a.disciplinas?.[0] || '', lodAtual: a.lodAtual });
     });
     return Array.from(seen.values());
-  }, [group.activities]);
+  }, [group.activities, group.disciplina]);
 
   const MAX_VISIBLE = 5;
   const visibleDiscs = uniqueDisciplines.slice(0, MAX_VISIBLE);
@@ -2591,6 +2646,7 @@ export default function Atividades({
   filtersAlwaysVisible = false,
   disciplineFilterEnabled = true,
   autoSelectUserDisciplineFilter = false,
+  splitOsCardsByDiscipline = false,
 }: AtividadesProps) {
   const sourceActivities = useMemo(() => buildActivitiesFromEap(preloadedData, currentUser), [preloadedData, currentUser]);
   const eapRegistry = useMemo(() => getUnifiedEapRegistry(preloadedData), [preloadedData]);
@@ -3376,8 +3432,8 @@ export default function Atividades({
                       </p>
                     </div>
                   ) : showAllDisciplines ? (
-                    buildOsGroupsForColumn(column.activities).map((group) => (
-                      <React.Fragment key={group.osCodigo}>
+                    buildOsGroupsForColumn(column.activities, splitOsCardsByDiscipline).map((group) => (
+                      <React.Fragment key={group.key}>
                         <OsGroupCard
                           group={group}
                           tipoLicitacao={osSettingsMap[group.osCodigo] || ''}
@@ -3516,7 +3572,7 @@ export default function Atividades({
 
                     <div>
                       <label className="bentham-label">Status da atividade *</label>
-                      <select
+                      <SearchableSelect
                         value={selectedActivity.statusDaAtividade}
                         onChange={(event) => updateSelectedActivity({ statusDaAtividade: event.target.value as LeaderActivityStatus, leaderEdited: true, status: 'Em execução' })}
                         className="bentham-select h-10 text-[13px]"
@@ -3525,12 +3581,12 @@ export default function Atividades({
                         <option value="Bom">Bom</option>
                         <option value="Regular">Regular</option>
                         <option value="Problema">Problema</option>
-                      </select>
+                      </SearchableSelect>
                     </div>
 
                     <div>
                       <label className="bentham-label">Dificuldade da atividade *</label>
-                      <select
+                      <SearchableSelect
                         value={selectedActivity.dificuldadeAtividade}
                         onChange={(event) => updateSelectedActivity({ dificuldadeAtividade: event.target.value as LeaderDifficulty, leaderEdited: true, status: 'Em execução' })}
                         className="bentham-select h-10 text-[13px]"
@@ -3539,7 +3595,7 @@ export default function Atividades({
                         <option value="Difícil">Difícil</option>
                         <option value="Regular">Regular</option>
                         <option value="Fácil">Fácil</option>
-                      </select>
+                      </SearchableSelect>
                     </div>
 
                     <div>
@@ -3691,49 +3747,49 @@ export default function Atividades({
 
                       <div>
                         <label className="bentham-label">Responsável</label>
-                        <select value={importResponsavel} onChange={(event) => setImportResponsavel(event.target.value)} className="bentham-select">
+                        <SearchableSelect value={importResponsavel} onChange={(event) => setImportResponsavel(event.target.value)} className="bentham-select">
                           {RESPONSAVEIS.map((name) => (
                             <option key={name} value={name}>
                               {name}
                             </option>
                           ))}
-                        </select>
+                        </SearchableSelect>
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="bentham-label">Etapa técnica</label>
-                          <select value={importEtapa} onChange={(event) => setImportEtapa(event.target.value as TechnicalStep)} className="bentham-select">
+                          <SearchableSelect value={importEtapa} onChange={(event) => setImportEtapa(event.target.value as TechnicalStep)} className="bentham-select">
                             {TECHNICAL_STEPS.map((step) => (
                               <option key={step} value={step}>
                                 {step}
                               </option>
                             ))}
-                          </select>
+                          </SearchableSelect>
                         </div>
 
                         <div>
                           <label className="bentham-label">Prioridade</label>
-                          <select value={importPrioridade} onChange={(event) => setImportPrioridade(event.target.value as PriorityLevel)} className="bentham-select">
+                          <SearchableSelect value={importPrioridade} onChange={(event) => setImportPrioridade(event.target.value as PriorityLevel)} className="bentham-select">
                             {PRIORITY_OPTIONS.map((priority) => (
                               <option key={priority} value={priority}>
                                 {priority}
                               </option>
                             ))}
-                          </select>
+                          </SearchableSelect>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="bentham-label">LOD alvo da semana</label>
-                          <select value={importLodAlvo} onChange={(event) => setImportLodAlvo(Number(event.target.value) as LodLevel)} className="bentham-select">
+                          <SearchableSelect value={importLodAlvo} onChange={(event) => setImportLodAlvo(Number(event.target.value) as LodLevel)} className="bentham-select">
                             {LOD_OPTIONS.map((lod) => (
                               <option key={lod} value={lod}>
                                 LOD {lod}
                               </option>
                             ))}
-                          </select>
+                          </SearchableSelect>
                         </div>
 
                         <div className="rounded-2xl border border-[#D6EEEA] bg-[#F4FBFA] p-3">

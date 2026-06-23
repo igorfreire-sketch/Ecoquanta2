@@ -544,6 +544,206 @@ function createSessionVersion() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+// ---------------------------------------------------------------------------
+// Recuperacao de acesso (pos troca de banco que apagou o appData/auth)
+// ---------------------------------------------------------------------------
+// O hash de senha mudou de formato ao longo do tempo:
+//   - LEGADO (planilha antiga): "<saltHex>:<sha256Hex>", onde o hash e
+//     SHA-256(salt + '|' + senha). Ver makePasswordHash_/verifyPassword_ legados.
+//   - ATUAL: "sha256:<hex>" (SHA-256 da senha, sem salt).
+// O login precisa aceitar AMBOS para que as senhas antigas continuem valendo.
+
+// Verifica a senha contra um hash armazenado, suportando os dois formatos.
+async function hashSaltedLegacy(password: string, salt: string) {
+  if (!globalThis.crypto?.subtle) throw new Error('Criptografia indisponivel no navegador.');
+  const buffer = new TextEncoder().encode(`${salt}|${String(password ?? '')}`);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyPasswordHash(password: string, storedHash: string) {
+  const stored = String(storedHash || '').trim();
+  if (!stored) return false;
+  if (stored.startsWith('sha256:')) {
+    return (await hashPasswordLikeAppsScript(password)) === stored;
+  }
+  const parts = stored.split(':');
+  if (parts.length === 2 && /^[0-9a-f]+$/i.test(parts[0]) && /^[0-9a-f]{64}$/i.test(parts[1])) {
+    return (await hashSaltedLegacy(password, parts[0])) === parts[1].toLowerCase();
+  }
+  return false;
+}
+
+// Admin(s) "bootstrap": ao entrar com o e-mail + a senha-mestre abaixo, o usuario e
+// autenticado e TODA a lista de recuperacao (RECOVERY_USERS) e regravada no Firebase,
+// restaurando os logins perdidos. So serve como gatilho/senha de recuperacao.
+// IMPORTANTE: a senha aqui e PROVISORIA. Apos recuperar o acesso e trocar a senha,
+// REMOVA esta entrada (exige novo build), senao ela continua valendo como recuperacao.
+const BOOTSTRAP_ADMINS: Array<{ email: string; passwordHash: string }> = [
+  {
+    email: 'igor.freire@quantaconsultoria.com',
+    // sha256 de "19061994" (formato atual, sem salt).
+    passwordHash: 'sha256:ee6fc628799552ba839baf9a3cf2912922063908e72e976f864e7228476274a2',
+  },
+];
+
+type RecoveryAuthRecord = {
+  id: string;
+  data: string;
+  nome: string;
+  email: string;
+  role: string;
+  cargo: string;
+  disciplina: string;
+  disciplinas: string[];
+  contrato: string;
+  contract: string;
+  status: string;
+  alocacao: string;
+  allowedTabs: string[];
+  abas: string[];
+  isAdmin: boolean;
+  online: boolean;
+  onlyThirdParty: boolean;
+  showInCharts: boolean;
+  sessionVersion: string;
+  passwordHash: string;
+  resetCode: string;
+  resetExpires: string;
+  lastSeen: string;
+};
+
+function makeRecoveryUser(input: {
+  data: string;
+  nome: string;
+  email: string;
+  role: string;
+  disciplinas: string[];
+  abas: string[];
+  passwordHash: string;
+  isAdmin: boolean;
+  alocacao?: string;
+  contrato?: string;
+  sessionVersion: string;
+  lastSeen?: string;
+}): RecoveryAuthRecord {
+  return {
+    id: input.email,
+    data: input.data,
+    nome: input.nome,
+    email: input.email,
+    role: input.role,
+    cargo: input.role,
+    disciplina: input.disciplinas[0] || '',
+    disciplinas: input.disciplinas,
+    contrato: input.contrato || '',
+    contract: input.contrato || '',
+    status: 'approved',
+    alocacao: input.alocacao || '',
+    allowedTabs: input.abas,
+    abas: input.abas,
+    isAdmin: input.isAdmin,
+    online: false,
+    onlyThirdParty: false,
+    showInCharts: true,
+    sessionVersion: input.sessionVersion,
+    passwordHash: input.passwordHash,
+    resetCode: '',
+    resetExpires: '',
+    lastSeen: input.lastSeen || '',
+  };
+}
+
+// Backup dos usuarios que existiam antes da troca de banco. As senhas continuam sendo as
+// originais (hash legado salt:hash), exceto o Igor, cuja senha foi definida como "19061994".
+const RECOVERY_USERS: RecoveryAuthRecord[] = [
+  makeRecoveryUser({
+    data: '10/03/2026, 12:36:30', nome: 'Igor Freire', email: 'igor.freire@quantaconsultoria.com',
+    role: 'Líder', disciplinas: ['Desenvolvimento', 'ELET - Elétrica'],
+    abas: ['registro', 'controle', 'alocacoes', 'contratos', 'nc', 'cronograma', 'administracao', 'contrato', 'nc2'],
+    passwordHash: 'sha256:ee6fc628799552ba839baf9a3cf2912922063908e72e976f864e7228476274a2',
+    isAdmin: true, sessionVersion: '1780325717969-75fe1236', lastSeen: '1780682464638',
+  }),
+  makeRecoveryUser({
+    data: '10/03/2026, 13:21:12', nome: 'Gabriel Silveira Meurer', email: 'gabriel.meurer@quantaconsultoria.com',
+    role: 'Líder', disciplinas: ['Planejamento'],
+    abas: ['registro', 'controle', 'contratos', 'nc', 'cronograma', 'contrato'],
+    passwordHash: 'd2708308678f4e83:7604009e361193908c1b7d96744075a04c31b653e8da7e11893e63c47f217457',
+    isAdmin: true, sessionVersion: '1778766809960-c0baa1b3', lastSeen: '1778777006603',
+  }),
+  makeRecoveryUser({
+    data: '10/03/2026, 14:09:09', nome: 'Hágata Almeida', email: 'hagata.oliveira@quantaconsultoria.com',
+    role: 'Líder', disciplinas: ['Desenvolvimento'],
+    abas: ['administracao', 'cronograma', 'nc', 'contratos', 'controle', 'registro', 'contrato'],
+    passwordHash: '831b458a9ba24848:5fccaeb664c79aec0d3906a3735822382faf30528adfd0b2bc78c22f050f729b',
+    isAdmin: true, sessionVersion: '1778246707151-8579b52f', lastSeen: '1779286086051',
+  }),
+  makeRecoveryUser({
+    data: '11/03/2026, 17:27:27', nome: 'Vinícius Delgado', email: 'vinicius.delgado@quantaconsultoria.com',
+    role: 'Coordenador De Contrato', disciplinas: [],
+    abas: ['registro', 'controle', 'contratos', 'nc', 'cronograma', 'administracao', 'contrato'],
+    passwordHash: '59f296ec6be64cb4:f68f0ef604096f8a9a9908d8863efed137436a2603d37183bdfc36b429783e49',
+    isAdmin: true, sessionVersion: '1779216845131-f0cba1f5', lastSeen: '1780071770866',
+  }),
+  makeRecoveryUser({
+    data: '30/04/2026, 16:57:29', nome: 'coord.engenharia', email: 'coord.engenharia@quantaconsultoria.com',
+    role: 'Coordenador', disciplinas: ['ENG - Engenharia'],
+    abas: ['controle', 'contrato'],
+    passwordHash: 'a2eb40f5261e49a2:4a32b043851bd947b4f111ee38aa550b2c2b0373c74f3601ef6ebe017a9bed2d',
+    isAdmin: false, sessionVersion: '1777586730091-c12e029a',
+  }),
+  makeRecoveryUser({
+    data: '18/05/2026, 10:43:47', nome: 'Tarcísio Merino Marques', email: 'tarcisio.marques@quantaconsultoria.com',
+    role: '', disciplinas: [], abas: [],
+    passwordHash: '46476ca49a9e4eed:962d4fc28cb3b34132fd38933ce6881d911c98ddfed29a74b0b376cf9e0e6887',
+    isAdmin: false, sessionVersion: '1779118866110-244036d7',
+  }),
+  makeRecoveryUser({
+    data: '29/05/2026, 11:04:48', nome: 'Matheus de Souza Ferreira', email: 'matheus.ferreira@quantaconsultoria.com',
+    role: '', disciplinas: ['DREN - Drenagem', 'HIDA - Hidráulica', 'HIDS - Hidrossanitário'],
+    abas: ['registro'],
+    passwordHash: '6762c93f11974732:821de785e41fd676ef90b2e6fff70a9e7e6fa2e5dc0866f7d3399777efe31b23',
+    isAdmin: false, alocacao: 'Rio de Janeiro', sessionVersion: '1780086167598-a589949a', lastSeen: '1780086880635',
+  }),
+  makeRecoveryUser({
+    data: '29/05/2026, 12:48:14', nome: 'Tiago Ricardo Carlos', email: 'tiago.carlos@quantaconsultoria.com',
+    role: '', disciplinas: ['TERR - Terraplanagem'], abas: ['registro'],
+    passwordHash: '4c43580c32884d88:f4f22c071fe288977378afd34dd00178948c63e97124ff314aeed12dba8fc86c',
+    isAdmin: false, alocacao: 'Rio de Janeiro', sessionVersion: '1780079293145-158af5c9', lastSeen: '1780429461956',
+  }),
+];
+
+// Regrava (merge) os usuarios de recuperacao no appData/auth do Firebase. Preserva quem ja
+// existir no banco (nao sobrescreve cadastros mais novos), exceto os admins bootstrap, cujo
+// registro e forcado para garantir o acesso com a senha-mestre. Best-effort.
+async function seedAuthRecoveryToFirebase() {
+  if (!isFirebaseConfigured()) return;
+  try {
+    const existingAuth = await fetchFirebaseAppData<any>('auth');
+    const byEmail = new Map<string, any>();
+    getAuthUsersList(existingAuth).forEach((item: any) => {
+      const key = normalizeUserText(item?.email || item?.id);
+      if (key) byEmail.set(key, item);
+    });
+    RECOVERY_USERS.forEach((user) => {
+      const key = normalizeUserText(user.email);
+      if (!key) return;
+      const isBootstrap = BOOTSTRAP_ADMINS.some((item) => normalizeUserText(item.email) === key);
+      if (isBootstrap || !byEmail.has(key)) byEmail.set(key, user);
+    });
+    const baseAuth =
+      existingAuth && typeof existingAuth === 'object' && !Array.isArray(existingAuth) ? existingAuth : {};
+    await replaceFirebaseAppData('auth', {
+      ...baseAuth,
+      users: Array.from(byEmail.values()),
+      publishedAt: new Date().toISOString(),
+      source: 'EcoQuanta-Web-Recovery',
+    });
+  } catch (error) {
+    console.error('Falha ao restaurar usuarios no Firebase:', error);
+  }
+}
+
 function createDraftId(prefix: string) {
   try {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}:${crypto.randomUUID()}`;
@@ -2043,8 +2243,7 @@ export default function App() {
       if (matchedUser) {
         const storedHash = String(matchedUser.passwordHash || matchedUser.passwordhash || '').trim();
         if (storedHash) {
-          const typedHash = await hashPasswordLikeAppsScript(password);
-          if (typedHash === storedHash) {
+          if (await verifyPasswordHash(password, storedHash)) {
             const status = normalizeUserText(matchedUser.status || '');
             if (status === 'pending') {
               throw new Error('Seu cadastro ainda esta aguardando aprovacao do administrador.');
@@ -2076,6 +2275,33 @@ export default function App() {
       authErrorMessage = 'E-mail ou senha incorretos.';
     } catch (error) {
       authErrorMessage = error instanceof Error ? error.message : 'E-mail ou senha incorretos.';
+    }
+
+    // Recuperacao de acesso (bootstrap): com a senha-mestre, restaura TODA a lista de
+    // usuarios do backup no Firebase (login/cadastro/reset voltam a funcionar) e entra.
+    const bootstrap = BOOTSTRAP_ADMINS.find((item) => normalizeUserText(item.email) === normalizedEmail);
+    if (bootstrap) {
+      const typedHash = await hashPasswordLikeAppsScript(password);
+      if (typedHash === bootstrap.passwordHash) {
+        await seedAuthRecoveryToFirebase();
+        const authRecord = RECOVERY_USERS.find((item) => normalizeUserText(item.email) === normalizedEmail);
+        if (authRecord) {
+          const user = normalizeUser({
+            ...authRecord,
+            abas: authRecord.allowedTabs,
+            cargo: authRecord.role,
+            role: authRecord.role,
+          });
+          adminAutoLoadAttemptRef.current = false;
+          saveSession(user, rememberMe);
+          setCurrentUser(user);
+          await loadGlobalEnvironment(user, false);
+
+          const firstTab = getFirstAccessibleTab(user, roleTabPermissions);
+          if (firstTab) setActiveTab(firstTab);
+          return;
+        }
+      }
     }
 
     const fallbackResponse = await postToAppsScript<GenericResponse & { user?: any }>({

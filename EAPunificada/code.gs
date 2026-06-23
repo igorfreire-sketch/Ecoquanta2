@@ -2350,7 +2350,12 @@ function firebaseForgotPassword_(payload) {
   if (!email) return json_({ success: false, error: 'E-mail invalido.' });
   var state = firebaseReadAuth_();
   var index = firebaseFindUserIndex_(state.users, email);
-  if (index < 0) return json_({ success: true, message: 'Se o e-mail estiver cadastrado, o codigo foi enviado.' });
+  if (index < 0) {
+    // Resposta neutra (anti-enumeracao), mas registra para diagnostico: se o reset
+    // "nao chega", quase sempre e porque o e-mail nao existe no appData/auth.
+    logAuth_(null, 'WARN', 'forgotPassword email nao encontrado no auth', email + ' (total=' + state.users.length + ')');
+    return json_({ success: true, message: 'Se o e-mail estiver cadastrado, o codigo foi enviado.' });
+  }
 
   var user = firebaseNormalizeUser_(state.users[index]);
   var resetCode = randomCode_(6);
@@ -3071,6 +3076,14 @@ function verifyPassword_(password, stored) {
   if (!hash) return false;
   if (hash.indexOf('sha256:') === 0) {
     return makePasswordHash_(password) === hash;
+  }
+  // Formato legado: "<saltHex>:<sha256Hex>" com hash = SHA-256(salt + '|' + senha).
+  var parts = hash.split(':');
+  if (parts.length === 2 && /^[0-9a-fA-F]+$/.test(parts[0]) && /^[0-9a-fA-F]{64}$/.test(parts[1])) {
+    var raw = parts[0] + '|' + String(password || '');
+    var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+    var hex = bytes.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
+    return hex.toLowerCase() === parts[1].toLowerCase();
   }
   return String(password || '') === hash;
 }

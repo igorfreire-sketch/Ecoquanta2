@@ -955,7 +955,8 @@ function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleT
     return userTabs.includes('controle') || userTabs.includes('alocacoes');
   }
   if (tab === 'planejamento') {
-    return userTabs.includes('planejamento') || userTabs.includes('controle');
+    // Planejamento e uma aba propria — NAO deve ser liberada so por ter 'controle'.
+    return userTabs.includes('planejamento');
   }
   if (tab === 'contrato') {
     return userTabs.includes('contrato') || userTabs.includes('contratos');

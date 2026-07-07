@@ -74,6 +74,7 @@ export interface EngineeringActivity {
   observacoes: string;
   dataCriacao: string;
   origemItem?: string;
+  edificio?: string;
   executadoPor: string[];
   statusDaAtividade: LeaderActivityStatus;
   dificuldadeAtividade: LeaderDifficulty;
@@ -1180,6 +1181,17 @@ const buildEapMaps = (preloadedData: any) => {
   const itemNameByCode = buildNameMap(itemOptions);
   const nodeByCode = new Map<string, any>(hierarchyNodes.map((item: any) => [String(item.codigo || '').trim(), item]));
 
+  const edificioPorItem = [
+    preloadedData?.eap?.edificioPorItem,
+    preloadedData?.eap?.data?.edificioPorItem,
+    preloadedData?.edificioPorItem,
+  ].find((item) => item && typeof item === 'object') || {};
+  const edificioByCode = new Map<string, string>(
+    Object.entries(edificioPorItem)
+      .map(([code, value]) => [String(code).trim(), String(value ?? '').trim()] as [string, string])
+      .filter(([, value]) => value)
+  );
+
   [
     preloadedData?.eap?.curvaS?.atual,
     preloadedData?.eap?.data?.curvaS?.atual,
@@ -1190,7 +1202,7 @@ const buildEapMaps = (preloadedData: any) => {
     if (code && name) osNameByCode.set(code, name);
   });
 
-  return { contractNameByCode, osNameByCode, itemNameByCode, nodeByCode, hierarchyNodes };
+  return { contractNameByCode, osNameByCode, itemNameByCode, nodeByCode, hierarchyNodes, edificioByCode };
 };
 
 const findLongestHierarchyMatch = (code: string, namesByCode: Map<string, string>) => {
@@ -1232,7 +1244,7 @@ const getUnifiedEapRegistry = (preloadedData: any) => {
 };
 
 const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProps['currentUser']): EngineeringActivity[] => {
-  const { contractNameByCode, osNameByCode, itemNameByCode } = buildEapMaps(preloadedData);
+  const { contractNameByCode, osNameByCode, itemNameByCode, edificioByCode } = buildEapMaps(preloadedData);
   const knownDisciplineTokens = buildKnownDisciplineTokens(preloadedData, currentUser);
   const rowSources = [
     preloadedData?.eap?.atual,
@@ -1289,6 +1301,7 @@ const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProp
       const lodAtual = extractLodValue(rowName) || inferCurrentLod(300, progressPercent);
       const matchedContract = findLongestHierarchyMatch(code, contractNameByCode);
       const matchedOs = findLongestHierarchyMatch(code, osNameByCode);
+      const matchedEdificio = findLongestHierarchyMatch(code, edificioByCode);
       const contractCode = matchedContract?.codigo || getHierarchyCodePrefix(code, 1) || String(Array.isArray(row) ? row?.[11] : (row as any).contractCode || (row as any).contratoCodigo || '').trim() || codeParts[0] || code;
       const osCode = matchedOs?.codigo || String(Array.isArray(row) ? row?.[10] : (row as any).osCode || (row as any).osCodigo || '').trim() || getHierarchyCodePrefix(code, 2) || (codeParts.length >= 2 ? codeParts.slice(0, 2).join('.') : contractCode);
       const contractNome = contractNameByCode.get(contractCode) || String(Array.isArray(row) ? row?.[12] : (row as any).contractName || (row as any).contratoNome || contractCode).trim();
@@ -1335,6 +1348,7 @@ const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProp
         observacoes: 'Atividade derivada da EAP unificada.',
         dataCriacao: toIsoDate(TODAY),
         origemItem: code,
+        edificio: matchedEdificio?.nome || '',
         executadoPor: [],
         statusDaAtividade: '',
         dificuldadeAtividade: '',
@@ -1436,6 +1450,7 @@ const normalizeActivity = (raw: Partial<EngineeringActivity> & Record<string, un
     observacoes: String(raw.observacoes || 'VisualizaÃ§Ã£o operacional derivada do cronograma/EAP.'),
     dataCriacao: String(raw.dataCriacao || getCurrentWeekKey()),
     origemItem: String(raw.origemItem || ''),
+    edificio: String(raw.edificio || ''),
     itemCodigo: String(raw.itemCodigo || raw.itemCode || raw.origemItem || ''),
     sourceType: normalizeText(String(raw.sourceType || '')) as EngineeringActivity['sourceType'],
     executadoPor: splitMultiValue(raw.executadoPor || raw.profissionais || []),
@@ -1919,6 +1934,10 @@ const osAccentColorMap: Record<string, string> = {
   'OS 053': '#15803D'
 };
 
+const LINKED_DISCIPLINE_GROUPS: string[][] = [
+  ['Estrutura Metálica', 'Estrutura de Concreto'],
+];
+
 const OS_COLOR_PALETTE = [
   '#0F766E', '#166534', '#D97706', '#2563EB', '#7C3AED',
   '#DB2777', '#DC2626', '#EA580C', '#65A30D', '#0284C7',
@@ -1933,6 +1952,55 @@ const getOsAccentColor = (osCode: string): string => {
   }
   return OS_COLOR_PALETTE[hash % OS_COLOR_PALETTE.length];
 };
+
+const BUILDING_COLOR_PALETTE = [
+  '#0EA5E9', '#F59E0B', '#84CC16', '#EC4899', '#8B5CF6',
+  '#14B8A6', '#F43F5E', '#EAB308', '#6366F1', '#22C55E'
+];
+
+const getBuildingAccentColor = (edificio: string): string => {
+  const n = parseInt(edificio, 10);
+  if (Number.isFinite(n) && n > 0) return BUILDING_COLOR_PALETTE[(n - 1) % BUILDING_COLOR_PALETTE.length];
+  let hash = 0;
+  for (let i = 0; i < edificio.length; i++) {
+    hash = (hash * 31 + edificio.charCodeAt(i)) & 0x7fffffff;
+  }
+  return BUILDING_COLOR_PALETTE[hash % BUILDING_COLOR_PALETTE.length];
+};
+
+const getUniqueEdificios = (activities: EngineeringActivity[]): string[] =>
+  Array.from(new Set(activities.map((a) => a.edificio).filter((value): value is string => Boolean(value))));
+
+function BuildingFlagStack({ edificios, compact = false }: { edificios: string[]; compact?: boolean }) {
+  if (edificios.length === 0) return null;
+  const width = compact ? 10 : 16;
+  const height = compact ? 18 : 28;
+  const triangle = compact ? 5 : 8;
+
+  return (
+    <div className="flex items-start" aria-hidden="true">
+      {edificios.map((edificio, index) => (
+        <div
+          key={edificio}
+          className="flex flex-col items-center"
+          style={{ position: 'relative', marginLeft: index === 0 ? 0 : -Math.round(width / 2), zIndex: edificios.length - index }}
+          title={`Edifício ${edificio}`}
+        >
+          <div style={{ height, width, backgroundColor: getBuildingAccentColor(edificio) }} />
+          <div
+            style={{
+              width: 0,
+              height: 0,
+              borderLeft: `${triangle}px solid transparent`,
+              borderRight: `${triangle}px solid transparent`,
+              borderTop: `${triangle}px solid ${getBuildingAccentColor(edificio)}`,
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const assigneeAccentColorMap: Record<string, string> = {
   'Hagata Oliveira': '#F59E0B',
@@ -2401,6 +2469,22 @@ function ProductionCard({
             style={{ borderTopColor: getOsAccentColor(activity.osCodigo) }}
           />
         </div>
+        {activity.edificio && (
+          <div
+            className="absolute right-[52px] top-0 flex flex-col items-center"
+            aria-hidden="true"
+            title={`Edifício ${activity.edificio}`}
+          >
+            <div
+              className="h-[28px] w-4"
+              style={{ backgroundColor: getBuildingAccentColor(activity.edificio) }}
+            />
+            <div
+              className="h-0 w-0 border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent"
+              style={{ borderTopColor: getBuildingAccentColor(activity.edificio) }}
+            />
+          </div>
+        )}
 
         <div className="flex min-h-[54px] items-center pr-8">
           <p className="text-[18px] font-medium leading-[1.18] text-[#111827]">
@@ -2494,26 +2578,28 @@ function ProductionCard({
   );
 }
 
-type OsActivityGroup = { key: string; osCodigo: string; osNome: string; disciplina?: string; activities: EngineeringActivity[] };
+type OsActivityGroup = { key: string; osCodigo: string; osNome: string; disciplina?: string; edificio?: string; activities: EngineeringActivity[] };
 
 const buildOsGroupsForColumn = (activities: EngineeringActivity[], splitByDiscipline = false): OsActivityGroup[] => {
   const groupMap = new Map<string, OsActivityGroup>();
   activities.forEach((activity) => {
     if (splitByDiscipline) {
-      // Área Técnica: a OS se repete — um card por disciplina citada nela.
+      // Área Técnica: a OS se repete — um card por disciplina + edifício citados nela (cada LOD só tem 1 edifício).
       const rawList = Array.isArray(activity.disciplinas) && activity.disciplinas.length > 0
         ? activity.disciplinas
         : splitDisciplinas(activity.disciplina);
       const meaningful = rawList.filter(isMeaningfulDisciplineToken);
       const disciplinas = meaningful.length > 0 ? meaningful : [activity.disciplina || 'Sem disciplina'];
+      const edificio = activity.edificio || '';
       const seenForActivity = new Set<string>();
       disciplinas.forEach((disc) => {
         const discKey = normalizeText(disc);
-        if (seenForActivity.has(discKey)) return;
-        seenForActivity.add(discKey);
-        const key = `${normalizeText(activity.osCodigo)}|${discKey}`;
+        const groupKey = `${discKey}|${normalizeText(edificio)}`;
+        if (seenForActivity.has(groupKey)) return;
+        seenForActivity.add(groupKey);
+        const key = `${normalizeText(activity.osCodigo)}|${groupKey}`;
         if (!groupMap.has(key)) {
-          groupMap.set(key, { key, osCodigo: activity.osCodigo, osNome: activity.osNome, disciplina: disc, activities: [] });
+          groupMap.set(key, { key, osCodigo: activity.osCodigo, osNome: activity.osNome, disciplina: disc, edificio, activities: [] });
         }
         groupMap.get(key)!.activities.push(activity);
       });
@@ -2536,6 +2622,12 @@ function OsGroupCard({ group, tipoLicitacao, onClick }: { group: OsActivityGroup
   const latestEnd = group.activities.reduce((m, a) => a.terminoPlanejado > m ? a.terminoPlanejado : m, group.activities[0].terminoPlanejado);
   const displayCode = extractVisualOsCode(group.activities[0]) || group.osCodigo;
   const displayTitle = stripLodFromTitle(group.osNome, displayCode) || group.osNome;
+  // Área Técnica (group.disciplina definido): 1 card = 1 edifício só, sem empilhar.
+  // Coordenação de Engenharia / Planejamento / Contrato (sem split): sem bandeira no card —
+  // agregaria a OS inteira (dezenas de itens/edifícios) num leque sem sentido.
+  const groupEdificios = group.disciplina !== undefined
+    ? (group.edificio ? [group.edificio] : [])
+    : [];
 
   const uniqueDisciplines = useMemo(() => {
     // Modo Área Técnica: o card representa uma única disciplina da OS.
@@ -2566,6 +2658,11 @@ function OsGroupCard({ group, tipoLicitacao, onClick }: { group: OsActivityGroup
           <div className="h-[28px] w-4" style={{ backgroundColor: getOsAccentColor(group.osCodigo) }} />
           <div className="h-0 w-0 border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent" style={{ borderTopColor: getOsAccentColor(group.osCodigo) }} />
         </div>
+        {groupEdificios.length > 0 && (
+          <div className="absolute right-[52px] top-0">
+            <BuildingFlagStack edificios={groupEdificios} />
+          </div>
+        )}
 
         <div className="flex min-h-[54px] items-center pr-8">
           <p className="text-[18px] font-medium leading-[1.18] text-[#111827]">
@@ -2660,10 +2757,10 @@ export default function Atividades({
   const [boardZoomPercent, setBoardZoomPercent] = useState(() => {
     try {
       const cached = localStorage.getItem('atividades_boardZoom');
-      const val = cached ? parseInt(cached, 10) : 75;
-      return [75, 90, 120].includes(val) ? val : 75;
+      const val = cached ? parseInt(cached, 10) : 65;
+      return [65, 90, 120].includes(val) ? val : 65;
     } catch {
-      return 75;
+      return 65;
     }
   });
   const [activities, setActivities] = useState<EngineeringActivity[]>(() => {
@@ -2851,6 +2948,19 @@ export default function Atividades({
     return Array.from(collected);
   }, [preloadedData?.admin, activitiesWithDiscipline]);
 
+  // Disciplinas que sempre devem ser marcadas juntas no filtro (ex: Estrutura Metálica e
+  // Estrutura de Concreto costumam ser olhadas em conjunto pelo coordenador).
+  const handleFilterDisciplinasChange = (next: string[]) => {
+    const addedItem = next.find((item) => !filterDisciplinas.includes(item));
+    const linkedGroup = addedItem
+      ? LINKED_DISCIPLINE_GROUPS.find((group) => group.some((item) => resolveDisciplineEntry(item) === resolveDisciplineEntry(addedItem)))
+      : undefined;
+    if (!linkedGroup) { setFilterDisciplinas(next); return; }
+    const linkedKeys = new Set(linkedGroup.map(resolveDisciplineEntry));
+    const toAdd = disciplinasDisponiveis.filter((option) => linkedKeys.has(resolveDisciplineEntry(option)) && !next.includes(option));
+    setFilterDisciplinas([...next, ...toAdd]);
+  };
+
   const disciplineAutoMatchedRef = useRef(false);
   useEffect(() => {
     disciplineAutoMatchedRef.current = false;
@@ -2901,9 +3011,8 @@ export default function Atividades({
 
   const filteredActivities = useMemo(() => {
     const normalizedSearch = searchText.trim().toLowerCase();
-    const todayClear = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate());
-    const windowStart = addDays(todayClear, -7);
-    const windowEnd = addDays(todayClear, 15);
+    const weekStartClear = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate());
+    const weekEndClear = new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate(), 23, 59, 59, 999);
 
     return disciplineScopedActivities
       .filter((activity) => {
@@ -2929,9 +3038,7 @@ export default function Atividades({
 
         const actStart = parseDate(activity.inicioPlanejado);
         const actEnd = parseDate(activity.terminoPlanejado);
-        const startedInWindow = actStart >= windowStart && actStart <= todayClear;
-        const endsInWindow = actEnd >= todayClear && actEnd <= windowEnd;
-        const matchesDateRange = startedInWindow || endsInWindow;
+        const matchesDateRange = actStart <= weekEndClear && actEnd >= weekStartClear;
 
         return (
           matchesSearch &&
@@ -2959,6 +3066,8 @@ export default function Atividades({
     disciplineFilterEnabled,
     filterShowCompleted,
     searchText,
+    weekStart,
+    weekEnd,
   ]);
 
   const boardActivities = useMemo(() => {
@@ -3292,7 +3401,7 @@ export default function Atividades({
                 value={filterDisciplinas}
                 options={disciplinasDisponiveis}
                 placeholder="Selecionar..."
-                onChange={setFilterDisciplinas}
+                onChange={handleFilterDisciplinasChange}
               />
             )}
           </div>
@@ -3336,7 +3445,7 @@ export default function Atividades({
                 <p className="text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Escala</p>
                 <div className="mt-1 flex items-center gap-1">
                   {(['P', 'M', 'G'] as const).map((label) => {
-                    const value = label === 'P' ? 75 : label === 'M' ? 90 : 120;
+                    const value = label === 'P' ? 65 : label === 'M' ? 90 : 120;
                     return (
                       <button
                         key={label}
@@ -3915,6 +4024,7 @@ export default function Atividades({
                         const maxLod = discGroup.activities.reduce((m, a) => a.lodAtual > m ? a.lodAtual : m, discGroup.activities[0].lodAtual);
                         const behind = avgExecDisc < avgPrevDisc;
                         const tone = behind ? 'text-[#EF4444]' : 'text-[#166534]';
+                        const discEdificios = getUniqueEdificios(discGroup.activities);
                         return (
                           <button
                             key={discGroup.disciplina}
@@ -3931,6 +4041,7 @@ export default function Atividades({
                                 <p className="text-[11px] text-[#94A3B8]">{discGroup.activities.length} atividades</p>
                               )}
                             </div>
+                            {discEdificios.length > 0 && <BuildingFlagStack edificios={discEdificios} compact />}
                             <div className="flex flex-shrink-0 items-center gap-3 text-right">
                               <div>
                                 <p className="text-[9px] font-black uppercase tracking-[0.5px] text-[#94A3B8]">LOD</p>

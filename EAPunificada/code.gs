@@ -957,7 +957,8 @@ function getCompressedData_(ss) {
       childrenByParent: {},
       rootCodes: []
     },
-    cronograma: []
+    cronograma: [],
+    edificioPorItem: {}
   };
 
   var snapshotSheets = [];
@@ -978,8 +979,12 @@ function getCompressedData_(ss) {
       var itemCode = String(displayValues[r][3] || values[r][3] || '').trim(); // Coluna D
       var itemName = String(displayValues[r][4] || values[r][4] || '').trim(); // Coluna E
       var itemDiscipline = String(displayValues[r][14] || values[r][14] || '').trim(); // Coluna O
-      var itemPlannedStart = normalizeSheetDate_(values[r][11]); // Coluna L - Inicio
-      var itemPlannedEnd = normalizeSheetDate_(values[r][12]); // Coluna M - Término
+      var itemPlannedStart = normalizeSheetDate_(values[r][11]) || normalizeSheetDate_(values[r][6]); // Coluna L - Inicio (fallback: G - Plano Base)
+      var itemPlannedEnd = normalizeSheetDate_(values[r][12]) || normalizeSheetDate_(values[r][7]); // Coluna M - Termino (fallback: H - Plano Base)
+      var itemEdificio = String(displayValues[r][16] || values[r][16] || '').trim(); // Coluna Q - Numero do edificio
+      if (itemCode && itemEdificio) {
+        out.edificioPorItem[itemCode] = itemEdificio;
+      }
       if (isLodItemName_(itemName) && !hasExplicitDiscipline_(splitDisciplines_(itemDiscipline))) {
         itemDiscipline = 'Ignorado';
       }
@@ -1076,8 +1081,12 @@ function getCompressedData_(ss) {
       var latestItemCode = String(latestDisplayValues[ar][3] || latestValues[ar][3] || '').trim(); // Coluna D
       var latestItemName = String(latestDisplayValues[ar][4] || latestValues[ar][4] || '').trim(); // Coluna E
       var latestItemDiscipline = String(latestDisplayValues[ar][14] || latestValues[ar][14] || '').trim(); // Coluna O
-      var latestItemPlannedStart = normalizeSheetDate_(latestValues[ar][11]); // Coluna L - Inicio
-      var latestItemPlannedEnd = normalizeSheetDate_(latestValues[ar][12]); // Coluna M - Término
+      var latestItemPlannedStart = normalizeSheetDate_(latestValues[ar][11]) || normalizeSheetDate_(latestValues[ar][6]); // Coluna L - Inicio (fallback: G - Plano Base)
+      var latestItemPlannedEnd = normalizeSheetDate_(latestValues[ar][12]) || normalizeSheetDate_(latestValues[ar][7]); // Coluna M - Termino (fallback: H - Plano Base)
+      var latestItemEdificio = String(latestDisplayValues[ar][16] || latestValues[ar][16] || '').trim(); // Coluna Q - Numero do edificio
+      if (latestItemCode && latestItemEdificio) {
+        out.edificioPorItem[latestItemCode] = latestItemEdificio;
+      }
       if (isLodItemName_(latestItemName) && !hasExplicitDiscipline_(splitDisciplines_(latestItemDiscipline))) {
         latestItemDiscipline = 'Ignorado';
       }
@@ -1370,8 +1379,11 @@ function getRawEapRows_(sheet) {
     var disciplinas = splitDisciplines_(displayValues[i][14] || values[i][14] || '');
     var isLod = isLodItemName_(nome);
     var isGeneralLod = isLod && !hasExplicitDiscipline_(disciplinas);
-    var plannedStart = normalizeSheetDate_(values[i][11]);
-    var plannedEnd = normalizeSheetDate_(values[i][12]);
+    // Linhas de cabecalho (OS, fases) muitas vezes so tem data no Plano Base (G/H),
+    // sem Inicio Real/Conclusao Reprogramada (L/M) proprios. Sem esse fallback a linha
+    // some inteira e o Cronograma cria um no fantasma so com o codigo pros filhos orfaos.
+    var plannedStart = normalizeSheetDate_(values[i][11]) || normalizeSheetDate_(values[i][6]);
+    var plannedEnd = normalizeSheetDate_(values[i][12]) || normalizeSheetDate_(values[i][7]);
     if (!plannedStart || !plannedEnd || plannedStart > plannedEnd) continue;
     if (isGeneralLod) continue;
 

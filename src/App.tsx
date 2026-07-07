@@ -55,6 +55,7 @@ const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
+const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
 const Administracao = React.lazy(() => import('./components/Administracao'));
 
 const EAP_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
@@ -96,7 +97,7 @@ function shouldLockUserToContract(user?: AuthUser | null) {
 type AppTab = 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'administracao';
 type AreaTecnicaSubTab = 'atividades' | 'cronograma';
 type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma';
-type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'cronograma' | 'atividades' | 'os';
+type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'cronograma' | 'atividades' | 'os' | 'curva-s';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'cronograma';
 type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro';
@@ -1540,6 +1541,7 @@ export default function App() {
   const adminAutoLoadAttemptRef = React.useRef(false);
   const adminDraftVersionRef = React.useRef(0);
   const adminDraftRef = React.useRef<AdminSnapshotState | null>(null);
+  const deletedUserEmailsRef = React.useRef<Set<string>>(new Set());
 
   // Filter States (Dashboard/Tech Mock)
   const [filtrosAtivos, setFiltrosAtivos] = React.useState({ contrato: 'Todos', os: 'Todos', disciplina: 'Todos' });
@@ -1673,7 +1675,7 @@ export default function App() {
     const mappedEmails = new Set(mappedUsers.map((user: any) => normalizeUserText(user.email)).filter(Boolean));
     const preservedExistingUsers = existingUsers.filter((item: any) => {
       const email = normalizeUserText(item?.email || item?.id);
-      return email && !mappedEmails.has(email);
+      return email && !mappedEmails.has(email) && !deletedUserEmailsRef.current.has(email);
     });
 
     return {
@@ -1691,11 +1693,14 @@ export default function App() {
         ])
       : [null, null];
     const mergedState = mergeAdminStateWithRemote(draftState, existingAdmin, existingAuth);
-    const snapshot = buildAdminFirebaseSnapshot(mergedState);
+    const safeMergedState = deletedUserEmailsRef.current.size > 0
+      ? { ...mergedState, usuarios: mergedState.usuarios.filter((user) => !deletedUserEmailsRef.current.has(normalizeUserText(user.email || user.id))) }
+      : mergedState;
+    const snapshot = buildAdminFirebaseSnapshot(safeMergedState);
 
     return {
       snapshot,
-      state: mergedState,
+      state: safeMergedState,
       existingAuth,
     };
   }, [buildAdminFirebaseSnapshot]);
@@ -1765,6 +1770,7 @@ export default function App() {
     }
     setDirtyUserIds([]);
     setAdminHasPendingChanges(false);
+    deletedUserEmailsRef.current = new Set();
   }, []);
 
   const loadCollaborationData = useCallback(async () => {
@@ -2067,7 +2073,7 @@ export default function App() {
     const wantsEap =
       (activeTab === 'controle' && subTab === 'curva-s') ||
       (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ||
-      (activeTab === 'planejamento' && planejamentoSubTab === 'atividades') ||
+      (activeTab === 'planejamento' && (planejamentoSubTab === 'atividades' || planejamentoSubTab === 'curva-s')) ||
       (activeTab === 'contrato' && contratoSubTab === 'atividades');
     const wantsRegistro =
       activeTab === 'registro' ||
@@ -2142,6 +2148,7 @@ export default function App() {
         setCurrentUser((prev) => prev ? applyAdminUserContext(prev, adminSnapshot) : prev);
         setDirtyUserIds([]);
         setAdminHasPendingChanges(false);
+        deletedUserEmailsRef.current = new Set();
       }
     } catch (error) {
       console.error('Falha ao salvar alteracoes administrativas:', error);
@@ -2658,6 +2665,18 @@ export default function App() {
     markAdminChangesPending();
   }, [invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
+  const deleteUsuario = useCallback(async (userId: string) => {
+    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+    const user = sourceUsers.find((item) => item.id === userId);
+    if (!user) return;
+    const email = normalizeUserText(user.email || user.id);
+    if (email) deletedUserEmailsRef.current.add(email);
+    const nextUsers = sourceUsers.filter((item) => item.id !== userId);
+    setUsuarios(nextUsers);
+    updateAdminDraftRef({ usuarios: nextUsers });
+    markAdminChangesPending();
+  }, [markAdminChangesPending, updateAdminDraftRef, usuarios]);
+
   const resetUserPassword = useCallback(async (user: UserAccessRecord) => {
     const response = await postToAppsScript<GenericResponse>({ action: 'adminResetPassword', email: user.email });
     assertSuccess(response, 'Falha ao redefinir senha.');
@@ -2683,6 +2702,7 @@ export default function App() {
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'dashboard', onClick: () => setPlanejamentoSubTab('dashboard') },
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'atividades', onClick: () => setPlanejamentoSubTab('atividades') },
         { key: 'os', label: 'OS', icon: <FileText size={16} />, active: planejamentoSubTab === 'os', onClick: () => setPlanejamentoSubTab('os') },
+        { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: planejamentoSubTab === 'curva-s', onClick: () => setPlanejamentoSubTab('curva-s') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: planejamentoSubTab === 'cronograma', onClick: () => setPlanejamentoSubTab('cronograma') }] : []),
       ];
     }
@@ -2831,7 +2851,10 @@ export default function App() {
           <div className="flex items-center gap-4">
             <button
               type="button"
-              onClick={() => currentUser && void refreshRealtimeEnvironment(currentUser)}
+              onClick={() => {
+                if (adminHasPendingChanges && !window.confirm('Existem alteracoes administrativas sem salvar. Atualizar vai descarta-las. Deseja continuar?')) return;
+                if (currentUser) void refreshRealtimeEnvironment(currentUser);
+              }}
               disabled={!currentUser || isBackgroundSyncing}
               className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#9CA3AF] transition-colors hover:bg-[#F8FAFC] hover:text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60"
               aria-label="Atualizar dados do Firebase"
@@ -2870,9 +2893,11 @@ export default function App() {
                     )
                     : planejamentoSubTab === 'os'
                       ? <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView="os" />
-                      : planejamentoSubTab === 'cronograma'
-                        ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
-                        : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                      : planejamentoSubTab === 'curva-s'
+                        ? <CurvaS preloadedData={effectiveGlobalData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
+                        : planejamentoSubTab === 'cronograma'
+                          ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
+                          : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
@@ -2905,7 +2930,7 @@ export default function App() {
                   onSaveChanges={saveAdminChanges}
                   hasPendingChanges={adminHasPendingChanges}
                   isSavingChanges={isSavingAdminChanges}
-                  onAcceptUser={acceptUser} onBlockUser={blockUser} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onToggleDisciplineCharts={toggleDisciplineCharts} onAddCargo={addCargo} onRemoveCargo={removeCargo} onAddAlocacao={addAlocacao} onRemoveAlocacao={removeAlocacao} onSaveTerceirizada={saveTerceirizada} onDeleteTerceirizada={deleteTerceirizada} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
+                  onAcceptUser={acceptUser} onBlockUser={blockUser} onDeleteUsuario={deleteUsuario} onPasswordReset={resetUserPassword} onAddDisciplina={addDisciplina} onRemoveDisciplina={removeDisciplina} onToggleDisciplineCharts={toggleDisciplineCharts} onAddCargo={addCargo} onRemoveCargo={removeCargo} onAddAlocacao={addAlocacao} onRemoveAlocacao={removeAlocacao} onSaveTerceirizada={saveTerceirizada} onDeleteTerceirizada={deleteTerceirizada} onToggleRoleTabPermission={toggleRoleTabPermission} onSaveDatabaseLink={saveDatabaseLink} onDeleteDatabaseLink={deleteDatabaseLink}
                   preRegistrations={preRegistrations}
                   onAddPreRegistration={addPreRegistration}
                   onRemovePreRegistration={removePreRegistration}

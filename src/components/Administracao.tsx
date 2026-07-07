@@ -104,6 +104,7 @@ interface AdministracaoProps {
   pendingTerceirizadaIds: string[];
   onAcceptUser: (userId: string) => Promise<void>;
   onBlockUser: (userId: string) => Promise<void>;
+  onDeleteUsuario: (userId: string) => Promise<void>;
   onPasswordReset: (user: UserAccessRecord) => Promise<void>;
   onAddDisciplina: (value: string) => Promise<void>;
   onRemoveDisciplina: (value: string) => Promise<void>;
@@ -873,6 +874,7 @@ export default function Administracao({
   pendingTerceirizadaIds,
   onAcceptUser,
   onBlockUser,
+  onDeleteUsuario,
   onPasswordReset,
   onAddDisciplina,
   onRemoveDisciplina,
@@ -1310,6 +1312,19 @@ export default function Administracao({
                   >
                     <Ban size={16} />
                     Bloquear
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`Excluir definitivamente o usuário ${user.nome || user.email}? Essa ação não pode ser desfeita.`)) {
+                        void onDeleteUsuario(user.id);
+                      }
+                    }}
+                    className="h-11 px-4 rounded-xl bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] text-[13px] font-bold hover:bg-[#FEE2E2] transition-colors inline-flex items-center justify-center gap-2"
+                  >
+                    <Trash2 size={16} />
+                    Excluir
                   </button>
                   </div>
                 </div>

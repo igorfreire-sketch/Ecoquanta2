@@ -1,0 +1,191 @@
+GUIA - PUBLICAR EAP DO MS PROJECT DIRETO NO FIREBASE (VBA)
+============================================================
+
+CONTEXTO
+--------
+Hoje: copia/cola do MS Project para a planilha Google "eapunificada", que
+depois e processada pelo Apps Script (EAPunificada/code.gs) e publicada no
+Firestore (appData/eap). Isso ficou inviavel com o volume de linhas atual.
+
+A partir de agora: o proprio MS Project publica direto no Firestore via
+VBA (code.txt), sem passar pela planilha nem pelo Apps Script. Como voces
+estao dividindo o arquivo do Project por OS (mas os codigos/IDs continuam
+os mesmos), o script identifica quais OS estao no arquivo aberto e
+substitui SO essas OS no documento publicado — as OS que vieram de outros
+arquivos Project (de outras pessoas) ficam intactas.
+
+IMPORTANTE - LEIA ANTES DE USAR EM PRODUCAO
+--------------------------------------------
+Este script NAO foi testado dentro do Microsoft Project de verdade (eu nao
+tenho como abrir o Project no ambiente onde escrevi isso). A logica de
+autenticacao, leitura/escrita no Firestore e o merge por OS foram
+verificados manualmente linha a linha e testados contra o projeto real do
+Firebase (leitura e escrita funcionam para o formato de dados usado), mas
+o lado "ler tarefas do Project" (ActiveProject.Tasks, OutlineNumber,
+CallByName pros campos customizados) nao pode ser validado por mim.
+TESTE PRIMEIRO em um arquivo Project de teste/copia, e confira o resultado
+no site antes de rodar com o arquivo real.
+
+O QUE O SCRIPT FAZ
+------------------
+1. Le todas as tarefas do arquivo Project aberto. Codigo EAP = numero de
+   topico da tarefa (ex: "1.2.3"), exatamente igual ao esquema que o site
+   ja usa (contrato = 1o segmento, OS = 2 primeiros segmentos, item = resto).
+2. Autentica anonimamente no Firebase (igual o proprio site faz).
+3. Baixa o appData/eap atual, reconstruindo os pedacos ("chunks") — o
+   documento e grande demais pra caber num campo so do Firestore, entao ja
+   e salvo dividido em varios documentos appData/eap/chunks/00000, 00001...
+4. No campo "atual" do payload, descobre quais OS (contrato.OS) aparecem
+   no arquivo aberto, remove so as linhas dessas OS e adiciona as tarefas
+   do arquivo no lugar. Todo o resto do documento (cronograma, curvaS,
+   timeline, reajustado, registro, edificioPorItem) fica 100% intocado.
+5. Sobe o payload mesclado de volta, no mesmo formato "chunked".
+
+ESCOPO REAL — LEIA COM ATENCAO
+--------------------------------
+O documento appData/eap guarda as linhas em DOIS campos diferentes, que eu
+so descobri conferindo os dados reais no Firebase (nao dava pra saber so
+lendo o codigo):
+- "atual": ~850 linhas simples, uma por item/tarefa. Formato:
+  [codigo, nome, progress, duration, plannedStart, plannedEnd,
+  idealProgress, disciplina].
+- "cronograma": ~10 mil linhas, uma arvore BEM mais rica, com nos de nivel
+  mensal (ex: nome "Mes 1"), baseline, predecessor, datas reais. E ela que
+  alimenta o Cronograma, a Curva S e o seletor de OS/contrato do site.
+
+Este script SO atualiza "atual". Decidimos (junto com voce) NAO tocar em
+"cronograma" porque sobrescreve-la com as linhas simples do Project
+destruiria a arvore mensal/baseline de todo mundo — e reconstruir essa
+logica em VBA exigiria portar uma parte grande e ainda nao mapeada do
+Apps Script (EAPunificada/code.gs).
+
+NA PRATICA, isso quer dizer:
+- A aba Atividades (cards de atividade, LOD, progresso) PASSA A REFLETIR
+  o que for publicado por este script. Isso ja resolve o problema principal
+  (copiar/colar manual pra atualizar progresso/datas das tarefas).
+- O seletor de OS/contrato, o Cronograma e a Curva S CONTINUAM vindo de
+  "cronograma" — nao vao mudar com este script. Se no futuro voces
+  quiserem migrar essa parte tambem, o caminho mais seguro e reaproveitar
+  a logica que ja existe no Apps Script (adicionar uma acao HTTP nova nele
+  que aceite as tarefas via POST em vez de ler da planilha), em vez de
+  reimplementar a arvore mensal do zero em VBA.
+
+Tambem fora do escopo: "idealProgress" de cada tarefa fica em branco (nao
+ha um campo padrao no Project mapeado pra isso ainda). edificioPorItem e
+reajustado nao sao tocados.
+
+PASSO A PASSO DE INSTALACAO
+----------------------------
+1. Abra o MS Project, ALT+F11 pra abrir o Editor VBA.
+
+2. Adicione o modulo VBA-JSON (obrigatorio, sem ele nada funciona):
+   a. Baixe JsonConverter.bas de https://github.com/VBA-tools/VBA-JSON
+      (o arquivo "JsonConverter.cls" do repositorio, versao mais recente).
+   b. No Editor VBA: Arquivo > Importar Arquivo... e selecione o arquivo
+      baixado. Ele vai aparecer como modulo "JsonConverter".
+
+3. Ative as referencias (Editor VBA > Ferramentas > Referencias):
+   [x] Microsoft Scripting Runtime
+   [x] Microsoft WinHTTP Services, version 5.1
+   (Se "WinHTTP Services" nao aparecer na lista, procure por
+   winhttp.dll — normalmente ja vem com o Windows.)
+
+4. Crie um novo modulo (Inserir > Modulo) e cole o conteudo de code.txt
+   nele.
+
+5. Configure o topo do modulo (constantes):
+   - FIREBASE_API_KEY e FIREBASE_PROJECT_ID: ja vem preenchido com o
+     projeto do EcoQuanta (ecoquanta-c2720). So mude se o projeto Firebase
+     mudar.
+   - CAMPO_DISCIPLINA: qual campo customizado do Project guarda a
+     disciplina de cada tarefa (ex: "Text1"). Se sua equipe ainda nao usa
+     nenhum campo pra isso, deixe como esta — o campo disciplina simplesmente
+     fica vazio nas tarefas, sem quebrar nada.
+   - CAMPO_CODIGO_EAP: campo customizado (ex: "Text2", diferente do usado
+     em CAMPO_DISCIPLINA) que vai guardar o CODIGO EAP FIXO de cada tarefa
+     (ex: "1.4.2"). OBRIGATORIO preencher — ver passo 6 abaixo, e nao
+     pule essa parte.
+     SE SUA EQUIPE JA MANTEM UMA COLUNA MANUAL COM O CODIGO (ex: a coluna
+     "D - N° item" que ja usam pra nao perder a ordem/hierarquia da EAP),
+     NAO crie um campo novo — reaproveite esse campo existente. Pra
+     descobrir o nome tecnico dele (Text1, Text2, etc.), sem precisar
+     caçar em menu nenhum: clique numa linha do Gantt cujo codigo voce ja
+     conhece (ex: uma tarefa onde a coluna mostra "2.2"), rode ALT+F8 >
+     "DescobrirCampoDoCodigoEap" > Executar. Vai aparecer um MsgBox
+     listando os campos de texto preenchidos daquela tarefa (ex: "Text3 =
+     2.2") — use esse nome (Text3, no exemplo) na constante
+     CAMPO_CODIGO_EAP.
+
+6. IMPORTANTE — preencha o codigo EAP em cada tarefa (nao use o numero de
+   topico do Project):
+   Como agora cada pessoa publica so a(s) OS dela (o arquivo Project NAO
+   tem mais a arvore inteira de todos os contratos/OS), o numero de topico
+   automatico do Project (Outline Number, ex "1.1.1") NAO pode mais ser
+   usado como codigo EAP. Ele e calculado pela posicao da tarefa dentro do
+   arquivo aberto — se as demais OS nao estao no arquivo, a numeracao
+   reinicia e o codigo gerado fica ERRADO (bate com a OS errada no site).
+   Por isso, preencha manualmente, em CADA tarefa, o campo customizado
+   CAMPO_CODIGO_EAP com o codigo EAP oficial e fixo dela (contrato.OS.item,
+   ex: "12.3.1") — o mesmo codigo que ja aparece hoje na planilha
+   "eapunificada". Tarefas com nome preenchido mas sem esse campo sao
+   IGNORADAS na publicacao, e a macro avisa quantas foram ignoradas ao
+   final (ver secao "COMO RODAR").
+
+BOTAO DE ACESSO RAPIDO "FIREBASE" (recomendado, 1x por pessoa)
+--------------------------------------------------------------
+Em vez de ALT+F8 toda vez, coloque um botao fixo no topo da janela do
+Project. E recurso nativo do Office, nao precisa de codigo:
+1. Arquivo > Opcoes > Barra de Ferramentas de Acesso Rapido.
+2. Em "Escolher comandos em:", troque para "Macros".
+3. Selecione "PublicarEapNoFirebase" na lista da esquerda > Adicionar >>.
+4. Com ela ja na coluna da direita, clique "Modificar...":
+   - escolha um icone (ex: o raio/estrela);
+   - em "Nome para exibicao" digite: Firebase
+   - OK.
+5. OK. Pronto: o botao "Firebase" aparece no topo da janela. Um clique
+   roda a macro (mesma coisa que ALT+F8 > Executar).
+Obs: essa configuracao e por usuario/maquina; cada pessoa da equipe faz
+esse passo uma vez.
+
+COMO RODAR
+----------
+1. Abra o arquivo Project que contem só as OS que voce quer publicar.
+2. Clique no botao "Firebase" (ou ALT+F8 > "PublicarEapNoFirebase" > Executar).
+3. A barra de status do Project (canto inferior esquerdo da janela) mostra
+   uma barrinha de progresso em texto, tipo "[■■■■■■■■■■----------] 50%
+   Baixando appData/eap atual...", avançando a cada etapa (autenticando,
+   baixando, mesclando, salvando) ate chegar em 100%. No final aparece uma
+   mensagem com quantas tarefas foram publicadas — e, se alguma tarefa com
+   nome preenchido nao tinha o campo CAMPO_CODIGO_EAP preenchido, um aviso
+   dizendo quantas foram ignoradas (preencha o codigo nelas e publique de
+   novo).
+4. Confira no site, aba Coordenacao de Engenharia > Atividades (nao no
+   Dashboard/seletor de OS — esse continua vindo de "cronograma", ver
+   secao "ESCOPO REAL" acima). Publique de novo com um Project de teste
+   contendo OS diferentes e confirme que as OS do primeiro arquivo
+   continuam aparecendo (prova de que o merge por OS nao apagou nada).
+
+COMO TESTAR SEM RISCO
+----------------------
+Antes de rodar contra o projeto real:
+- Troque temporariamente FIREBASE_PROJECT_ID por um projeto Firebase de
+  teste (ou peça pra eu criar um doc de teste appData/eap_teste e ajustar
+  os caminhos no script pra apontar pra ele) e rode a macro nesse ambiente
+  isolado primeiro.
+- Ou: comente a linha "PublicarPayloadChunked ..." dentro de
+  PublicarEapNoFirebase e troque por um MsgBox mostrando jsonTexto — assim
+  voce ve exatamente o que seria enviado, sem gravar nada.
+
+SE ALGO DER ERRADO
+-------------------
+- Erro de autenticacao / HTTP 400 no signUp: confirme que a autenticacao
+  anonima esta habilitada no Firebase Console (Authentication > Sign-in
+  method > Anonymous). O site ja depende disso, entao normalmente ja esta
+  ligado.
+- Erro "appData/eap esta no formato 'data' (objeto)...": avise, esse
+  formato e raro (o Apps Script sempre grava "chunked") mas o script sabe
+  detectar e avisa em vez de gravar tudo errado.
+- Erro HTTP 403/permission-denied: confirme que as regras do Firestore
+  (firestore.rules) ainda liberam leitura/escrita autenticada em
+  appData/{document} e appData/{document}/chunks/{chunk} — essas regras ja
+  existem hoje e nao precisam mudar pra este script funcionar.

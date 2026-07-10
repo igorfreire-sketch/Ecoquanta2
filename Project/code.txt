@@ -1,0 +1,606 @@
+' ============================================================================
+' PublicarEapNoFirebase.bas
+' Macro do Microsoft Project que publica as tarefas do arquivo aberto
+' diretamente no Firestore (appData/eap), sem passar pela planilha Google
+' "eapunificada" e sem passar pelo Apps Script.
+'
+' IMPORTANTE: o documento appData/eap hoje e gravado pelo Apps Script no
+' formato "chunked" (o JSON e grande demais pra caber em um unico campo do
+' Firestore, entao ele e dividido em pedacos de texto salvos em
+' appData/eap/chunks/00000, 00001, ...). Este script LE e ESCREVE nesse
+' mesmo formato, pra continuar 100% compativel com o que o site ja le hoje
+' (ver src/lib/firebaseDb.ts, readChunkedAppData). Nao mude esse formato sem
+' atualizar o site tambem.
+'
+' O que este script faz:
+'   1. Le todas as tarefas do arquivo Project aberto. O codigo EAP (ex.
+'      "1.2.3") vem do campo customizado CAMPO_CODIGO_EAP, NAO do numero
+'      de topico (OutlineNumber) do Project. Motivo: o OutlineNumber e
+'      calculado pela posicao da tarefa dentro do arquivo ABERTO — se cada
+'      pessoa publica so a OS dela (sem as demais OS/contratos do arquivo),
+'      o Project renumera a partir de 1 e o codigo gerado nao bate mais com
+'      o esquema oficial contrato.OS.item. Um campo customizado preenchido
+'      manualmente com o codigo fixo nao tem esse problema.
+'   2. Baixa o appData/eap atual (reconstruindo os chunks).
+'   3. No campo "atual" do payload, remove APENAS as OS que aparecem neste
+'      arquivo (contrato.OS, ex. "1.2") e adiciona as tarefas deste arquivo
+'      no lugar. OS de outros arquivos Project (de outras pessoas) ficam
+'      intocadas.
+'   4. Reescreve o documento (chunked) no Firestore.
+'
+' ESCOPO REAL (importante entender antes de usar):
+' O documento appData/eap tem DOIS campos de linhas, e eles NAO sao a mesma
+' coisa: "atual" (~850 linhas, uma por item/tarefa) e "cronograma" (~10 mil
+' linhas, arvore completa com nos mensais tipo "Mes 1", baseline,
+' predecessor — usada pelo Cronograma, pela Curva S e pelo seletor de
+' OS/contrato do site). Este script SO toca em "atual". "cronograma" fica
+' 100% intocado de proposito: sobrescreve-lo com as linhas simples do
+' Project destruiria a arvore mensal/baseline de todo mundo.
+' Efeito pratico: a aba Atividades (cards de atividade, LOD, progresso)
+' passa a refletir o que foi publicado por aqui. O seletor de OS/contrato,
+' o Cronograma e a Curva S continuam vindo de "cronograma" — nao mudam
+' ate alguem migrar aquela parte tambem (e essa parte tem logica bem mais
+' complexa no Apps Script, nao foi reimplementada aqui).
+' Fora do escopo tambem: "idealProgress" de cada tarefa fica em branco (nao
+' ha campo nativo equivalente no Project mapeado ainda), edificioPorItem,
+' reajustado — nenhum desses e tocado.
+'
+' DEPENDENCIA OBRIGATORIA: modulo VBA-JSON (JsonConverter.bas), de
+' https://github.com/VBA-tools/VBA-JSON — copie o arquivo desse repositorio
+' como um modulo novo chamado "JsonConverter" no mesmo projeto VBA. Sem
+' isso, ParseJson/ConvertToJson (usados abaixo) nao existem.
+'
+' Referencias necessarias (Editor VBA > Ferramentas > Referencias):
+'   - Microsoft Scripting Runtime
+'   - Microsoft WinHTTP Services, version 5.1
+'
+' Veja guia.txt para o passo a passo de instalacao, configuracao e testes.
+' ============================================================================
+
+Option Explicit
+
+' ---- CONFIGURACAO ----------------------------------------------------------
+Const FIREBASE_API_KEY As String = "AIzaSyCGJ4UHPGyaf1GqayvTXUhvn3eLdu9ZW9g"
+Const FIREBASE_PROJECT_ID As String = "ecoquanta-c2720"
+Const CHUNK_SIZE As Long = 750000   ' igual ao FIREBASE_APPDATA_CHUNK_SIZE do Apps Script
+' Campo customizado do Project usado para a disciplina de cada tarefa.
+' Troque para o campo que sua equipe usa (Text1, Text2, Number1, etc).
+Const CAMPO_DISCIPLINA As String = "Text1"
+' Campo customizado do Project que guarda o codigo EAP FIXO de cada tarefa
+' (ex. "1.4.2"), preenchido manualmente pela equipe. OBRIGATORIO quando o
+' arquivo Project contem so uma parte das OS (nao a arvore inteira) — nesse
+' caso o numero de topico do Project nao pode ser usado como codigo (ver
+' comentario no topo do arquivo). Use um campo de texto ainda nao ocupado
+' pela disciplina (CAMPO_DISCIPLINA acima).
+Const CAMPO_CODIGO_EAP As String = "Text2"
+' -----------------------------------------------------------------------------
+
+Sub PublicarEapNoFirebase()
+    On Error GoTo TratarErro
+
+    Dim linhas As Collection
+    Dim puladasSemCodigo As Long
+    Set linhas = ColetarLinhasDoProject(puladasSemCodigo)
+
+    If linhas.Count = 0 Then
+        If puladasSemCodigo > 0 Then
+            MsgBox puladasSemCodigo & " tarefa(s) tem nome preenchido mas nao tem o campo '" & _
+                CAMPO_CODIGO_EAP & "' com o codigo EAP (ex: 1.4.2). Preencha o codigo em cada " & _
+                "tarefa antes de publicar.", vbExclamation
+        Else
+            MsgBox "Nenhuma tarefa com codigo EAP valido foi encontrada neste arquivo.", vbExclamation
+        End If
+        Exit Sub
+    End If
+
+    Application.StatusBar = BarraDeProgresso(25, "Autenticando no Firebase...")
+    Dim idToken As String
+    idToken = AutenticarAnonimo()
+
+    Application.StatusBar = BarraDeProgresso(50, "Baixando appData/eap atual...")
+    Dim payloadAtual As Object
+    Set payloadAtual = BaixarPayloadEap(idToken)
+
+    Dim chunkCountAntigo As Long
+    chunkCountAntigo = ContarChunksAtuais(idToken)
+
+    Application.StatusBar = BarraDeProgresso(75, "Mesclando linhas (" & linhas.Count & " tarefas)...")
+    Dim mesclado As Object
+    Set mesclado = MesclarLinhas(payloadAtual, linhas)
+
+    Application.StatusBar = BarraDeProgresso(90, "Salvando no Firebase...")
+    Dim jsonTexto As String
+    jsonTexto = JsonConverter.ConvertToJson(mesclado)
+    PublicarPayloadChunked idToken, jsonTexto, chunkCountAntigo
+
+    Application.StatusBar = BarraDeProgresso(100, "Concluido - " & linhas.Count & " tarefa(s) publicada(s).")
+    Dim mensagemFinal As String
+    mensagemFinal = linhas.Count & " tarefa(s) publicada(s) em appData/eap com sucesso."
+    If puladasSemCodigo > 0 Then
+        mensagemFinal = mensagemFinal & vbCrLf & vbCrLf & "Aviso: " & puladasSemCodigo & _
+            " tarefa(s) com nome preenchido foram IGNORADAS por nao terem codigo EAP no campo '" & _
+            CAMPO_CODIGO_EAP & "'."
+    End If
+    MsgBox mensagemFinal, vbInformation
+    Application.StatusBar = False
+    Exit Sub
+
+TratarErro:
+    Application.StatusBar = False
+    MsgBox "Falha ao publicar no Firebase:" & vbCrLf & Err.Description, vbCritical
+End Sub
+
+' Monta uma barra de progresso em texto (ex: "[■■■■■■■■■■----------] 50%  Baixando...")
+' pra exibir na Application.StatusBar do Project — nao ha controle nativo de barra
+' de progresso grafica no VBA do Project sem depender de um OCX extra (fragil de
+' instalar em maquinas diferentes), entao a barra em texto e a forma mais simples
+' e portavel de dar feedback visual claro do andamento.
+Function BarraDeProgresso(percentual As Long, texto As String) As String
+    Const TOTAL_BLOCOS As Long = 20
+    Dim preenchidos As Long
+    preenchidos = CLng(TOTAL_BLOCOS * percentual / 100)
+    Dim barra As String
+    barra = String(preenchidos, ChrW(9632)) & String(TOTAL_BLOCOS - preenchidos, "-")
+    BarraDeProgresso = "[" & barra & "] " & percentual & "%  " & texto
+End Function
+
+' ---- 1) COLETA DAS TAREFAS DO PROJECT ---------------------------------------
+' Cada linha vira uma Collection posicional identica ao formato que o Apps
+' Script ja publica: [codigo, nome, progress, duration, plannedStart,
+' plannedEnd, idealProgress, disciplina]. idealProgress fica em branco (v1).
+
+' puladasSemCodigo (ByRef) conta tarefas com nome preenchido mas sem o campo
+' CAMPO_CODIGO_EAP preenchido — usado pra avisar o usuario no final, em vez
+' de essas tarefas simplesmente sumirem sem explicacao.
+Function ColetarLinhasDoProject(ByRef puladasSemCodigo As Long) As Collection
+    Dim resultado As New Collection
+    Dim tsk As Task
+    puladasSemCodigo = 0
+
+    For Each tsk In ActiveProject.Tasks
+        If Not tsk Is Nothing Then
+            Dim codigo As String
+            codigo = Trim(ObterCampoTexto(tsk, CAMPO_CODIGO_EAP))
+            Dim temNome As Boolean
+            temNome = Len(Trim(tsk.Name)) > 0
+
+            If Len(codigo) > 0 And temNome Then
+                Dim linha As New Collection
+                linha.Add codigo                                  ' 1: codigo
+                linha.Add tsk.Name                                 ' 2: nome
+                linha.Add Round(tsk.PercentComplete / 100, 4)      ' 3: progress
+                ' Assume calendario padrao de 8h/dia. Ajuste o divisor (480
+                ' minutos) se o calendario do projeto usar outra jornada.
+                linha.Add Round(tsk.Duration / 480, 2)             ' 4: duration
+                linha.Add Format(tsk.Start, "yyyy-mm-dd")          ' 5: plannedStart
+                linha.Add Format(tsk.Finish, "yyyy-mm-dd")         ' 6: plannedEnd
+                linha.Add ""                                        ' 7: idealProgress (fora de escopo v1)
+                linha.Add ObterCampoTexto(tsk, CAMPO_DISCIPLINA)   ' 8: disciplina
+
+                resultado.Add linha
+            ElseIf Len(codigo) = 0 And temNome Then
+                puladasSemCodigo = puladasSemCodigo + 1
+            End If
+        End If
+    Next tsk
+
+    Set ColetarLinhasDoProject = resultado
+End Function
+
+Function ObterCampoTexto(tsk As Task, nomeCampo As String) As String
+    On Error Resume Next
+    ObterCampoTexto = CStr(CallByName(tsk, nomeCampo, VbGet))
+    If Err.Number <> 0 Then ObterCampoTexto = ""
+    On Error GoTo 0
+End Function
+
+' FERRAMENTA DE DESCOBERTA (rode uma vez, nao faz parte da publicacao):
+' clique numa linha do Gantt cujo codigo EAP voce ja conhece (ex: a coluna
+' "D" mostrando "2.2") e rode esta macro. Ela mostra o valor de todos os
+' campos de texto customizados (Text1 a Text30) daquela tarefa, pra voce
+' identificar qual campo tecnico corresponde a coluna "D" e usar esse nome
+' na constante CAMPO_CODIGO_EAP no topo do modulo.
+Sub DescobrirCampoDoCodigoEap()
+    On Error Resume Next
+    Dim qtdSelecionadas As Long
+    qtdSelecionadas = ActiveSelection.Tasks.Count
+    On Error GoTo 0
+
+    If qtdSelecionadas = 0 Then
+        MsgBox "Selecione (clique) uma linha de tarefa no Gantt antes de rodar esta macro.", vbExclamation
+        Exit Sub
+    End If
+
+    Dim tsk As Task
+    Set tsk = ActiveSelection.Tasks(1)
+
+    Dim resultado As String
+    resultado = "Tarefa selecionada: " & tsk.Name & vbCrLf & vbCrLf & _
+        "Campos de texto customizados com valor preenchido:" & vbCrLf
+
+    Dim i As Integer
+    Dim encontrouAlgum As Boolean
+    For i = 1 To 30
+        Dim nomeCampo As String
+        nomeCampo = "Text" & i
+        Dim valor As String
+        valor = ObterCampoTexto(tsk, nomeCampo)
+        If Len(valor) > 0 Then
+            resultado = resultado & nomeCampo & " = " & valor & vbCrLf
+            encontrouAlgum = True
+        End If
+    Next i
+
+    If Not encontrouAlgum Then
+        resultado = resultado & "(nenhum campo Text1-Text30 preenchido nesta tarefa)"
+    End If
+
+    MsgBox resultado, vbInformation
+End Sub
+
+' Retorna "contrato.OS" (os dois primeiros segmentos do codigo).
+Function CodigoParaOs(codigo As String) As String
+    Dim partes() As String
+    partes = Split(codigo, ".")
+    If UBound(partes) >= 1 Then
+        CodigoParaOs = partes(0) & "." & partes(1)
+    Else
+        CodigoParaOs = codigo
+    End If
+End Function
+
+' ---- 2) AUTENTICACAO ANONIMA -------------------------------------------------
+
+Function AutenticarAnonimo() As String
+    Dim url As String
+    url = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" & FIREBASE_API_KEY
+
+    Dim resposta As String
+    Dim status As Long
+    resposta = EnviarRequisicaoHttp("POST", url, "{""returnSecureToken"":true}", "", status)
+
+    Dim json As Object
+    Set json = JsonConverter.ParseJson(resposta)
+    AutenticarAnonimo = json("idToken")
+End Function
+
+' ---- 3) LEITURA DO DOCUMENTO ATUAL (formato chunked) ------------------------
+
+' Baixa e reconstroi o payload atual (Dictionary/Collection do VBA-JSON).
+' Se o documento nao existir ainda, devolve um Dictionary vazio.
+Function BaixarPayloadEap(idToken As String) As Object
+    Dim urlDoc As String
+    urlDoc = "https://firestore.googleapis.com/v1/projects/" & FIREBASE_PROJECT_ID & _
+             "/databases/(default)/documents/appData/eap"
+
+    Dim status As Long
+    Dim resposta As String
+    resposta = EnviarRequisicaoHttp("GET", urlDoc, "", idToken, status)
+
+    If status = 404 Then
+        Set BaixarPayloadEap = CreateObject("Scripting.Dictionary")
+        Exit Function
+    End If
+
+    Dim doc As Object
+    Set doc = JsonConverter.ParseJson(resposta)
+
+    If Not doc.Exists("fields") Then
+        Set BaixarPayloadEap = CreateObject("Scripting.Dictionary")
+        Exit Function
+    End If
+
+    Dim campos As Object
+    Set campos = doc("fields")
+
+    Dim textoJson As String
+
+    If campos.Exists("chunked") Then
+        textoJson = BaixarTextoDosChunks(idToken)
+    ElseIf campos.Exists("dataJson") Then
+        textoJson = campos("dataJson")("stringValue")
+    ElseIf campos.Exists("data") Then
+        Err.Raise vbObjectError + 2, , _
+            "appData/eap esta no formato 'data' (objeto), que este script nao le. " & _
+            "Publique uma vez pelo Apps Script antes de usar esta macro, ou peça ajuste do script."
+    Else
+        textoJson = "{}"
+    End If
+
+    If Len(Trim(textoJson)) = 0 Then textoJson = "{}"
+    Set BaixarPayloadEap = JsonConverter.ParseJson(textoJson)
+End Function
+
+Function BaixarTextoDosChunks(idToken As String) As String
+    Dim url As String
+    url = "https://firestore.googleapis.com/v1/projects/" & FIREBASE_PROJECT_ID & _
+          "/databases/(default)/documents/appData/eap/chunks"
+
+    Dim status As Long
+    Dim resposta As String
+    resposta = EnviarRequisicaoHttp("GET", url, "", idToken, status)
+
+    If status = 404 Then
+        BaixarTextoDosChunks = "{}"
+        Exit Function
+    End If
+
+    Dim corpo As Object
+    Set corpo = JsonConverter.ParseJson(resposta)
+
+    If Not corpo.Exists("documents") Then
+        BaixarTextoDosChunks = "{}"
+        Exit Function
+    End If
+
+    ' Os nomes dos documentos (.../chunks/00000, 00001, ...) ja ordenam
+    ' corretamente em ordem alfabetica por causa do zero-padding.
+    Dim nomes() As String
+    Dim valores As Object
+    Set valores = CreateObject("Scripting.Dictionary")
+
+    Dim d As Variant
+    Dim listaNomes As New Collection
+    For Each d In corpo("documents")
+        Dim nomeCompleto As String
+        nomeCompleto = d("name")
+        valores.Add nomeCompleto, d("fields")("value")("stringValue")
+        listaNomes.Add nomeCompleto
+    Next d
+
+    Dim arranjo() As String
+    ReDim arranjo(listaNomes.Count - 1)
+    Dim i As Long
+    For i = 1 To listaNomes.Count
+        arranjo(i - 1) = listaNomes(i)
+    Next i
+    OrdenarTexto arranjo
+
+    Dim textoFinal As String
+    For i = 0 To UBound(arranjo)
+        textoFinal = textoFinal & valores(arranjo(i))
+    Next i
+
+    BaixarTextoDosChunks = textoFinal
+End Function
+
+Sub OrdenarTexto(arr() As String)
+    Dim i As Long, j As Long
+    Dim temp As String
+    For i = LBound(arr) To UBound(arr) - 1
+        For j = i + 1 To UBound(arr)
+            If arr(j) < arr(i) Then
+                temp = arr(i): arr(i) = arr(j): arr(j) = temp
+            End If
+        Next j
+    Next i
+End Sub
+
+Function ContarChunksAtuais(idToken As String) As Long
+    Dim url As String
+    url = "https://firestore.googleapis.com/v1/projects/" & FIREBASE_PROJECT_ID & _
+          "/databases/(default)/documents/appData/eap/chunks"
+
+    Dim status As Long
+    Dim resposta As String
+    resposta = EnviarRequisicaoHttp("GET", url, "", idToken, status)
+
+    If status = 404 Then
+        ContarChunksAtuais = 0
+        Exit Function
+    End If
+
+    Dim corpo As Object
+    Set corpo = JsonConverter.ParseJson(resposta)
+    If corpo.Exists("documents") Then
+        ContarChunksAtuais = corpo("documents").Count
+    Else
+        ContarChunksAtuais = 0
+    End If
+End Function
+
+' ---- 4) MESCLA: substitui so as OS presentes neste arquivo, preserva o resto -
+
+Function MesclarLinhas(payloadAtual As Object, novasLinhas As Collection) As Object
+    Dim osNesteArquivo As Object
+    Set osNesteArquivo = CreateObject("Scripting.Dictionary")
+
+    Dim linha As Variant
+    For Each linha In novasLinhas
+        osNesteArquivo(CodigoParaOs(linha(1))) = True
+    Next linha
+
+    Dim atualMesclado As New Collection
+    If payloadAtual.Exists("atual") Then
+        Dim linhaExistente As Variant
+        For Each linhaExistente In payloadAtual("atual")
+            If Not osNesteArquivo.Exists(CodigoParaOs(linhaExistente(1))) Then
+                atualMesclado.Add linhaExistente
+            End If
+        Next linhaExistente
+    End If
+
+    For Each linha In novasLinhas
+        atualMesclado.Add linha
+    Next linha
+
+    ' Preserva qualquer outro campo que ja exista no documento (curvaS,
+    ' timeline, reajustado, registro, edificioPorItem etc.) e so
+    ' sobrescreve atual/cronograma/dates/latestEap*.
+    Dim resultado As Object
+    Set resultado = CreateObject("Scripting.Dictionary")
+    Dim chave As Variant
+    For Each chave In payloadAtual.Keys
+        resultado.Add chave, payloadAtual(chave)
+    Next chave
+
+    ' So mexe em "atual". NAO tocar em "cronograma": e uma arvore bem mais
+    ' rica (inclui nos mensais tipo "Mes 1", baseline, predecessor) usada
+    ' pelo Cronograma/Curva S e pelo seletor de OS/contrato do site, e
+    ' sobrescreve-la com as linhas simples do Project destruiria dados de
+    ' todo mundo. Ver guia.txt.
+    resultado("atual") = atualMesclado
+
+    Dim datas As Object
+    If resultado.Exists("dates") Then
+        Set datas = resultado("dates")
+    Else
+        Set datas = New Collection
+    End If
+    Dim hoje As String
+    hoje = Format(Now, "yyyy-mm-dd")
+    Dim jaTemHoje As Boolean
+    jaTemHoje = False
+    Dim d As Variant
+    For Each d In datas
+        If d = hoje Then jaTemHoje = True
+    Next d
+    If Not jaTemHoje Then datas.Add hoje
+    resultado("dates") = datas
+    resultado("latestEapDate") = hoje
+    resultado("latestEapPublishedAt") = hoje & "T" & Format(Now, "hh:mm:ss")
+    resultado("latestEapSheet") = "MS Project (VBA)"
+
+    Set MesclarLinhas = resultado
+End Function
+
+' ---- 5) ESCRITA NO FIRESTORE (formato chunked) ------------------------------
+
+Sub PublicarPayloadChunked(idToken As String, jsonTexto As String, chunkCountAntigo As Long)
+    Dim chunks As Collection
+    Set chunks = DividirEmPedacos(jsonTexto, CHUNK_SIZE)
+
+    ' 1) grava cada chunk novo
+    Dim i As Long
+    For i = 1 To chunks.Count
+        GravarChunk idToken, i - 1, chunks(i)
+    Next i
+
+    ' 2) apaga chunks antigos que sobraram (payload novo ficou menor)
+    For i = chunks.Count To chunkCountAntigo - 1
+        ApagarChunk idToken, i
+    Next i
+
+    ' 3) atualiza o documento principal
+    Dim url As String
+    url = "https://firestore.googleapis.com/v1/projects/" & FIREBASE_PROJECT_ID & _
+          "/databases/(default)/documents/appData/eap" & _
+          "?updateMask.fieldPaths=chunked&updateMask.fieldPaths=chunkCount" & _
+          "&updateMask.fieldPaths=byteLength&updateMask.fieldPaths=source" & _
+          "&updateMask.fieldPaths=updatedAt"
+
+    Dim corpo As Object
+    Set corpo = CreateObject("Scripting.Dictionary")
+    Dim campos As Object
+    Set campos = CreateObject("Scripting.Dictionary")
+    campos.Add "chunked", CampoBooleano(True)
+    campos.Add "chunkCount", CampoNumero(chunks.Count)
+    campos.Add "byteLength", CampoNumero(Len(jsonTexto))
+    campos.Add "source", CampoTexto("MSProjectVBA")
+    campos.Add "updatedAt", CampoTimestamp()
+    corpo.Add "fields", campos
+
+    Dim status As Long
+    EnviarRequisicaoHttp "PATCH", url, JsonConverter.ConvertToJson(corpo), idToken, status
+End Sub
+
+Function DividirEmPedacos(texto As String, tamanho As Long) As Collection
+    Dim resultado As New Collection
+    Dim i As Long
+    If Len(texto) = 0 Then
+        resultado.Add ""
+    Else
+        For i = 1 To Len(texto) Step tamanho
+            resultado.Add Mid(texto, i, tamanho)
+        Next i
+    End If
+    Set DividirEmPedacos = resultado
+End Function
+
+Sub GravarChunk(idToken As String, indice As Long, texto As String)
+    Dim docId As String
+    docId = Right("00000" & indice, 5)
+
+    Dim url As String
+    url = "https://firestore.googleapis.com/v1/projects/" & FIREBASE_PROJECT_ID & _
+          "/databases/(default)/documents/appData/eap/chunks/" & docId
+
+    Dim corpo As Object
+    Set corpo = CreateObject("Scripting.Dictionary")
+    Dim campos As Object
+    Set campos = CreateObject("Scripting.Dictionary")
+    campos.Add "index", CampoNumero(indice)
+    campos.Add "value", CampoTexto(texto)
+    campos.Add "updatedAt", CampoTimestamp()
+    corpo.Add "fields", campos
+
+    Dim status As Long
+    EnviarRequisicaoHttp "PATCH", url, JsonConverter.ConvertToJson(corpo), idToken, status
+End Sub
+
+Sub ApagarChunk(idToken As String, indice As Long)
+    On Error Resume Next
+    Dim docId As String
+    docId = Right("00000" & indice, 5)
+    Dim url As String
+    url = "https://firestore.googleapis.com/v1/projects/" & FIREBASE_PROJECT_ID & _
+          "/databases/(default)/documents/appData/eap/chunks/" & docId
+    Dim status As Long
+    EnviarRequisicaoHttp "DELETE", url, "", idToken, status
+    On Error GoTo 0
+End Sub
+
+' ---- Helpers de campo tipado do Firestore (so os tipos que usamos aqui) ----
+
+Function CampoTexto(v As String) As Object
+    Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
+    d.Add "stringValue", v
+    Set CampoTexto = d
+End Function
+
+Function CampoNumero(v As Double) As Object
+    Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
+    d.Add "doubleValue", v
+    Set CampoNumero = d
+End Function
+
+Function CampoBooleano(v As Boolean) As Object
+    Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
+    d.Add "booleanValue", v
+    Set CampoBooleano = d
+End Function
+
+Function CampoTimestamp() As Object
+    Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
+    d.Add "timestampValue", Format(Now, "yyyy-mm-ddTHH:mm:ss") & "Z"
+    Set CampoTimestamp = d
+End Function
+
+' ---- 6) HTTP -----------------------------------------------------------------
+
+Function EnviarRequisicaoHttp(metodo As String, url As String, corpo As String, _
+    Optional idToken As String = "", Optional ByRef statusOut As Long = 0) As String
+
+    Dim http As Object
+    Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
+
+    http.Open metodo, url, False
+    http.SetRequestHeader "Content-Type", "application/json"
+    If Len(idToken) > 0 Then http.SetRequestHeader "Authorization", "Bearer " & idToken
+
+    If Len(corpo) > 0 Then
+        http.Send corpo
+    Else
+        http.Send
+    End If
+
+    statusOut = http.Status
+
+    If http.Status >= 200 And http.Status < 300 Then
+        EnviarRequisicaoHttp = http.ResponseText
+    ElseIf http.Status = 404 Then
+        EnviarRequisicaoHttp = http.ResponseText
+    Else
+        Err.Raise vbObjectError + 1, , "HTTP " & http.Status & ": " & http.ResponseText
+    End If
+End Function

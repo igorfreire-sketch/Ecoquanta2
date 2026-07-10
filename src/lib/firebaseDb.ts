@@ -26,7 +26,7 @@ interface FirebaseRuntimeConfig {
   appId: string;
 }
 
-interface AuthUserLike {
+export interface AuthUserLike {
   email?: string;
   nome?: string;
   role?: string;
@@ -248,7 +248,7 @@ function userOnlySeesThirdParties(user: AuthUserLike, admin?: any) {
   return Boolean(match?.onlyThirdParty || match?.onlyThirdPartyUsers || match?.somenteTerceirizados);
 }
 
-function isLeadershipOrAdmin(user: AuthUserLike) {
+export function isLeadershipOrAdmin(user: AuthUserLike) {
   if (user.isAdmin) return true;
   const role = normalizeDiscipline(user.role);
   return ['lider', 'coorden', 'geren', 'diretor', 'gestor', 'supervisor'].some((keyword) => role.includes(keyword));
@@ -778,8 +778,12 @@ export async function upsertFirebaseAppData(name: string, data: any) {
 export async function replaceFirebaseAppData(name: string, data: any) {
   await ensureFirebaseAuth();
   const dbRef = getDb();
+  // Firestore setDoc rejeita qualquer campo com valor `undefined` (mesmo aninhado em
+  // arrays/objetos), o que e facil de introduzir sem querer (ex: um campo opcional
+  // setado como `undefined` em vez de simplesmente omitido). JSON.stringify/parse
+  // remove essas chaves de forma recursiva, sem precisar de logica propria.
   await setDoc(doc(dbRef, 'appData', name), {
-    data,
+    data: JSON.parse(JSON.stringify(data)),
     updatedAt: serverTimestamp(),
   });
 }

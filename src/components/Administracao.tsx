@@ -19,8 +19,11 @@ import {
   ChevronRight,
   X,
   Mail,
+  Download,
 } from 'lucide-react';
 import TerceirizadasCadastro from './TerceirizadasCadastro';
+import { downloadSystemBackup } from '../lib/systemBackup';
+import { downloadProjectVbaConfig } from '../lib/projectVbaAssets';
 
 export type AppTabKey =
   | 'registro'
@@ -900,6 +903,22 @@ export default function Administracao({
   const [disciplinaFiltro, setDisciplinaFiltro] = React.useState('Todas');
   const [cargoFiltro, setCargoFiltro] = React.useState('Todos');
   const [activeManagementModal, setActiveManagementModal] = React.useState<null | 'cargos' | 'disciplinas' | 'alocacoes'>(null);
+  const [backupStatus, setBackupStatus] = React.useState<{ state: 'idle' | 'running' | 'done' | 'error'; message?: string }>({ state: 'idle' });
+
+  const handleDownloadBackup = async () => {
+    setBackupStatus({ state: 'running' });
+    try {
+      const result = await downloadSystemBackup();
+      setBackupStatus({
+        state: 'done',
+        message: result.errors.length > 0
+          ? `Backup gerado com ${result.errors.length} aviso(s) — veja _erros.txt dentro do zip.`
+          : `Backup "${result.filename}" gerado com sucesso.`,
+      });
+    } catch (error) {
+      setBackupStatus({ state: 'error', message: (error as Error).message || 'Falha ao gerar o backup.' });
+    }
+  };
   const [deliveryNoticeCount, setDeliveryNoticeCount] = React.useState(0);
   const [deliveryNoticeOpen, setDeliveryNoticeOpen] = React.useState(false);
   const wasSavingRef = React.useRef(false);
@@ -1540,6 +1559,51 @@ export default function Administracao({
           badge={`${alocacoes.length} cadastrada(s)`}
           onOpen={() => setActiveManagementModal('alocacoes')}
         />
+
+        <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
+          <div className="space-y-2">
+            <div className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
+              Backup
+            </div>
+            <h3 className="text-[16px] font-bold text-[#2D2D2D]">BKP do sistema</h3>
+            <p className="text-[13px] text-[#757575] leading-relaxed">Baixa tudo que esta salvo no Firebase (usuarios, EAP, cronograma, atividades, anotacoes, etc.) em um unico arquivo .zip.</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handleDownloadBackup()}
+            disabled={backupStatus.state === 'running'}
+            className="h-11 px-5 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center justify-center gap-2 w-fit disabled:opacity-60"
+          >
+            <Download size={16} />
+            {backupStatus.state === 'running' ? 'Gerando backup...' : 'Baixar backup (.zip)'}
+          </button>
+
+          {backupStatus.message && (
+            <p className={`text-[12px] font-medium ${backupStatus.state === 'error' ? 'text-[#EF4444]' : 'text-[#10B981]'}`}>
+              {backupStatus.message}
+            </p>
+          )}
+        </div>
+
+        <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
+          <div className="space-y-2">
+            <div className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
+              MS Project
+            </div>
+            <h3 className="text-[16px] font-bold text-[#2D2D2D]">Configuração Project</h3>
+            <p className="text-[13px] text-[#757575] leading-relaxed">Baixa o script VBA e o tutorial de instalação para publicar a EAP do MS Project direto no Firebase.</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void downloadProjectVbaConfig()}
+            className="h-11 px-5 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center justify-center gap-2 w-fit"
+          >
+            <Download size={16} />
+            Baixar Configuração Project
+          </button>
+        </div>
       </section>
 
       <FadeModal
@@ -1625,58 +1689,6 @@ export default function Administracao({
         onToggle={onToggleRoleTabPermission}
       />
 
-      <DatabaseForm onSave={onSaveDatabaseLink} />
-
-      <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-8 py-6 border-b border-[#E5E7EB]">
-          <div className="flex items-center gap-3">
-            <Database size={18} className="text-[#F05D28]" />
-            <h2 className="text-[18px] font-bold text-[#2D2D2D]">Bancos de Dados Vinculados</h2>
-          </div>
-          <p className="text-[13px] text-[#757575] mt-1">
-            Atalhos rápidos para planilhas importantes do ambiente administrativo.
-          </p>
-        </div>
-
-        <div className="p-6 grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {databaseLinks.length === 0 && (
-            <div className="text-[13px] text-[#757575]">Nenhum banco de dados cadastrado ainda.</div>
-          )}
-
-          {databaseLinks.map((item) => (
-            <div
-              key={item.id}
-              className="border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] p-5 flex flex-col gap-4"
-            >
-              <div>
-                <h3 className="text-[15px] font-bold text-[#2D2D2D]">{item.nome}</h3>
-                <p className="text-[13px] text-[#757575] mt-1">{item.descricao || 'Sem descrição.'}</p>
-              </div>
-
-              <div className="flex flex-wrap gap-3">
-                <a
-                  href={item.link}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="h-10 px-4 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center gap-2"
-                >
-                  <ExternalLink size={15} />
-                  Abrir Planilha
-                </a>
-
-                <button
-                  type="button"
-                  onClick={() => void onDeleteDatabaseLink(item.id)}
-                  className="h-10 px-4 rounded-xl border border-[#FECACA] bg-[#FEF2F2] text-[#B91C1C] text-[13px] font-bold hover:bg-[#FEE2E2] transition-colors inline-flex items-center gap-2"
-                >
-                  <Trash2 size={15} />
-                  Excluir
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
         </>
       )}
 

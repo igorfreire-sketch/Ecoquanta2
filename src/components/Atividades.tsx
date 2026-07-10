@@ -1243,7 +1243,7 @@ const getUnifiedEapRegistry = (preloadedData: any) => {
   return getUnifiedRegistryData(preloadedData);
 };
 
-const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProps['currentUser']): EngineeringActivity[] => {
+export const buildActivitiesFromEap = (preloadedData: any, currentUser?: AtividadesProps['currentUser']): EngineeringActivity[] => {
   const { contractNameByCode, osNameByCode, itemNameByCode, edificioByCode } = buildEapMaps(preloadedData);
   const knownDisciplineTokens = buildKnownDisciplineTokens(preloadedData, currentUser);
   const rowSources = [
@@ -2254,7 +2254,7 @@ function WaterproofingDisciplineIcon({ size = 24, className = '' }: { size?: num
   );
 }
 
-type DisciplineIconInfo = {
+export type DisciplineIconInfo = {
   match?: string[];
   icon?: React.ComponentType<{ size?: number; className?: string }>;
   imageSrc?: string;
@@ -2320,7 +2320,7 @@ const disciplineIconMap: DisciplineIconInfo[] = [
   { match: ['impermeabilizacao', 'impe', 'vedacao', 'waterproof'], icon: WaterproofingDisciplineIcon, label: 'Impermeabilização' }
 ];
 
-function getDisciplineIconInfo(value?: string): DisciplineIconInfo {
+export function getDisciplineIconInfo(value?: string): DisciplineIconInfo {
   const cleaned = String(value || '').trim();
   const normalized = normalizeText(cleaned);
   const catalogEntry = DEFAULT_DISCIPLINES.find((entry) => (
@@ -2338,7 +2338,7 @@ function getDisciplineIconInfo(value?: string): DisciplineIconInfo {
   return match || { icon: Droplets, label: catalogEntry?.name || cleaned || 'Sem disciplina' };
 }
 
-function getDisciplineDisplayName(value?: string) {
+export function getDisciplineDisplayName(value?: string) {
   const cleaned = splitDisciplinas(value)[0] || 'Sem disciplina';
   const normalized = normalizeText(cleaned);
   const catalogEntry = DEFAULT_DISCIPLINES.find((entry) => (

@@ -7,6 +7,8 @@ import Atividades from './Atividades';
 import DashboardEngenharia from './CoordenacaoEngenharia/DashboardEngenharia';
 import CurvaS from './CoordenacaoEngenharia/CurvaS';
 import Cronograma from './Cronograma';
+import Disciplinas from './CoordenacaoEngenharia/Disciplinas';
+import type { AnnotationSheet, AnnotationTemplate } from './CoordenacaoEngenharia/Anotacoes';
 import type { AuthUser } from './LoginScreen';
 
 interface CoordenacaoEngenhariaProps {
@@ -23,8 +25,15 @@ interface CoordenacaoEngenhariaProps {
     admin?: any;
     eap?: any;
   };
-  subTab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma';
-  onSubTabChange: (tab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma') => void;
+  disciplinas?: string[];
+  notes?: AnnotationSheet[];
+  onSaveNote?: (sheet: AnnotationSheet) => Promise<void>;
+  onDeleteNote?: (id: string) => Promise<void>;
+  noteTemplates?: AnnotationTemplate[];
+  onSaveNoteTemplate?: (template: AnnotationTemplate) => Promise<void>;
+  onDeleteNoteTemplate?: (id: string) => Promise<void>;
+  subTab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma' | 'disciplinas';
+  onSubTabChange: (tab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma' | 'disciplinas') => void;
 }
 
 function formatLatestEapDate(value?: string) {
@@ -76,7 +85,7 @@ function getLatestEapDisplayDate(eap?: any) {
   return 'Nao publicada';
 }
 
-export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
+export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, disciplinas, notes, onSaveNote, onDeleteNote, noteTemplates, onSaveNoteTemplate, onDeleteNoteTemplate, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
   const effectiveSubTab = subTab === 'alertas' ? 'dashboard' : subTab;
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
@@ -84,6 +93,7 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
     { id: 'planejamento', label: 'Atividades' },
     { id: 'curva-s', label: 'Curva S' },
     { id: 'cronograma', label: 'Cronograma' },
+    { id: 'disciplinas', label: 'Disciplinas' },
   ];
   const latestEapDate = getLatestEapDisplayDate(preloadedData?.eap);
   const activeContractCode = String(lockedContractCode || filtrosAtivos?.contrato || '').trim();
@@ -118,6 +128,20 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
         )}
         {effectiveSubTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
         {effectiveSubTab === 'cronograma' && <Cronograma preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
+        {effectiveSubTab === 'disciplinas' && (
+          <Disciplinas
+            disciplinas={disciplinas || []}
+            notes={notes || []}
+            osOptions={Array.isArray(preloadedData?.registro?.osOptions) ? preloadedData.registro.osOptions : []}
+            currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
+            preloadedData={preloadedData}
+            templates={noteTemplates || []}
+            onSaveNote={onSaveNote || (async () => {})}
+            onDeleteNote={onDeleteNote || (async () => {})}
+            onSaveTemplate={onSaveNoteTemplate || (async () => {})}
+            onDeleteTemplate={onDeleteNoteTemplate || (async () => {})}
+          />
+        )}
       </div>
     </div>
   );

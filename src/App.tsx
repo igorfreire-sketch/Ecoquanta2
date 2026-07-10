@@ -18,6 +18,7 @@ import {
   Clipboard,
   CheckSquare,
   UserCheck,
+  Layers,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type {
@@ -30,6 +31,44 @@ import type {
   PreRegistrationRecord,
 } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
+import type { AnnotationSheet, AnnotationTemplate } from './components/CoordenacaoEngenharia/Anotacoes';
+
+// Firestore rejects nested arrays, so `rows: string[][]` is JSON-encoded into a single string for storage.
+type WireAnnotationSheet = Omit<AnnotationSheet, 'rows'> & { rowsJson: string };
+
+function toWireAnnotationSheet(sheet: AnnotationSheet): WireAnnotationSheet {
+  const { rows, ...rest } = sheet;
+  return { ...rest, rowsJson: JSON.stringify(rows) };
+}
+
+function fromWireAnnotationSheet(sheet: WireAnnotationSheet): AnnotationSheet {
+  const { rowsJson, ...rest } = sheet;
+  let rows: string[][] = [];
+  try {
+    rows = JSON.parse(rowsJson || '[]');
+  } catch {
+    rows = [];
+  }
+  return { ...rest, rows };
+}
+
+type WireAnnotationTemplate = Omit<AnnotationTemplate, 'rows'> & { rowsJson: string };
+
+function toWireAnnotationTemplate(template: AnnotationTemplate): WireAnnotationTemplate {
+  const { rows, ...rest } = template;
+  return { ...rest, rowsJson: JSON.stringify(rows) };
+}
+
+function fromWireAnnotationTemplate(template: WireAnnotationTemplate): AnnotationTemplate {
+  const { rowsJson, ...rest } = template;
+  let rows: string[][] = [];
+  try {
+    rows = JSON.parse(rowsJson || '[]');
+  } catch {
+    rows = [];
+  }
+  return { ...rest, rows };
+}
 import { getAppVersionLabel } from './config/appVersion';
 import {
   DEFAULT_DISCIPLINE_SETTINGS,
@@ -96,7 +135,7 @@ function shouldLockUserToContract(user?: AuthUser | null) {
 
 type AppTab = 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'administracao';
 type AreaTecnicaSubTab = 'atividades' | 'cronograma';
-type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma';
+type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma' | 'disciplinas';
 type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'cronograma' | 'atividades' | 'os' | 'curva-s';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'cronograma';
 type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
@@ -1543,6 +1582,12 @@ export default function App() {
   const adminDraftRef = React.useRef<AdminSnapshotState | null>(null);
   const deletedUserEmailsRef = React.useRef<Set<string>>(new Set());
 
+  // ANOTACOES (Disciplinas)
+  const [notes, setNotes] = useState<AnnotationSheet[]>([]);
+  const notesLoadAttemptRef = React.useRef(false);
+  const [noteTemplates, setNoteTemplates] = useState<AnnotationTemplate[]>([]);
+  const noteTemplatesLoadAttemptRef = React.useRef(false);
+
   // Filter States (Dashboard/Tech Mock)
   const [filtrosAtivos, setFiltrosAtivos] = React.useState({ contrato: 'Todos', os: 'Todos', disciplina: 'Todos' });
   const effectiveGlobalData = React.useMemo(() => {
@@ -1784,12 +1829,23 @@ export default function App() {
       };
     }
 
+    // Cada colecao busca de forma isolada: uma falha (ex: regra do Firestore
+    // faltando) nao pode derrubar o bootstrap inteiro (admin/registro/eap).
+    const fetchCollectionSafe = async (name: string) => {
+      try {
+        return await fetchFirebaseCollection(name);
+      } catch (error) {
+        console.error(`❌ Erro ao carregar colecao ${name}:`, error);
+        return [];
+      }
+    };
+
     const [planningTodos, contractPriorities, contractInterferences, resolvedAlerts, osSettings] = await Promise.all([
-      fetchFirebaseCollection('planningTodos'),
-      fetchFirebaseCollection('contractPriorities'),
-      fetchFirebaseCollection('contractInterferences'),
-      fetchFirebaseCollection('resolvedAlerts'),
-      fetchFirebaseCollection('osSettings'),
+      fetchCollectionSafe('planningTodos'),
+      fetchCollectionSafe('contractPriorities'),
+      fetchCollectionSafe('contractInterferences'),
+      fetchCollectionSafe('resolvedAlerts'),
+      fetchCollectionSafe('osSettings'),
     ]);
 
     return { planningTodos, contractPriorities, contractInterferences, resolvedAlerts, osSettings };
@@ -2233,6 +2289,58 @@ export default function App() {
     adminAutoLoadAttemptRef.current = true;
     void loadAdminData();
   }, [activeTab, currentUser?.isAdmin, disciplinas.length, loadAdminData, usuarios.length]);
+
+  const saveAnnotationSheet = useCallback(async (sheet: AnnotationSheet) => {
+    const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ sheets: WireAnnotationSheet[] }>('notes') : null;
+    const baseline = remote?.sheets ? remote.sheets.map(fromWireAnnotationSheet) : notes;
+    const merged = [...baseline.filter((item) => item.id !== sheet.id), sheet];
+    if (isFirebaseConfigured()) await replaceFirebaseAppData('notes', { sheets: merged.map(toWireAnnotationSheet) });
+    setNotes(merged);
+  }, [notes]);
+
+  useEffect(() => {
+    if (activeTab !== 'controle' || subTab !== 'disciplinas') return;
+    if (notesLoadAttemptRef.current) return;
+    notesLoadAttemptRef.current = true;
+    (async () => {
+      const data = await fetchFirebaseAppData<{ sheets: WireAnnotationSheet[] }>('notes');
+      if (data?.sheets) setNotes(data.sheets.map(fromWireAnnotationSheet));
+    })();
+  }, [activeTab, subTab]);
+
+  const saveNoteTemplate = useCallback(async (template: AnnotationTemplate) => {
+    const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ templates: WireAnnotationTemplate[] }>('noteTemplates') : null;
+    const baseline = remote?.templates ? remote.templates.map(fromWireAnnotationTemplate) : noteTemplates;
+    const merged = [...baseline.filter((item) => item.id !== template.id), template];
+    if (isFirebaseConfigured()) await replaceFirebaseAppData('noteTemplates', { templates: merged.map(toWireAnnotationTemplate) });
+    setNoteTemplates(merged);
+  }, [noteTemplates]);
+
+  useEffect(() => {
+    if (activeTab !== 'controle' || subTab !== 'disciplinas') return;
+    if (noteTemplatesLoadAttemptRef.current) return;
+    noteTemplatesLoadAttemptRef.current = true;
+    (async () => {
+      const data = await fetchFirebaseAppData<{ templates: WireAnnotationTemplate[] }>('noteTemplates');
+      if (data?.templates) setNoteTemplates(data.templates.map(fromWireAnnotationTemplate));
+    })();
+  }, [activeTab, subTab]);
+
+  const deleteAnnotationSheet = useCallback(async (id: string) => {
+    const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ sheets: WireAnnotationSheet[] }>('notes') : null;
+    const baseline = remote?.sheets ? remote.sheets.map(fromWireAnnotationSheet) : notes;
+    const merged = baseline.filter((item) => item.id !== id);
+    if (isFirebaseConfigured()) await replaceFirebaseAppData('notes', { sheets: merged.map(toWireAnnotationSheet) });
+    setNotes(merged);
+  }, [notes]);
+
+  const deleteNoteTemplate = useCallback(async (id: string) => {
+    const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ templates: WireAnnotationTemplate[] }>('noteTemplates') : null;
+    const baseline = remote?.templates ? remote.templates.map(fromWireAnnotationTemplate) : noteTemplates;
+    const merged = baseline.filter((item) => item.id !== id);
+    if (isFirebaseConfigured()) await replaceFirebaseAppData('noteTemplates', { templates: merged.map(toWireAnnotationTemplate) });
+    setNoteTemplates(merged);
+  }, [noteTemplates]);
 
   const handleLogin = async (email: string, password: string, rememberMe: boolean) => {
     if (!isFirebaseConfigured()) {
@@ -2694,6 +2802,7 @@ export default function App() {
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
         ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: subTab === 'cronograma', onClick: () => setSubTab('cronograma') }] : []),
+        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: subTab === 'disciplinas', onClick: () => setSubTab('disciplinas') },
       ];
     }
 
@@ -2739,8 +2848,8 @@ export default function App() {
       return [
         { key: 'usuarios', label: 'Usuários', icon: <Users size={16} />, active: adminSubTab === 'usuarios', onClick: () => setAdminSubTab('usuarios') },
         { key: 'terceirizadas', label: 'Terceirizadas', icon: <ShieldCheck size={16} />, active: adminSubTab === 'terceirizadas', onClick: () => setAdminSubTab('terceirizadas') },
-        { key: 'gerenciamento', label: 'Gerenciamento', icon: <Settings size={16} />, active: adminSubTab === 'gerenciamento', onClick: () => setAdminSubTab('gerenciamento') },
         { key: 'pre-cadastro', label: 'Pré-cadastro', icon: <UserCheck size={16} />, active: adminSubTab === 'pre-cadastro', onClick: () => setAdminSubTab('pre-cadastro') },
+        { key: 'gerenciamento', label: 'Gerenciamento', icon: <Settings size={16} />, active: adminSubTab === 'gerenciamento', onClick: () => setAdminSubTab('gerenciamento') },
       ];
     }
 
@@ -2876,7 +2985,7 @@ export default function App() {
                   ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines autoSelectUserDisciplineFilter disciplineFilterEnabled splitOsCardsByDiscipline />
                   : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
-              {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />}
+              {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} noteTemplates={noteTemplates} onSaveNoteTemplate={saveNoteTemplate} onDeleteNoteTemplate={deleteNoteTemplate} />}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
                 planejamentoSubTab === 'dashboard'
                   ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="dashboard" activeContractCode={lockedContractCode || filtrosAtivos.contrato} />

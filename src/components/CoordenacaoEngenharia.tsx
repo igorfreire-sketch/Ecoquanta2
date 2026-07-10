@@ -6,7 +6,6 @@ import {
 import Atividades from './Atividades';
 import DashboardEngenharia from './CoordenacaoEngenharia/DashboardEngenharia';
 import CurvaS from './CoordenacaoEngenharia/CurvaS';
-import Cronograma from './Cronograma';
 import Disciplinas from './CoordenacaoEngenharia/Disciplinas';
 import type { AnnotationSheet, AnnotationTemplate } from './CoordenacaoEngenharia/Anotacoes';
 import type { AuthUser } from './LoginScreen';
@@ -32,8 +31,8 @@ interface CoordenacaoEngenhariaProps {
   noteTemplates?: AnnotationTemplate[];
   onSaveNoteTemplate?: (template: AnnotationTemplate) => Promise<void>;
   onDeleteNoteTemplate?: (id: string) => Promise<void>;
-  subTab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma' | 'disciplinas';
-  onSubTabChange: (tab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma' | 'disciplinas') => void;
+  subTab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas';
+  onSubTabChange: (tab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas') => void;
 }
 
 function formatLatestEapDate(value?: string) {
@@ -92,7 +91,6 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
     { id: 'profissionais', label: 'Profissionais' },
     { id: 'planejamento', label: 'Atividades' },
     { id: 'curva-s', label: 'Curva S' },
-    { id: 'cronograma', label: 'Cronograma' },
     { id: 'disciplinas', label: 'Disciplinas' },
   ];
   const latestEapDate = getLatestEapDisplayDate(preloadedData?.eap);
@@ -127,7 +125,6 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
           </div>
         )}
         {effectiveSubTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
-        {effectiveSubTab === 'cronograma' && <Cronograma preloadedData={preloadedData} lockedContractCode={lockedContractCode} />}
         {effectiveSubTab === 'disciplinas' && (
           <Disciplinas
             disciplinas={disciplinas || []}

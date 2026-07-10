@@ -650,40 +650,12 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
     <div className="w-full space-y-6 animate-in fade-in duration-500 max-w-[1600px] mx-auto pb-20">
       {error && <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl text-sm font-medium">{error}</div>}
 
-      <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 relative">
-        {activeSyncState && (
-          <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#3B82F6] text-white text-[10px] uppercase font-bold px-3 py-1 rounded-full shadow-sm flex items-center gap-1">
-            <RefreshCw size={10} className="animate-spin" /> Atualizando em 2º plano
-          </div>
-        )}
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-[#3B82F6] flex items-center justify-center text-white shadow-md">
-            <TrendingUp size={24} />
-          </div>
-          <div>
-            <h2 className="text-[22px] font-bold text-[#111827] tracking-tight">Curva S Dinâmica</h2>
-            <p className="text-[13px] text-[#6B7280]">Gestão Física com Compressão Extrema</p>
-          </div>
-        </div>
-        <button 
-          onClick={() => {
-             setSelectedContract(effectiveContractCode || 'TODOS'); setSelectedOsList([]); setOsExpanded(false); setOsSearch('');
-             if (onForceRefresh) onForceRefresh(); else fetchCurvasData(true);
-          }} 
-          disabled={loading || activeSyncState} 
-          className="h-11 bg-white border border-gray-200 text-gray-700 text-[13px] font-bold rounded-xl px-5 flex items-center gap-2 hover:text-[#3B82F6] disabled:opacity-50"
-        >
-          <RefreshCw size={16} className={loading || activeSyncState ? "animate-spin text-[#3B82F6]" : ""} /> 
-          {loading || activeSyncState ? 'ATUALIZANDO...' : 'FORÇAR ATUALIZAÇÃO'}
-        </button>
-      </div>
-
       <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Contrato</label>
             <SearchableSelect value={selectedContract} disabled={Boolean(normalizeKey(lockedContractCode || ''))} onChange={(e) => { setSelectedContract(e.target.value); setSelectedOsList([]); setOsExpanded(false); setOsSearch(''); }} className="w-full h-11 px-3 bg-gray-50 border rounded-xl text-[14px] disabled:opacity-70">
-              {!effectiveContractCode && <option value="TODOS">Selecione...</option>}
+              {!effectiveContractCode && <option value="TODOS">Todos</option>}
               {hierarchy.map(c => <option key={c.code} value={c.code}>{c.code} - {c.name}</option>)}
             </SearchableSelect>
           </div>

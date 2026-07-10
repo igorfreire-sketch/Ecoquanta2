@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
-import type { AnnotationSheet } from '../components/CoordenacaoEngenharia/Anotacoes';
+import { getDisciplineDisplayName } from '../components/Atividades';
+import { getSheetBancos, getSheetDisciplinas, getSheetTextos, type AnnotationBanco, type AnnotationSheet } from '../components/CoordenacaoEngenharia/Anotacoes';
 
 function safeFileName(titulo: string) {
   return (titulo || 'anotacao')
@@ -23,9 +24,9 @@ function downloadBlob(filename: string, blob: Blob) {
 // Excel abre .csv nativamente (File > Open ou duplo clique) — nao precisa de uma
 // lib de .xlsx binario so pra exportar uma planilha simples de texto.
 export function exportNoteToCsv(sheet: AnnotationSheet) {
-  const csv = sheet.rows
-    .map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
-    .join('\r\n');
+  const csv = getSheetBancos(sheet)
+    .map((banco) => banco.rows.map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n'))
+    .join('\r\n\r\n');
   downloadBlob(`${safeFileName(sheet.titulo)}.csv`, new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
 }
 
@@ -70,17 +71,26 @@ export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] =
   doc.setTextColor(0, 0, 0);
   y += headerHeight + 8;
 
-  // Tabela com linhas de grade visiveis (celula por celula, sem depender de plugin).
-  if (sheet.rows.length > 0 && sheet.colCount > 0) {
-    const colWidth = (pageWidth - marginX * 2) / sheet.colCount;
+  // Cada banco vira uma tabela com grade visivel (celula por celula, sem depender de plugin).
+  const renderBancoTable = (banco: AnnotationBanco, index: number, total: number) => {
+    if (banco.rows.length === 0 || banco.colCount === 0) return;
+    if (total > 1) {
+      ensureSpace(8);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Banco ${index + 1}`, marginX, y);
+      y += 6;
+    }
+
+    const colWidth = (pageWidth - marginX * 2) / banco.colCount;
     const rowHeight = 8;
 
-    sheet.rows.forEach((row, r) => {
+    banco.rows.forEach((row, r) => {
       ensureSpace(rowHeight);
       const isHeader = r === 0;
       if (isHeader) {
         doc.setFillColor(243, 244, 246);
-        doc.rect(marginX, y, colWidth * sheet.colCount, rowHeight, 'F');
+        doc.rect(marginX, y, colWidth * banco.colCount, rowHeight, 'F');
       }
       doc.setFont('helvetica', isHeader ? 'bold' : 'normal');
       doc.setFontSize(9);
@@ -92,25 +102,30 @@ export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] =
       y += rowHeight;
     });
     y += 8;
-  }
+  };
 
-  // Texto livre (bloco "Notas" da anotacao).
-  if (sheet.texto?.trim()) {
+  const bancos = getSheetBancos(sheet);
+  bancos.forEach((banco, index) => renderBancoTable(banco, index, bancos.length));
+
+  // Blocos de texto livre ("Notas 1", "Notas 2", ...).
+  const textos = getSheetTextos(sheet);
+  textos.forEach((bloco, index) => {
+    if (!bloco.texto.trim()) return;
     ensureSpace(10);
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
-    doc.text('Notas', marginX, y);
+    doc.text(textos.length > 1 ? `Notas ${index + 1}` : 'Notas', marginX, y);
     y += 6;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    const lines = doc.splitTextToSize(sheet.texto, pageWidth - marginX * 2);
+    const lines = doc.splitTextToSize(bloco.texto, pageWidth - marginX * 2);
     lines.forEach((line: string) => {
       ensureSpace(5.5);
       doc.text(line, marginX, y);
       y += 5.5;
     });
     y += 4;
-  }
+  });
 
   // Notas vinculadas.
   if (linkedTitles.length > 0) {
@@ -129,4 +144,70 @@ export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] =
   }
 
   doc.save(`${safeFileName(sheet.titulo)}.pdf`);
+}
+
+// Um unico .md com todas as notas visiveis ao usuario (privadas dele + publicas de todos),
+// estruturado pra uma IA conseguir ler tudo sem ambiguidade: indice, metadados completos
+// por nota (id, autor, disciplina(s), OS, visibilidade), cada banco como tabela separada,
+// texto livre e referencias cruzadas entre notas por titulo.
+export function exportNotesToMarkdown(sheets: AnnotationSheet[], currentUserEmail: string) {
+  const titleById = new Map(sheets.map((sheet) => [sheet.id, sheet.titulo || 'Sem título']));
+  const escapeCell = (value: string) => String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+
+  const renderBancoTable = (banco: AnnotationBanco) => (
+    banco.rows.length > 0
+      ? [
+        `| ${banco.rows[0].map(escapeCell).join(' | ')} |`,
+        `| ${banco.rows[0].map(() => '---').join(' | ')} |`,
+        ...banco.rows.slice(1).map((row) => `| ${row.map(escapeCell).join(' | ')} |`),
+      ].join('\n')
+      : '_Banco vazio._'
+  );
+
+  const toc = sheets
+    .map((sheet, index) => `${index + 1}. [${sheet.titulo || 'Sem título'}](#nota-${sheet.id})`)
+    .join('\n');
+
+  const sections = sheets.map((sheet) => {
+    const disciplinas = getSheetDisciplinas(sheet).map((item) => getDisciplineDisplayName(item));
+    const bancos = getSheetBancos(sheet);
+    const linkedTitles = (sheet.linkedNoteIds || []).map((id) => titleById.get(id)).filter(Boolean);
+    const backlinkTitles = sheets
+      .filter((other) => other.id !== sheet.id && (other.linkedNoteIds || []).includes(sheet.id))
+      .map((other) => other.titulo || 'Sem título');
+
+    const metaLines = [
+      `- ID: \`${sheet.id}\``,
+      `- Autor: ${sheet.autorNome || 'desconhecido'}${sheet.autorEmail ? ` (${sheet.autorEmail})` : ''}`,
+      `- Criado em: ${formatDateBRLocal(sheet.criadoEm) || 'sem data'}`,
+      `- Visibilidade: ${sheet.publica === false ? 'Privada (só o autor vê)' : 'Pública (todos veem)'}`,
+      `- Disciplina(s): ${disciplinas.length > 0 ? disciplinas.join(', ') : 'nenhuma'}`,
+      sheet.osCodigo ? `- Ordem de Serviço: ${sheet.osCodigo}` : null,
+    ].filter(Boolean).join('\n');
+
+    const bancosMarkdown = bancos.length > 0
+      ? bancos.map((banco, index) => `#### Banco ${index + 1}\n\n${renderBancoTable(banco)}`).join('\n\n')
+      : '_Nota sem banco de dados (tabela)._';
+
+    return [
+      `<a id="nota-${sheet.id}"></a>`,
+      `## ${sheet.titulo || 'Sem título'}`,
+      metaLines,
+      bancosMarkdown,
+      sheet.texto?.trim() ? `#### Texto livre\n\n${sheet.texto.trim()}` : '',
+      linkedTitles.length > 0 ? `**Notas que esta referencia:** ${linkedTitles.join(', ')}` : '',
+      backlinkTitles.length > 0 ? `**Notas que referenciam esta:** ${backlinkTitles.join(', ')}` : '',
+    ].filter(Boolean).join('\n\n');
+  });
+
+  const markdown = [
+    '# Notas de Engenharia — export para IA',
+    `Exportado por ${currentUserEmail} em ${new Date().toLocaleString('pt-BR')}. Total: ${sheets.length} nota(s).`,
+    'Este documento reune todas as notas privadas de quem exportou e todas as notas públicas do sistema. Cada nota tem seus metadados, seus bancos de dados (tabelas) e o texto livre, nessa ordem.',
+    '## Índice',
+    toc,
+    sections.join('\n\n---\n\n'),
+  ].join('\n\n');
+
+  downloadBlob(`notas_${safeFileName(currentUserEmail.split('@')[0])}.md`, new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
 }

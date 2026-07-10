@@ -8,10 +8,16 @@ import CronogramaResumo from './CronogramaResumo';
 interface DisciplinasProps {
   disciplinas: string[];
   notes: AnnotationSheet[];
-  osOptions: Array<{ codigo: string; nome: string }>;
+  osOptions: Array<{ codigo: string; nome: string; contratoCodigo?: string }>;
   currentUser: { nome: string; email: string; role?: string; isAdmin?: boolean };
   templates: AnnotationTemplate[];
   preloadedData?: any;
+  // Area Tecnica: sem categoria Disciplinas nem Mapa Mental, notas de OS sempre publicas
+  // e com a disciplina do proprio usuario (sem escolha).
+  restrictToOs?: boolean;
+  forcePublica?: boolean;
+  autoDisciplinaOs?: string;
+  authorDisciplinaByEmail?: Record<string, string>;
   onSaveNote: (sheet: AnnotationSheet) => Promise<void>;
   onDeleteNote: (id: string) => Promise<void>;
   onSaveTemplate: (template: AnnotationTemplate) => Promise<void>;
@@ -27,10 +33,13 @@ function normalizeText(value: string) {
 
 const iconButtonClass = 'flex w-[92px] flex-col items-center gap-2 text-center cursor-pointer';
 const iconCircleClass = 'flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-1 text-[#F05D28] shadow-[0_3px_8px_rgba(240,93,40,0.10)] transition-transform hover:-translate-y-[2px] hover:shadow-[0_6px_14px_rgba(240,93,40,0.20)]';
+const landingTileClass = 'flex flex-col items-center gap-3 rounded-2xl border border-[#E5E7EB] bg-white p-6 text-center shadow-sm transition-all hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_6px_14px_rgba(240,93,40,0.14)] cursor-pointer';
+const landingIconCircleClass = 'flex h-14 w-14 items-center justify-center rounded-full border border-[#F05D28] bg-white text-[#F05D28]';
 
-export default function Disciplinas({ disciplinas, notes, osOptions, currentUser, templates, preloadedData, onSaveNote, onDeleteNote, onSaveTemplate, onDeleteTemplate }: DisciplinasProps) {
+export default function Disciplinas({ disciplinas, notes, osOptions, currentUser, templates, preloadedData, restrictToOs, forcePublica, autoDisciplinaOs, authorDisciplinaByEmail, onSaveNote, onDeleteNote, onSaveTemplate, onDeleteTemplate }: DisciplinasProps) {
   const [category, setCategory] = React.useState<Category | null>(null);
   const [search, setSearch] = React.useState('');
+  const [contratoFiltro, setContratoFiltro] = React.useState('');
   const [selected, setSelected] = React.useState<string | null>(null);
   const [mindMapOpenSheet, setMindMapOpenSheet] = React.useState<AnnotationSheet | null>(null);
   const [detailTab, setDetailTab] = React.useState<DetailTab>('anotacoes');
@@ -56,11 +65,22 @@ export default function Disciplinas({ disciplinas, notes, osOptions, currentUser
     return sortedDisciplinas.filter((disciplina) => normalizeText(getDisciplineDisplayName(disciplina)).includes(query) || normalizeText(disciplina).includes(query));
   }, [sortedDisciplinas, search]);
 
+  const contractOptions = React.useMemo(() => {
+    const list = Array.isArray(preloadedData?.registro?.contracts) ? preloadedData.registro.contracts : [];
+    return list
+      .map((item: any) => ({ codigo: String(item?.codigo || '').trim(), nome: String(item?.nome || item?.codigo || '').trim() }))
+      .filter((item: { codigo: string }) => item.codigo)
+      .sort((a: { nome: string }, b: { nome: string }) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  }, [preloadedData]);
+
   const filteredOs = React.useMemo(() => {
     const query = normalizeText(search);
-    if (!query) return sortedOs;
-    return sortedOs.filter((os) => normalizeText(os.codigo).includes(query) || normalizeText(os.nome).includes(query));
-  }, [sortedOs, search]);
+    return sortedOs.filter((os) => {
+      const matchesContrato = !contratoFiltro || os.contratoCodigo === contratoFiltro;
+      const matchesQuery = !query || normalizeText(os.codigo).includes(query) || normalizeText(os.nome).includes(query);
+      return matchesContrato && matchesQuery;
+    });
+  }, [sortedOs, search, contratoFiltro]);
 
   // Nivel 3: detalhe de uma disciplina ou OS especifica, com as anotacoes e o cronograma.
   if (category && selected) {
@@ -68,9 +88,10 @@ export default function Disciplinas({ disciplinas, notes, osOptions, currentUser
     const icon = category === 'disciplinas' ? getDisciplineIconInfo(selected) : null;
     const name = category === 'disciplinas' ? getDisciplineDisplayName(selected) : (osSelecionada?.nome || selected);
     const Icon = icon?.icon;
+    const selectedDisciplineName = category === 'disciplinas' ? getDisciplineDisplayName(selected) : '';
     const relevantActivities = allActivities.filter((activity) => (
       category === 'disciplinas'
-        ? activity.disciplinas.includes(selected) || activity.disciplina === selected
+        ? activity.disciplinas.some((disciplina) => getDisciplineDisplayName(disciplina) === selectedDisciplineName)
         : activity.osCodigo === selected
     ));
 
@@ -122,6 +143,10 @@ export default function Disciplinas({ disciplinas, notes, osOptions, currentUser
             disciplinaOptions={sortedDisciplinas}
             currentUser={currentUser}
             templates={templates}
+            activities={allActivities}
+            forcePublica={forcePublica}
+            autoDisciplinaOs={autoDisciplinaOs}
+            authorDisciplinaByEmail={authorDisciplinaByEmail}
             onSave={onSaveNote}
             onDelete={onDeleteNote}
             onSaveTemplate={onSaveTemplate}
@@ -155,6 +180,10 @@ export default function Disciplinas({ disciplinas, notes, osOptions, currentUser
           disciplinaOptions={sortedDisciplinas}
           currentUser={currentUser}
           templates={templates}
+          activities={allActivities}
+          forcePublica={forcePublica}
+          autoDisciplinaOs={autoDisciplinaOs}
+            authorDisciplinaByEmail={authorDisciplinaByEmail}
           onSave={onSaveNote}
           onDelete={onDeleteNote}
           onSaveTemplate={onSaveTemplate}
@@ -182,6 +211,7 @@ export default function Disciplinas({ disciplinas, notes, osOptions, currentUser
             disciplinaOptions={sortedDisciplinas}
             currentUser={currentUser}
             templates={templates}
+            activities={allActivities}
             onSave={onSaveNote}
             onDelete={onDeleteNote}
             onSaveTemplate={onSaveTemplate}
@@ -200,7 +230,7 @@ export default function Disciplinas({ disciplinas, notes, osOptions, currentUser
       <div className="rounded-2xl border border-[#E5E7EB] bg-white p-6">
         <button
           type="button"
-          onClick={() => { setCategory(null); setSearch(''); }}
+          onClick={() => { setCategory(null); setSearch(''); setContratoFiltro(''); }}
           className="mb-5 flex h-9 items-center gap-1.5 rounded-full border border-[#E5E7EB] bg-white px-3 text-[12px] font-bold text-[#64748B] transition-colors hover:border-[#F7C7B7] hover:text-[#F05D28] cursor-pointer"
         >
           <ChevronLeft size={14} />
@@ -208,6 +238,18 @@ export default function Disciplinas({ disciplinas, notes, osOptions, currentUser
         </button>
 
         <div className="mb-5 flex flex-wrap items-center gap-3">
+          {category === 'os' && (
+            <select
+              value={contratoFiltro}
+              onChange={(event) => setContratoFiltro(event.target.value)}
+              className="h-11 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+            >
+              <option value="">Todos os contratos</option>
+              {contractOptions.map((contrato: { codigo: string; nome: string }) => (
+                <option key={contrato.codigo} value={contrato.codigo}>{contrato.codigo} - {contrato.nome}</option>
+              ))}
+            </select>
+          )}
           <div className="relative max-w-sm flex-1 min-w-[220px]">
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
             <input
@@ -282,26 +324,39 @@ export default function Disciplinas({ disciplinas, notes, osOptions, currentUser
     );
   }
 
-  // Nivel 1: landing da aba Notes - dois botoes de entrada, Disciplinas e OS.
+  // Nivel 1: landing da aba Notes - tiles de entrada (Disciplinas, OS, Notas, Mapa Mental).
   return (
     <div className="rounded-2xl border border-[#E5E7EB] bg-white p-6">
-      <div className="flex flex-col gap-3">
-        <button type="button" onClick={() => setCategory('disciplinas')} className="flex h-10 w-[190px] items-center gap-2 rounded-xl bg-[#F05D28] px-4 text-white transition-colors hover:bg-[#D94E1F] cursor-pointer">
-          <Layers size={18} strokeWidth={2} className="text-white flex-shrink-0" />
-          <span className="text-[13px] font-bold text-white">Disciplinas</span>
+      <p className="mb-4 text-[11px] font-bold uppercase tracking-widest text-[#94A3B8]">Notas</p>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {!restrictToOs && (
+          <button type="button" onClick={() => setCategory('disciplinas')} className={landingTileClass}>
+            <div className={landingIconCircleClass}>
+              <Layers size={22} strokeWidth={2} />
+            </div>
+            <span className="text-[13px] font-bold text-[#2D2D2D]">Disciplinas</span>
+          </button>
+        )}
+        <button type="button" onClick={() => setCategory('os')} className={landingTileClass}>
+          <div className={landingIconCircleClass}>
+            <ClipboardList size={22} strokeWidth={2} />
+          </div>
+          <span className="text-[13px] font-bold text-[#2D2D2D]">Ordem de Serviço</span>
         </button>
-        <button type="button" onClick={() => setCategory('os')} className="flex h-10 w-[190px] items-center gap-2 rounded-xl bg-[#F05D28] px-4 text-white transition-colors hover:bg-[#D94E1F] cursor-pointer">
-          <ClipboardList size={18} strokeWidth={2} className="text-white flex-shrink-0" />
-          <span className="text-[13px] font-bold text-white">Ordem de Serviço</span>
+        <button type="button" onClick={() => setCategory('notas')} className={landingTileClass}>
+          <div className={landingIconCircleClass}>
+            <StickyNote size={22} strokeWidth={2} />
+          </div>
+          <span className="text-[13px] font-bold text-[#2D2D2D]">Notas</span>
         </button>
-        <button type="button" onClick={() => setCategory('notas')} className="flex h-10 w-[190px] items-center gap-2 rounded-xl bg-[#F05D28] px-4 text-white transition-colors hover:bg-[#D94E1F] cursor-pointer">
-          <StickyNote size={18} strokeWidth={2} className="text-white flex-shrink-0" />
-          <span className="text-[13px] font-bold text-white">Notas</span>
-        </button>
-        <button type="button" onClick={() => setCategory('mapa')} className="flex h-10 w-[190px] items-center gap-2 rounded-xl bg-[#F05D28] px-4 text-white transition-colors hover:bg-[#D94E1F] cursor-pointer">
-          <Network size={18} strokeWidth={2} className="text-white flex-shrink-0" />
-          <span className="text-[13px] font-bold text-white">Mapa Mental</span>
-        </button>
+        {!restrictToOs && (
+          <button type="button" onClick={() => setCategory('mapa')} className={landingTileClass}>
+            <div className={landingIconCircleClass}>
+              <Network size={22} strokeWidth={2} />
+            </div>
+            <span className="text-[13px] font-bold text-[#2D2D2D]">Mapa Mental</span>
+          </button>
+        )}
       </div>
     </div>
   );

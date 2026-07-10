@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import SearchableSelect from './components/SearchableSelect';
 import {
   ClipboardList,
   Settings,
@@ -19,10 +20,14 @@ import {
   CheckSquare,
   UserCheck,
   Layers,
+  Sparkles,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type {
   AppTabKey,
+  DisciplinaRequest,
   DisciplineSettingRecord,
   UserAccessRecord,
   DatabaseLinkRecord,
@@ -30,26 +35,34 @@ import type {
   RoleTabPermissions,
   PreRegistrationRecord,
 } from './components/Administracao';
+import { ProjectVbaConfigCard } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
-import type { AnnotationSheet, AnnotationTemplate } from './components/CoordenacaoEngenharia/Anotacoes';
+import type { AnnotationBanco, AnnotationSheet, AnnotationTemplate } from './components/CoordenacaoEngenharia/Anotacoes';
 
-// Firestore rejects nested arrays, so `rows: string[][]` is JSON-encoded into a single string for storage.
-type WireAnnotationSheet = Omit<AnnotationSheet, 'rows'> & { rowsJson: string };
+// Firestore rejects nested arrays, so `rows: string[][]` (legado) and `bancos` (cada um com seu
+// proprio rows: string[][]) sao JSON-encoded em strings unicas para storage.
+type WireAnnotationSheet = Omit<AnnotationSheet, 'rows' | 'bancos'> & { rowsJson: string; bancosJson: string };
 
 function toWireAnnotationSheet(sheet: AnnotationSheet): WireAnnotationSheet {
-  const { rows, ...rest } = sheet;
-  return { ...rest, rowsJson: JSON.stringify(rows) };
+  const { rows, bancos, ...rest } = sheet;
+  return { ...rest, rowsJson: JSON.stringify(rows || []), bancosJson: JSON.stringify(bancos || []) };
 }
 
 function fromWireAnnotationSheet(sheet: WireAnnotationSheet): AnnotationSheet {
-  const { rowsJson, ...rest } = sheet;
+  const { rowsJson, bancosJson, ...rest } = sheet;
   let rows: string[][] = [];
   try {
     rows = JSON.parse(rowsJson || '[]');
   } catch {
     rows = [];
   }
-  return { ...rest, rows };
+  let bancos: AnnotationBanco[] = [];
+  try {
+    bancos = JSON.parse(bancosJson || '[]');
+  } catch {
+    bancos = [];
+  }
+  return { ...rest, rows, bancos };
 }
 
 type WireAnnotationTemplate = Omit<AnnotationTemplate, 'rows'> & { rowsJson: string };
@@ -70,10 +83,13 @@ function fromWireAnnotationTemplate(template: WireAnnotationTemplate): Annotatio
   return { ...rest, rows };
 }
 import { getAppVersionLabel } from './config/appVersion';
+import { PATCH_NOTES } from './config/patchNotes';
+import { applyTheme, getStoredTheme, type Theme } from './lib/theme';
 import {
   DEFAULT_DISCIPLINE_SETTINGS,
   getPrimaryDisciplineValue,
   getUserDisciplineList,
+  getUserPrimaryDiscipline,
   splitDisciplineValues,
 } from './lib/disciplineCatalog';
 import {
@@ -93,6 +109,7 @@ const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEnge
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
+const Disciplinas = React.lazy(() => import('./components/CoordenacaoEngenharia/Disciplinas'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
 const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
 const Administracao = React.lazy(() => import('./components/Administracao'));
@@ -133,12 +150,13 @@ function shouldLockUserToContract(user?: AuthUser | null) {
   return Boolean(String(user.contrato || '').trim());
 }
 
-type AppTab = 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'administracao';
-type AreaTecnicaSubTab = 'atividades' | 'cronograma';
-type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cronograma' | 'disciplinas';
-type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'cronograma' | 'atividades' | 'os' | 'curva-s';
-type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'cronograma';
-type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
+type AppTab = 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'administracao';
+type AreaTecnicaSubTab = 'atividades' | 'disciplinas';
+type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas';
+type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas';
+type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'disciplinas';
+type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | 'disciplinas';
+type CronogramaSubTab = 'cronograma' | 'disciplinas';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
@@ -986,7 +1004,7 @@ function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleT
   if (user.isAdmin) return true;
   const userTabs = Array.isArray(user.abas) ? user.abas.map(String) : [];
   if (tab === 'registro') {
-    return userTabs.includes('registro') || userTabs.includes('cronograma');
+    return userTabs.includes('registro');
   }
   if (tab === 'nc2') {
     return userTabs.includes('nc2') || userTabs.includes('nc');
@@ -1010,6 +1028,7 @@ function getFirstAccessibleTab(user: AuthUser, roleTabPermissions: RoleTabPermis
   if (userHasTabAccess(user, 'planejamento', roleTabPermissions)) return 'planejamento';
   if (userHasTabAccess(user, 'contrato', roleTabPermissions)) return 'contrato';
   if (userHasTabAccess(user, 'nc2', roleTabPermissions)) return 'nc2';
+  if (userHasTabAccess(user, 'cronograma', roleTabPermissions)) return 'cronograma';
   if (userHasTabAccess(user, 'administracao', roleTabPermissions)) return 'administracao';
   return null;
 }
@@ -1037,13 +1056,20 @@ function normalizeLoadedAdmin(admin: any, data: GlobalData) {
     ?? admin.disciplinasConfiguradas
     ?? DEFAULT_DISCIPLINE_SETTINGS,
   );
+  const validDisciplinaNames = getDisciplineNamesFromSettings(disciplineSettings);
+  const validDisciplinaSet = new Set(validDisciplinaNames);
+  // Disciplina cadastrada num usuario que o admin ja removeu/renomeou do catalogo:
+  // limpa so o campo (usuario precisa ser recadastrado), sem apagar mais nada dele.
+  const sanitizedUsers = normalizedUsers.map((user) => (
+    user.disciplina && !validDisciplinaSet.has(user.disciplina) ? { ...user, disciplina: '' } : user
+  ));
 
   return {
     ...admin,
-    users: normalizedUsers,
-    usuarios: normalizedUsers,
+    users: sanitizedUsers,
+    usuarios: sanitizedUsers,
     disciplineSettings,
-    disciplinas: getDisciplineNamesFromSettings(disciplineSettings),
+    disciplinas: validDisciplinaNames,
   };
 }
 
@@ -1549,6 +1575,14 @@ export default function App() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadText, setLoadText] = useState('Iniciando conexão...');
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
+  const [patchNotesOpen, setPatchNotesOpen] = useState(false);
+  const [userPanelOpen, setUserPanelOpen] = useState(false);
+  const [requestedDisciplinas, setRequestedDisciplinas] = useState<string[]>([]);
+  const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
 
@@ -1558,6 +1592,7 @@ export default function App() {
   const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('dashboard');
   const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('os');
+  const [cronogramaSubTab, setCronogramaSubTab] = React.useState<CronogramaSubTab>('cronograma');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [globalData, setGlobalData] = useState<GlobalData>({});
@@ -1588,12 +1623,21 @@ export default function App() {
   const [noteTemplates, setNoteTemplates] = useState<AnnotationTemplate[]>([]);
   const noteTemplatesLoadAttemptRef = React.useRef(false);
 
+  // Aba do usuario: pedido de outras disciplinas, aprovado/negado pelo admin.
+  const [disciplinaRequests, setDisciplinaRequests] = useState<DisciplinaRequest[]>([]);
+  const disciplinaRequestsLoadAttemptRef = React.useRef(false);
+
   // Filter States (Dashboard/Tech Mock)
   const [filtrosAtivos, setFiltrosAtivos] = React.useState({ contrato: 'Todos', os: 'Todos', disciplina: 'Todos' });
   const effectiveGlobalData = React.useMemo(() => {
     const withAdminRegistro = applyAdminDataToRegistro(globalData, currentUser);
     return withAdminRegistro;
   }, [globalData, currentUser]);
+  // Area Tecnica: pra saber se a nota publica de outra pessoa e da mesma disciplina do usuario.
+  const usuarioDisciplinaPorEmail = React.useMemo(
+    () => Object.fromEntries(usuarios.map((user) => [user.email, user.disciplina])),
+    [usuarios]
+  );
   const lockedContractCode = React.useMemo(
     () => {
       if (!shouldLockUserToContract(currentUser)) return '';
@@ -2085,6 +2129,7 @@ export default function App() {
       else if (userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)) setActiveTab('planejamento');
       else if (userHasTabAccess(currentUser, 'contrato', roleTabPermissions)) setActiveTab('contrato');
       else if (userHasTabAccess(currentUser, 'nc2', roleTabPermissions)) setActiveTab('nc2');
+      else if (userHasTabAccess(currentUser, 'cronograma', roleTabPermissions)) setActiveTab('cronograma');
       else if (userHasTabAccess(currentUser, 'administracao', roleTabPermissions)) setActiveTab('administracao');
     }
   }, [currentUser, activeTab, roleTabPermissions]);
@@ -2119,12 +2164,7 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || preloading) return;
 
-    const wantsCronograma =
-      (activeTab === 'registro' && areaTecnicaSubTab === 'cronograma') ||
-      (activeTab === 'controle' && subTab === 'cronograma') ||
-      (activeTab === 'planejamento' && planejamentoSubTab === 'cronograma') ||
-      (activeTab === 'contrato' && contratoSubTab === 'cronograma') ||
-      (activeTab === 'nc2' && nc2SubTab === 'cronograma');
+    const wantsCronograma = activeTab === 'cronograma';
 
     const wantsEap =
       (activeTab === 'controle' && subTab === 'curva-s') ||
@@ -2136,7 +2176,8 @@ export default function App() {
       activeTab === 'controle' ||
       activeTab === 'planejamento' ||
       activeTab === 'contrato' ||
-      activeTab === 'nc2';
+      activeTab === 'nc2' ||
+      activeTab === 'cronograma';
 
     if (wantsRegistro) void loadFirebaseModule('registro');
     if (wantsCronograma) void loadFirebaseModule('cronograma');
@@ -2325,6 +2366,33 @@ export default function App() {
       if (data?.templates) setNoteTemplates(data.templates.map(fromWireAnnotationTemplate));
     })();
   }, [activeTab, subTab]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    if (disciplinaRequestsLoadAttemptRef.current) return;
+    disciplinaRequestsLoadAttemptRef.current = true;
+    (async () => {
+      const data = await fetchFirebaseAppData<{ requests: DisciplinaRequest[] }>('disciplinaRequests');
+      if (data?.requests) setDisciplinaRequests(data.requests);
+    })();
+  }, [currentUser]);
+
+  // Usuario pede pra entrar em outras disciplinas: substitui o pedido pendente dele (se houver) por um novo.
+  const submitDisciplinaRequest = useCallback(async (disciplinasPedidas: string[]) => {
+    if (!currentUser) return;
+    const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ requests: DisciplinaRequest[] }>('disciplinaRequests') : null;
+    const baseline = remote?.requests ?? disciplinaRequests;
+    const request: DisciplinaRequest = {
+      id: createDraftId('discreq'),
+      userEmail: currentUser.email,
+      userNome: currentUser.nome,
+      disciplinas: disciplinasPedidas,
+      criadoEm: new Date().toISOString(),
+    };
+    const merged = [...baseline.filter((item) => item.userEmail !== currentUser.email), request];
+    if (isFirebaseConfigured()) await replaceFirebaseAppData('disciplinaRequests', { requests: merged });
+    setDisciplinaRequests(merged);
+  }, [currentUser, disciplinaRequests]);
 
   const deleteAnnotationSheet = useCallback(async (id: string) => {
     const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ sheets: WireAnnotationSheet[] }>('notes') : null;
@@ -2528,6 +2596,23 @@ export default function App() {
     markUserDirty(userId);
     markAdminChangesPending();
   }, [applyRolePresetTabs, invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
+
+  // Admin aprova (disciplinasAprovadas com pelo menos 1 item) ou nega (vazio) um pedido; some da fila nos dois casos.
+  const resolveDisciplinaRequest = useCallback(async (request: DisciplinaRequest, disciplinasAprovadas: string[]) => {
+    if (disciplinasAprovadas.length > 0) {
+      const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+      const user = sourceUsers.find((item) => item.email === request.userEmail);
+      if (user) {
+        const nextDisciplinas = Array.from(new Set([...user.disciplinas, ...disciplinasAprovadas]));
+        updateUsuarioDraft(user.id, { disciplinas: nextDisciplinas });
+      }
+    }
+    const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ requests: DisciplinaRequest[] }>('disciplinaRequests') : null;
+    const baseline = remote?.requests ?? disciplinaRequests;
+    const merged = baseline.filter((item) => item.id !== request.id);
+    if (isFirebaseConfigured()) await replaceFirebaseAppData('disciplinaRequests', { requests: merged });
+    setDisciplinaRequests(merged);
+  }, [disciplinaRequests, updateUsuarioDraft, usuarios]);
 
   const toggleUsuarioAdminDraft = useCallback((userId: string, checked: boolean) => {
     const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
@@ -2792,8 +2877,6 @@ export default function App() {
 
   if (booting && !preloading) return null;
 
-  const showCronogramaSubTab = Boolean(currentUser);
-
   const headerTabs = (() => {
     if (activeTab === 'controle') {
       return [
@@ -2801,7 +2884,6 @@ export default function App() {
         { key: 'profissionais', label: 'Profissionais', icon: <Users size={16} />, active: subTab === 'profissionais', onClick: () => setSubTab('profissionais') },
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
-        ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: subTab === 'cronograma', onClick: () => setSubTab('cronograma') }] : []),
         { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: subTab === 'disciplinas', onClick: () => setSubTab('disciplinas') },
       ];
     }
@@ -2810,9 +2892,8 @@ export default function App() {
       return [
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'dashboard', onClick: () => setPlanejamentoSubTab('dashboard') },
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'atividades', onClick: () => setPlanejamentoSubTab('atividades') },
-        { key: 'os', label: 'OS', icon: <FileText size={16} />, active: planejamentoSubTab === 'os', onClick: () => setPlanejamentoSubTab('os') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: planejamentoSubTab === 'curva-s', onClick: () => setPlanejamentoSubTab('curva-s') },
-        ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: planejamentoSubTab === 'cronograma', onClick: () => setPlanejamentoSubTab('cronograma') }] : []),
+        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: planejamentoSubTab === 'disciplinas', onClick: () => setPlanejamentoSubTab('disciplinas') },
       ];
     }
 
@@ -2823,7 +2904,7 @@ export default function App() {
         { key: 'preenchimento', label: 'Preenchimento', icon: <Clipboard size={16} />, active: nc2SubTab === 'preenchimento', onClick: () => setNc2SubTab('preenchimento') },
         { key: 'revisoes', label: 'Revisoes', icon: <CheckSquare size={16} />, active: nc2SubTab === 'revisoes', onClick: () => setNc2SubTab('revisoes') },
         { key: 'terceirizadas', label: 'Terceirizadas', icon: <Users size={16} />, active: nc2SubTab === 'terceirizadas', onClick: () => setNc2SubTab('terceirizadas') },
-        ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: nc2SubTab === 'cronograma', onClick: () => setNc2SubTab('cronograma') }] : []),
+        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: nc2SubTab === 'disciplinas', onClick: () => setNc2SubTab('disciplinas') },
       ];
     }
 
@@ -2832,14 +2913,21 @@ export default function App() {
         { key: 'os', label: 'OS', icon: <FileText size={16} />, active: contratoSubTab === 'os', onClick: () => setContratoSubTab('os') },
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: contratoSubTab === 'atividades', onClick: () => setContratoSubTab('atividades') },
         { key: 'interferencias', label: 'Interferências', icon: <AlertTriangle size={16} />, active: contratoSubTab === 'interferencias', onClick: () => setContratoSubTab('interferencias') },
-        ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: contratoSubTab === 'cronograma', onClick: () => setContratoSubTab('cronograma') }] : []),
+        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: contratoSubTab === 'disciplinas', onClick: () => setContratoSubTab('disciplinas') },
       ];
     }
 
     if (activeTab === 'registro') {
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: areaTecnicaSubTab === 'atividades', onClick: () => setAreaTecnicaSubTab('atividades') },
-        ...(showCronogramaSubTab ? [{ key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: areaTecnicaSubTab === 'cronograma', onClick: () => setAreaTecnicaSubTab('cronograma') }] : []),
+        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: areaTecnicaSubTab === 'disciplinas', onClick: () => setAreaTecnicaSubTab('disciplinas') },
+      ];
+    }
+
+    if (activeTab === 'cronograma') {
+      return [
+        { key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: cronogramaSubTab === 'cronograma', onClick: () => setCronogramaSubTab('cronograma') },
+        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: cronogramaSubTab === 'disciplinas', onClick: () => setCronogramaSubTab('disciplinas') },
       ];
     }
 
@@ -2866,12 +2954,12 @@ export default function App() {
 
   if (preloading) {
     return (
-      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center font-['Montserrat'] flex-col px-6">
+      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center font-['Montserrat'] flex-col px-6 dark:bg-[#0B1120]">
         <img src="https://i.imgur.com/Net1yEQ.png" alt="Logo" className="h-12 object-contain mb-8 animate-pulse" referrerPolicy="no-referrer" />
-        <div className="w-full max-w-[420px] bg-white rounded-3xl shadow-sm border border-[#E5E7EB] p-8 text-center">
-          <h2 className="text-[20px] font-bold text-[#2D2D2D] mb-1">Preparando ambiente</h2>
-          <p className="text-[13px] font-medium text-[#757575] mb-8 h-4">{loadText}</p>
-          <div className="relative w-full h-3 bg-[#F3F4F6] rounded-full overflow-hidden">
+        <div className="w-full max-w-[420px] bg-white rounded-3xl shadow-sm border border-[#E5E7EB] p-8 text-center dark:bg-[#0F172A] dark:border-[#1F2937]">
+          <h2 className="text-[20px] font-bold text-[#2D2D2D] mb-1 dark:text-[#F1F5F9]">Preparando ambiente</h2>
+          <p className="text-[13px] font-medium text-[#757575] mb-8 h-4 dark:text-[#94A3B8]">{loadText}</p>
+          <div className="relative w-full h-3 bg-[#F3F4F6] rounded-full overflow-hidden dark:bg-[#1F2937]">
             <div className="absolute top-0 left-0 h-full bg-[#F05D28] transition-all duration-[600ms] rounded-full" style={{ width: `${loadProgress}%` }} />
           </div>
         </div>
@@ -2880,46 +2968,50 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen w-full bg-[#F8F9FA] overflow-hidden font-['Montserrat']">
+    <div className="flex h-screen w-full bg-[#F8F9FA] overflow-hidden font-['Montserrat'] dark:bg-[#0B1120]">
       <AnimatePresence mode="wait">
         {sidebarOpen && (
-          <motion.aside initial={{ width: 0, opacity: 0 }} animate={{ width: 260, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={{ type: 'spring', damping: 20, stiffness: 100 }} className="h-full bg-white border-r border-[#E5E7EB] flex flex-col shrink-0 overflow-hidden">
+          <motion.aside initial={{ width: 0, opacity: 0 }} animate={{ width: 260, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={{ type: 'spring', damping: 20, stiffness: 100 }} className="h-full bg-white border-r border-[#E5E7EB] flex flex-col shrink-0 overflow-hidden dark:bg-[#0F172A] dark:border-[#1F2937]">
             <div className="p-8 flex items-center justify-between">
               <img src="https://i.imgur.com/Net1yEQ.png" alt="Logo" className="h-10 object-contain" referrerPolicy="no-referrer" />
             </div>
-            <div className="px-6 mt-4"><span className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">MENU</span></div>
+            <div className="px-6 mt-4"><span className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px] dark:text-[#64748B]">MENU</span></div>
             <nav className="px-4 mt-2 flex-1 space-y-1 overflow-y-auto">
               {currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && <NavItem icon={<ClipboardList size={20} />} label="Área Técnica" active={activeTab === 'registro'} onClick={() => setActiveTab('registro')} />}
               {currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <NavItem icon={<Settings size={20} />} label="Coordenação de Engenharia" active={activeTab === 'controle'} onClick={() => setActiveTab('controle')} />}
               {currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && <NavItem icon={<LayoutGrid size={20} />} label="Planejamento" active={activeTab === 'planejamento'} onClick={() => setActiveTab('planejamento')} />}
               {currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <NavItem icon={<FileText size={20} />} label="Contrato" active={activeTab === 'contrato'} onClick={() => setActiveTab('contrato')} />}
               {currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && <NavItem icon={<AlertTriangle size={20} />} label="Conformidade" active={activeTab === 'nc2'} onClick={() => setActiveTab('nc2')} />}
+              {currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && <NavItem icon={<Calendar size={20} />} label="Cronograma" active={activeTab === 'cronograma'} onClick={() => setActiveTab('cronograma')} />}
               {currentUser && currentUser.isAdmin && <NavItem icon={<ShieldCheck size={20} />} label="Administração" active={activeTab === 'administracao'} onClick={() => setActiveTab('administracao')} />}
             </nav>
-            <div className="p-6 border-t border-[#E5E7EB] space-y-4">
-              <div className="bg-[#F9FAFB] p-3 rounded-xl flex items-center gap-3">
+            <div className="p-6 border-t border-[#E5E7EB] space-y-4 dark:border-[#1F2937]">
+              <button
+                type="button"
+                onClick={() => setUserPanelOpen(true)}
+                className="w-full bg-[#F9FAFB] p-3 rounded-xl flex items-center gap-3 text-left transition-colors hover:bg-[#F3F4F6] dark:bg-[#111827] dark:hover:bg-[#1F2937]"
+              >
                 <div className="w-10 h-10 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm">
                   {currentUser ? getUserInitials(currentUser.nome) : 'US'}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-[#2D2D2D] truncate">{currentUser?.nome}</p>
-                  <p className="text-xs text-[#757575] truncate">{currentUser?.disciplina || 'Sem disciplina'}</p>
-                  <p className="text-xs text-[#757575] truncate">{currentUser?.role}</p>
+                  <p className="text-sm font-bold text-[#2D2D2D] truncate dark:text-[#F1F5F9]">{currentUser?.nome}</p>
+                  <p className="text-xs text-[#757575] truncate dark:text-[#94A3B8]">{currentUser?.disciplina || 'Sem disciplina'}</p>
+                  <p className="text-xs text-[#757575] truncate dark:text-[#94A3B8]">{currentUser?.role}</p>
                 </div>
-              </div>
+              </button>
               <p className="px-1 text-[10px] font-bold uppercase tracking-[1.5px] text-[#9CA3AF]">{APP_VERSION_LABEL}</p>
-              <button onClick={handleLogout} className="flex items-center gap-3 px-3 py-2 text-[#757575] hover:text-[#EF4444] transition-colors w-full text-sm font-medium"><LogOut size={18} /> Sair</button>
             </div>
           </motion.aside>
         )}
       </AnimatePresence>
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-24 bg-white border-b border-[#E5E7EB] flex items-center justify-between px-8 shrink-0 relative">
+        <header className="h-24 bg-white border-b border-[#E5E7EB] flex items-center justify-between px-8 shrink-0 relative dark:bg-[#0F172A] dark:border-[#1F2937]">
           <div className="flex items-center gap-6">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-[#F8FAFC] text-[#9CA3AF] transition-colors hover:bg-[#F1F5F9] hover:text-[#6B7280]"
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-[#F8FAFC] text-[#9CA3AF] transition-colors hover:bg-[#F1F5F9] hover:text-[#6B7280] dark:border-[#27303F] dark:bg-[#111827] dark:hover:bg-[#1F2937]"
               aria-label={sidebarOpen ? 'Recuar menu lateral' : 'Expandir menu lateral'}
               title={sidebarOpen ? 'Recuar menu lateral' : 'Expandir menu lateral'}
             >
@@ -2927,17 +3019,18 @@ export default function App() {
             </button>
             <div className="flex flex-col shrink-0">
               <div className="flex items-center gap-3">
-                <h2 className="text-[18px] font-bold text-[#2D2D2D] leading-tight">
+                <h2 className="text-[18px] font-bold text-[#2D2D2D] leading-tight dark:text-[#F1F5F9]">
                   {activeTab === 'registro'
-                    ? (areaTecnicaSubTab === 'atividades' ? 'Atividades' : 'Cronograma')
+                    ? (areaTecnicaSubTab === 'atividades' ? 'Atividades' : 'Notas')
                     : activeTab === 'controle' ? 'Coordenação de Engenharia'
                     : activeTab === 'planejamento' ? 'Planejamento'
                     : activeTab === 'contrato' ? 'Contrato'
                     : activeTab === 'nc2' ? 'Conformidade'
+                    : activeTab === 'cronograma' ? 'Cronograma'
                     : 'Administração'}
                 </h2>
               </div>
-              <span className="text-[10px] font-medium text-[#757575] uppercase tracking-widest mt-1">EcoQuanta · Ecossistema Quanta</span>
+              <span className="text-[10px] font-medium text-[#757575] uppercase tracking-widest mt-1 dark:text-[#64748B]">EcoQuanta · Ecossistema Quanta</span>
             </div>
           </div>
 
@@ -2950,7 +3043,7 @@ export default function App() {
           )}
 
           {visibleHeaderTabs.length > 0 && (
-            <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-[#E5E7EB] max-w-[58vw] overflow-x-auto">
+            <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-[#E5E7EB] max-w-[58vw] overflow-x-auto dark:bg-[#111827] dark:border-[#27303F]">
               {visibleHeaderTabs.map((tab) => (
                 <HeaderTab key={tab.key} active={tab.active} onClick={tab.onClick} icon={tab.icon} label={tab.label} />
               ))}
@@ -2965,51 +3058,298 @@ export default function App() {
                 if (currentUser) void refreshRealtimeEnvironment(currentUser);
               }}
               disabled={!currentUser || isBackgroundSyncing}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#9CA3AF] transition-colors hover:bg-[#F8FAFC] hover:text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#9CA3AF] transition-colors hover:bg-[#F8FAFC] hover:text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#27303F] dark:bg-[#111827] dark:text-[#94A3B8] dark:hover:bg-[#1F2937]"
               aria-label="Atualizar dados do Firebase"
               title="Atualizar dados do Firebase"
             >
               <RefreshCw size={18} className={isBackgroundSyncing ? 'animate-spin' : ''} />
             </button>
-            <div className="w-10 h-10 rounded-full border border-[#E5E7EB] bg-white flex items-center justify-center text-[#F05D28] font-bold text-sm hidden sm:flex">
+            <button
+              type="button"
+              onClick={() => setUserPanelOpen(true)}
+              className="w-10 h-10 rounded-full border border-[#E5E7EB] bg-white flex items-center justify-center text-[#F05D28] font-bold text-sm hidden sm:flex dark:border-[#27303F] dark:bg-[#111827]"
+              title="Área do usuário"
+            >
               {currentUser ? getUserInitials(currentUser.nome) : ''}
-            </div>
+            </button>
           </div>
         </header>
 
-        <main className={`flex-1 overflow-y-auto ${ (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ? 'p-3' : 'p-8' } bg-[#F8F9FA]`}>
-          <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}`}>
+        {patchNotesOpen && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setPatchNotesOpen(false)}>
+            <div className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-[#0F172A]" onClick={(event) => event.stopPropagation()}>
+              <div className="flex items-center justify-between gap-4 border-b border-[#E5E7EB] px-5 py-4 dark:border-[#1F2937]">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={18} className="text-[#F05D28]" />
+                  <h2 className="text-[15px] font-black text-[#1F2937] dark:text-[#F1F5F9]">Novidades</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPatchNotesOpen(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#2D2D2D] dark:hover:bg-[#1F2937] dark:hover:text-[#F1F5F9]"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto p-5">
+                {PATCH_NOTES.map((entry) => (
+                  <div key={entry.version} className="mb-6 last:mb-0">
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="rounded-full bg-[#FFF3EE] px-2.5 py-1 text-[11px] font-bold text-[#F05D28] dark:bg-[#3A2318]">v{entry.version}</span>
+                      <span className="text-[11px] font-medium text-[#94A3B8]">{entry.date}</span>
+                    </div>
+                    <h3 className="mb-2 text-[13px] font-bold text-[#2D2D2D] dark:text-[#F1F5F9]">{entry.title}</h3>
+                    <ul className="list-disc space-y-1.5 pl-5">
+                      {entry.items.map((item, index) => (
+                        <li key={index} className="text-[13px] leading-relaxed text-[#374151] dark:text-[#CBD5E1]">{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {userPanelOpen && currentUser && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setUserPanelOpen(false)}>
+            <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-[#0F172A]" onClick={(event) => event.stopPropagation()}>
+              <div className="flex items-center justify-between gap-4 border-b border-[#E5E7EB] px-5 py-4 dark:border-[#1F2937]">
+                <h2 className="text-[15px] font-black text-[#1F2937] dark:text-[#F1F5F9]">Área do usuário</h2>
+                <button
+                  type="button"
+                  onClick={() => setUserPanelOpen(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#2D2D2D] dark:hover:bg-[#1F2937] dark:hover:text-[#F1F5F9]"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="flex flex-col gap-4 p-5">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#F05D28]/10 text-sm font-bold text-[#F05D28]">
+                    {getUserInitials(currentUser.nome)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-bold text-[#2D2D2D] dark:text-[#F1F5F9]">{currentUser.nome}</p>
+                    <p className="truncate text-[12px] text-[#757575] dark:text-[#94A3B8]">{currentUser.email}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-[#E5E7EB] p-3 dark:border-[#27303F]">
+                  <div>
+                    <p className="text-[13px] font-bold text-[#2D2D2D] dark:text-[#F1F5F9]">Tema</p>
+                    <p className="text-[11px] text-[#757575] dark:text-[#94A3B8]">{theme === 'dark' ? 'Modo escuro' : 'Modo claro'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+                    className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#9CA3AF] transition-colors hover:bg-[#F8FAFC] hover:text-[#6B7280] dark:border-[#27303F] dark:bg-[#111827] dark:text-[#94A3B8] dark:hover:bg-[#1F2937]"
+                    aria-label={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
+                    title={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
+                  >
+                    {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => { setUserPanelOpen(false); setPatchNotesOpen(true); }}
+                  className="flex items-center justify-between rounded-xl border border-[#E5E7EB] p-3 text-left transition-colors hover:border-[#F7C7B7] dark:border-[#27303F] dark:hover:border-[#F05D28]"
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={16} className="text-[#F05D28]" />
+                    <span className="text-[13px] font-bold text-[#2D2D2D] dark:text-[#F1F5F9]">Ver novidades ({APP_VERSION_LABEL})</span>
+                  </div>
+                  <ChevronRight size={16} className="text-[#94A3B8]" />
+                </button>
+
+                {(() => {
+                  const minhasDisciplinas = getUserDisciplineList(currentUser);
+                  const outrasDisciplinas = disciplinas.filter((item) => !minhasDisciplinas.includes(item));
+                  const pedidoPendente = disciplinaRequests.find((item) => item.userEmail === currentUser.email);
+                  return (
+                    <div className="rounded-xl border border-[#E5E7EB] p-3 dark:border-[#27303F]">
+                      <p className="mb-1 text-[13px] font-bold text-[#2D2D2D] dark:text-[#F1F5F9]">Disciplinas</p>
+                      <p className="mb-2 text-[11px] text-[#757575] dark:text-[#94A3B8]">
+                        Suas: {minhasDisciplinas.length > 0 ? minhasDisciplinas.join(', ') : 'nenhuma'}
+                      </p>
+                      {pedidoPendente ? (
+                        <p className="rounded-lg bg-[#FFF7ED] px-2.5 py-2 text-[11px] font-medium text-[#B45309] dark:bg-[#3A2318]">
+                          Pedido pendente: {pedidoPendente.disciplinas.join(', ')} — aguardando aprovação do admin.
+                        </p>
+                      ) : outrasDisciplinas.length > 0 ? (
+                        <>
+                          <p className="mb-1.5 text-[11px] font-medium text-[#757575] dark:text-[#94A3B8]">Pedir para entrar em outras disciplinas:</p>
+                          <SearchableSelect
+                            value=""
+                            onChange={(event) => {
+                              if (event.target.value) setRequestedDisciplinas((prev) => [...prev, event.target.value]);
+                            }}
+                            searchPlaceholder="Buscar disciplina..."
+                            className="mb-2 h-10 w-full rounded-lg border border-[#E5E7EB] bg-white px-3 text-[12px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28] dark:border-[#27303F] dark:bg-[#111827] dark:text-[#F1F5F9]"
+                          >
+                            <option value="">Selecione uma disciplina...</option>
+                            {outrasDisciplinas.filter((item) => !requestedDisciplinas.includes(item)).map((item) => (
+                              <option key={item} value={item}>{item}</option>
+                            ))}
+                          </SearchableSelect>
+                          {requestedDisciplinas.length > 0 && (
+                            <div className="mb-2 flex flex-wrap gap-1.5">
+                              {requestedDisciplinas.map((item) => (
+                                <span key={item} className="inline-flex items-center gap-1 rounded-full border border-[#F05D28] bg-[#FFF3EE] py-1 pl-2.5 pr-1.5 text-[11px] font-medium text-[#F05D28]">
+                                  {item}
+                                  <button
+                                    type="button"
+                                    onClick={() => setRequestedDisciplinas((prev) => prev.filter((d) => d !== item))}
+                                    className="flex h-4 w-4 items-center justify-center rounded-full hover:bg-[#FEE2E2] hover:text-[#DC2626]"
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            disabled={requestedDisciplinas.length === 0}
+                            onClick={() => { void submitDisciplinaRequest(requestedDisciplinas); setRequestedDisciplinas([]); }}
+                            className="h-9 w-full rounded-lg bg-[#F05D28] text-[12px] font-bold text-white hover:bg-[#D94E1F] disabled:opacity-50"
+                          >
+                            Enviar pedido
+                          </button>
+                        </>
+                      ) : (
+                        <p className="text-[11px] text-[#94A3B8]">Você já está em todas as disciplinas cadastradas.</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <button onClick={handleLogout} className="flex items-center gap-3 px-1 py-2 text-[#757575] hover:text-[#EF4444] transition-colors w-full text-sm font-medium">
+                  <LogOut size={18} /> Sair
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <main className={`flex-1 overflow-y-auto ${ (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ? 'p-3' : 'p-8' } bg-[#F8F9FA] dark:bg-[#0B1120]`}>
+          <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${cronogramaSubTab}:${adminSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
-                areaTecnicaSubTab === 'atividades'
-                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines autoSelectUserDisciplineFilter disciplineFilterEnabled splitOsCardsByDiscipline />
-                  : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                areaTecnicaSubTab === 'disciplinas'
+                  ? (
+                    <Disciplinas
+                      disciplinas={disciplinas || []}
+                      notes={notes || []}
+                      osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
+                      currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
+                      templates={noteTemplates}
+                      preloadedData={effectiveGlobalData}
+                      restrictToOs
+                      forcePublica
+                      autoDisciplinaOs={getUserPrimaryDiscipline(currentUser)}
+                      authorDisciplinaByEmail={usuarioDisciplinaPorEmail}
+                      onSaveNote={saveAnnotationSheet}
+                      onDeleteNote={deleteAnnotationSheet}
+                      onSaveTemplate={saveNoteTemplate}
+                      onDeleteTemplate={deleteNoteTemplate}
+                    />
+                  )
+                  : <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines autoSelectUserDisciplineFilter disciplineFilterEnabled splitOsCardsByDiscipline />
               )}
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} noteTemplates={noteTemplates} onSaveNoteTemplate={saveNoteTemplate} onDeleteNoteTemplate={deleteNoteTemplate} />}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
-                planejamentoSubTab === 'dashboard'
-                  ? <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="dashboard" activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
-                  : planejamentoSubTab === 'atividades'
-                    ? (
-                      <div className="w-full flex flex-col font-['Montserrat']">
-                        <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
-                          <span>Planejamento</span>
-                          <ChevronRight size={12} />
-                          <span className="text-[#F05D28]">Atividades</span>
-                        </div>
-                        <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled />
+                planejamentoSubTab === 'atividades'
+                  ? (
+                    <div className="w-full flex flex-col font-['Montserrat']">
+                      <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
+                        <span>Planejamento</span>
+                        <ChevronRight size={12} />
+                        <span className="text-[#F05D28]">Atividades</span>
                       </div>
-                    )
-                    : planejamentoSubTab === 'os'
-                      ? <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView="os" />
-                      : planejamentoSubTab === 'curva-s'
-                        ? <CurvaS preloadedData={effectiveGlobalData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
-                        : planejamentoSubTab === 'cronograma'
-                          ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
-                          : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                      <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled />
+                    </div>
+                  )
+                  : planejamentoSubTab === 'curva-s'
+                    ? <CurvaS preloadedData={effectiveGlobalData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
+                    : planejamentoSubTab === 'disciplinas'
+                      ? (
+                        <Disciplinas
+                          disciplinas={disciplinas || []}
+                          notes={notes || []}
+                          osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
+                          currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
+                          templates={noteTemplates}
+                          preloadedData={effectiveGlobalData}
+                          onSaveNote={saveAnnotationSheet}
+                          onDeleteNote={deleteAnnotationSheet}
+                          onSaveTemplate={saveNoteTemplate}
+                          onDeleteTemplate={deleteNoteTemplate}
+                        />
+                      )
+                      : (
+                        <div className="w-full flex flex-col gap-6 font-['Montserrat']">
+                          <ProjectVbaConfigCard />
+                          <Planejamento filtrosAtivos={filtrosAtivos} preloadedData={effectiveGlobalData} mode="dashboard" activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
+                        </div>
+                      )
               )}
-              {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />}
+              {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && (
+                contratoSubTab === 'disciplinas'
+                  ? (
+                    <Disciplinas
+                      disciplinas={disciplinas || []}
+                      notes={notes || []}
+                      osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
+                      currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
+                      templates={noteTemplates}
+                      preloadedData={effectiveGlobalData}
+                      onSaveNote={saveAnnotationSheet}
+                      onDeleteNote={deleteAnnotationSheet}
+                      onSaveTemplate={saveNoteTemplate}
+                      onDeleteTemplate={deleteNoteTemplate}
+                    />
+                  )
+                  : <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />
+              )}
+              {activeTab === 'cronograma' && currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && (
+                cronogramaSubTab === 'disciplinas'
+                  ? (
+                    <Disciplinas
+                      disciplinas={disciplinas || []}
+                      notes={notes || []}
+                      osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
+                      currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
+                      templates={noteTemplates}
+                      preloadedData={effectiveGlobalData}
+                      onSaveNote={saveAnnotationSheet}
+                      onDeleteNote={deleteAnnotationSheet}
+                      onSaveTemplate={saveNoteTemplate}
+                      onDeleteTemplate={deleteNoteTemplate}
+                    />
+                  )
+                  : userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)
+                    ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
+                    : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+              )}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
+                nc2SubTab === 'disciplinas'
+                  ? (
+                    <Disciplinas
+                      disciplinas={disciplinas || []}
+                      notes={notes || []}
+                      osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
+                      currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
+                      templates={noteTemplates}
+                      preloadedData={effectiveGlobalData}
+                      onSaveNote={saveAnnotationSheet}
+                      onDeleteNote={deleteAnnotationSheet}
+                      onSaveTemplate={saveNoteTemplate}
+                      onDeleteTemplate={deleteNoteTemplate}
+                    />
+                  )
+                  : (
                 <NaoConformidades
                   activeTab={nc2SubTab}
                   onTabChange={setNc2SubTab}
@@ -3026,6 +3366,7 @@ export default function App() {
                   hasPendingChanges={adminHasPendingChanges}
                   isSavingChanges={isSavingAdminChanges}
                 />
+                  )
               )}
               {activeTab === 'administracao' && currentUser?.isAdmin && (
                 <Administracao
@@ -3043,6 +3384,8 @@ export default function App() {
                   preRegistrations={preRegistrations}
                   onAddPreRegistration={addPreRegistration}
                   onRemovePreRegistration={removePreRegistration}
+                  disciplinaRequests={disciplinaRequests}
+                  onResolveDisciplinaRequest={resolveDisciplinaRequest}
                 />
               )}
             </React.Suspense>
@@ -3055,7 +3398,7 @@ export default function App() {
 
 function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active?: boolean; onClick?: () => void; }) {
   return (
-    <div onClick={onClick} className={`flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer transition-all ${active ? 'bg-[#F05D28]/10 text-[#F05D28] text-[14px] font-bold' : 'text-[#757575] text-[14px] font-medium hover:bg-[#F4F5F7] hover:text-[#2D2D2D]'}`}>
+    <div onClick={onClick} className={`flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer transition-all ${active ? 'bg-[#F05D28]/10 text-[#F05D28] text-[14px] font-bold' : 'text-[#757575] text-[14px] font-medium hover:bg-[#F4F5F7] hover:text-[#2D2D2D] dark:text-[#94A3B8] dark:hover:bg-[#1F2937] dark:hover:text-[#F1F5F9]'}`}>
       {icon} <span>{label}</span>
     </div>
   );
@@ -3068,7 +3411,7 @@ function HeaderTab({ active, onClick, icon, label }: { key?: string; active: boo
       className={`flex h-9 shrink-0 items-center gap-2 overflow-hidden rounded-lg px-4 transition-colors duration-200 ${
         active
           ? 'bg-[#F05D28] text-white shadow-sm'
-          : 'text-[#757575] hover:bg-[#F0F1F2] hover:text-[#2D2D2D]'
+          : 'text-[#757575] hover:bg-[#F0F1F2] hover:text-[#2D2D2D] dark:text-[#94A3B8] dark:hover:bg-[#1F2937] dark:hover:text-[#F1F5F9]'
       }`}
       title={typeof label === 'string' ? label : undefined}
       aria-label={typeof label === 'string' ? label : undefined}

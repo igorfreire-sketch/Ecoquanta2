@@ -1446,7 +1446,7 @@ export default function Cronograma({
                 <SearchableSelect
                   value={ganttScaleMode}
                   onChange={(event) => setGanttScaleMode(event.target.value as GanttScaleMode)}
-                  className="bg-transparent text-[11px] font-black uppercase tracking-[0.8px] text-[#334155] outline-none"
+                  className="h-7 min-w-[100px] rounded-md bg-transparent px-2 text-[11px] font-black uppercase tracking-[0.8px] text-[#334155] outline-none hover:bg-slate-100"
                 >
                   <option value="day">Dias</option>
                   <option value="week">Semanas</option>

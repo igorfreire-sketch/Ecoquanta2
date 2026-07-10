@@ -76,9 +76,9 @@ export default function LoginScreen({
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] font-['Montserrat'] flex items-center justify-center px-6 py-10">
-      <div className="w-full max-w-[1160px] grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] bg-white border border-[#E5E7EB] rounded-[28px] shadow-sm overflow-hidden">
-        <div className="bg-white p-10 lg:p-14 flex flex-col justify-between">
+    <div className="min-h-screen bg-[#F8F9FA] font-['Montserrat'] flex items-center justify-center px-6 py-10 dark:bg-[#0B1120]">
+      <div className="w-full max-w-[1160px] grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] bg-white border border-[#E5E7EB] rounded-[28px] shadow-sm overflow-hidden dark:bg-[#0F172A] dark:border-[#1F2937]">
+        <div className="bg-white p-10 lg:p-14 flex flex-col justify-between dark:bg-[#0F172A]">
           <div>
             <img
               src="https://i.imgur.com/Net1yEQ.png"
@@ -88,13 +88,13 @@ export default function LoginScreen({
             />
 
             <div className="mt-14 max-w-[520px]">
-              <p className="text-[11px] font-medium text-[#757575] uppercase tracking-[1.5px]">
+              <p className="text-[11px] font-medium text-[#757575] uppercase tracking-[1.5px] dark:text-[#94A3B8]">
                 Acesso ao ecossistema
               </p>
-              <h1 className="text-[34px] leading-tight font-bold text-[#2D2D2D] mt-3">
+              <h1 className="text-[34px] leading-tight font-bold text-[#2D2D2D] mt-3 dark:text-[#F1F5F9]">
                 Bem-vindo ao EcoQuanta.
               </h1>
-              <p className="text-[15px] text-[#757575] mt-5 leading-relaxed">
+              <p className="text-[15px] text-[#757575] mt-5 leading-relaxed dark:text-[#94A3B8]">
                 Grandes obras não nascem de mãos solitárias, nascem da força de quem constrói junto.
               </p>
             </div>

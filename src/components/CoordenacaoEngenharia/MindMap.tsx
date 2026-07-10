@@ -11,7 +11,7 @@ interface MindMapProps {
 }
 
 const COLOR_PUBLICA = '#F05D28';
-const COLOR_PRIVADA = '#B45309';
+const COLOR_PRIVADA = '#2563EB';
 const COLOR_LINK = '#CBD5E1';
 const NODE_RADIUS = 6;
 const HIT_RADIUS = NODE_RADIUS + 6;
@@ -86,11 +86,11 @@ export default function MindMap({ sheets, currentUserEmail, onOpenNote, onClose 
 
   return (
     <div className="fixed inset-0 z-[200] flex flex-col overflow-hidden bg-white">
-      <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-2.5">
+      <div className="flex items-center justify-between gap-4 border-b border-[#E5E7EB] px-5 py-2.5">
         <div className="flex items-center gap-4">
-          <h2 className="text-[15px] font-black text-[#1F2937]">Mapa Mental</h2>
-          <span className="text-[11px] text-slate-400">{graphData.nodes.length} nota(s) · {graphData.links.length} vínculo(s)</span>
-          <div className="flex items-center gap-3 text-[11px] font-medium text-slate-500">
+          <h2 className="text-[15px] font-black text-[#2D2D2D]">Mapa Mental</h2>
+          <span className="text-[11px] text-[#94A3B8]">{graphData.nodes.length} nota(s) · {graphData.links.length} vínculo(s)</span>
+          <div className="flex items-center gap-3 text-[11px] font-medium text-[#64748B]">
             <span className="flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLOR_PUBLICA }} />
               Pública
@@ -104,7 +104,7 @@ export default function MindMap({ sheets, currentUserEmail, onOpenNote, onClose 
         <button
           type="button"
           onClick={onClose}
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-[12px] font-bold text-slate-600 transition-all hover:border-slate-300 hover:bg-slate-50"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#E5E7EB] bg-white px-3 text-[12px] font-bold text-[#64748B] transition-colors hover:border-[#F7C7B7] hover:bg-[#F9FAFB] hover:text-[#2D2D2D]"
         >
           <X size={14} />
           Fechar

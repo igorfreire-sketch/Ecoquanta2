@@ -25,6 +25,29 @@ import TerceirizadasCadastro from './TerceirizadasCadastro';
 import { downloadSystemBackup } from '../lib/systemBackup';
 import { downloadProjectVbaConfig } from '../lib/projectVbaAssets';
 
+export function ProjectVbaConfigCard() {
+  return (
+    <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
+      <div className="space-y-2">
+        <div className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
+          MS Project
+        </div>
+        <h3 className="text-[16px] font-bold text-[#2D2D2D]">Configuração Project</h3>
+        <p className="text-[13px] text-[#757575] leading-relaxed">Baixa o script VBA e o tutorial de instalação para publicar a EAP do MS Project direto no Firebase.</p>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => void downloadProjectVbaConfig()}
+        className="h-11 px-5 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center justify-center gap-2 w-fit"
+      >
+        <Download size={16} />
+        Baixar Configuração Project
+      </button>
+    </div>
+  );
+}
+
 export type AppTabKey =
   | 'registro'
   | 'controle'
@@ -35,6 +58,15 @@ export type AppTabKey =
   | 'nc2'
   | 'cronograma'
   | 'administracao';
+
+// Pedido de outras disciplinas feito pelo proprio usuario na Area do Usuario, aguardando o admin aprovar/negar.
+export interface DisciplinaRequest {
+  id: string;
+  userEmail: string;
+  userNome: string;
+  disciplinas: string[];
+  criadoEm: string;
+}
 
 export type UserStatus = 'pending' | 'approved' | 'blocked';
 export type DisciplinaOption = string;
@@ -127,6 +159,8 @@ interface AdministracaoProps {
   preRegistrations: PreRegistrationRecord[];
   onAddPreRegistration: (record: PreRegistrationRecord) => void;
   onRemovePreRegistration: (email: string) => void;
+  disciplinaRequests: DisciplinaRequest[];
+  onResolveDisciplinaRequest: (request: DisciplinaRequest, disciplinasAprovadas: string[]) => Promise<void>;
 }
 
 function statusLabel(status: UserStatus) {
@@ -897,6 +931,8 @@ export default function Administracao({
   preRegistrations,
   onAddPreRegistration,
   onRemovePreRegistration,
+  disciplinaRequests,
+  onResolveDisciplinaRequest,
 }: AdministracaoProps) {
   const [search, setSearch] = React.useState('');
   const deferredSearch = React.useDeferredValue(search);
@@ -929,6 +965,7 @@ export default function Administracao({
   const [preRegAlocacao, setPreRegAlocacao] = React.useState('');
   const [preRegContrato, setPreRegContrato] = React.useState('');
   const [preRegAllowedTabs, setPreRegAllowedTabs] = React.useState<AppTabKey[]>([]);
+  const [uncheckedByRequest, setUncheckedByRequest] = React.useState<Record<string, string[]>>({});
 
   const totalUsuarios = usuarios.length;
   const usuariosOnline = usuarios.filter((user) => user.online).length;
@@ -1056,6 +1093,67 @@ export default function Administracao({
           </div>
         </div>
       </section>
+
+      {disciplinaRequests.length > 0 && (
+        <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 lg:p-8">
+          <p className="mb-4 text-[11px] font-bold uppercase tracking-widest text-[#94A3B8]">
+            Pedidos de disciplina pendentes ({disciplinaRequests.length})
+          </p>
+          <div className="flex flex-col gap-3">
+            {disciplinaRequests.map((request) => {
+              const unchecked = uncheckedByRequest[request.id] || [];
+              const checkedDisciplinas = request.disciplinas.filter((item) => !unchecked.includes(item));
+              return (
+                <div key={request.id} className="rounded-xl border border-[#E5E7EB] p-4">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[13px] font-bold text-[#2D2D2D]">{request.userNome}</p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void onResolveDisciplinaRequest(request, [])}
+                        className="h-8 rounded-lg border border-[#FECACA] px-3 text-[11px] font-bold text-[#B91C1C] hover:bg-[#FEF2F2]"
+                      >
+                        Negar tudo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void onResolveDisciplinaRequest(request, checkedDisciplinas)}
+                        disabled={checkedDisciplinas.length === 0}
+                        className="h-8 rounded-lg bg-[#F05D28] px-3 text-[11px] font-bold text-white hover:bg-[#D94E1F] disabled:opacity-50"
+                      >
+                        Aprovar marcadas
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {request.disciplinas.map((item) => {
+                      const checked = !unchecked.includes(item);
+                      return (
+                        <label
+                          key={item}
+                          className={`flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium cursor-pointer ${checked ? 'border-[#F05D28] bg-[#FFF3EE] text-[#F05D28]' : 'border-[#E5E7EB] text-[#94A3B8] line-through'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => setUncheckedByRequest((prev) => {
+                              const current = prev[request.id] || [];
+                              const next = current.includes(item) ? current.filter((d) => d !== item) : [...current, item];
+                              return { ...prev, [request.id]: next };
+                            })}
+                            className="h-3 w-3 accent-[#F05D28]"
+                          />
+                          {item}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-5 lg:p-6">
         <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-[minmax(280px,1.2fr)_minmax(180px,220px)_minmax(180px,220px)_auto] gap-4 items-end">
@@ -1584,25 +1682,6 @@ export default function Administracao({
               {backupStatus.message}
             </p>
           )}
-        </div>
-
-        <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
-          <div className="space-y-2">
-            <div className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
-              MS Project
-            </div>
-            <h3 className="text-[16px] font-bold text-[#2D2D2D]">Configuração Project</h3>
-            <p className="text-[13px] text-[#757575] leading-relaxed">Baixa o script VBA e o tutorial de instalação para publicar a EAP do MS Project direto no Firebase.</p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void downloadProjectVbaConfig()}
-            className="h-11 px-5 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center justify-center gap-2 w-fit"
-          >
-            <Download size={16} />
-            Baixar Configuração Project
-          </button>
         </div>
       </section>
 

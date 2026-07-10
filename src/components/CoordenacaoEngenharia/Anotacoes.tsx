@@ -4,6 +4,7 @@ import { getDisciplineDisplayName, getDisciplineIconInfo, type EngineeringActivi
 import { exportNoteToCsv, exportNoteToPdf, exportNotesToMarkdown } from '../../lib/noteExport';
 import { isLeadershipOrAdmin } from '../../lib/firebaseDb';
 import CronogramaResumo from './CronogramaResumo';
+import MindMap from './MindMap';
 
 export interface AnnotationBanco {
   id: string;
@@ -614,8 +615,26 @@ export default function Anotacoes({
         </div>
 
         <div className="w-[30%] flex-shrink-0 overflow-auto border-l border-[#E5E7EB] p-5">
-          <h4 className="mb-3 text-[13px] font-bold text-[#2D2D2D]">Cronograma</h4>
-          <CronogramaResumo activities={noteActivities} contextLabel={editing.osCodigo ? 'disciplina' : 'os'} />
+          {controlledSheet ? (
+            <>
+              <h4 className="mb-3 text-[13px] font-bold text-[#2D2D2D]">Mapa Mental</h4>
+              <div className="h-[calc(100%-2rem)]">
+                <MindMap
+                  embedded
+                  highlightId={editing.id}
+                  sheets={sheets}
+                  currentUserEmail={currentUser.email}
+                  osOptions={osOptions}
+                  onOpenNote={(sheet) => openNote(sheet)}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <h4 className="mb-3 text-[13px] font-bold text-[#2D2D2D]">Cronograma</h4>
+              <CronogramaResumo activities={noteActivities} contextLabel={editing.osCodigo ? 'disciplina' : 'os'} />
+            </>
+          )}
         </div>
         </div>
 

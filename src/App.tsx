@@ -156,7 +156,6 @@ type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 
 type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'disciplinas';
 type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | 'disciplinas';
-type CronogramaSubTab = 'cronograma' | 'disciplinas';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
@@ -1592,7 +1591,6 @@ export default function App() {
   const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('dashboard');
   const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('os');
-  const [cronogramaSubTab, setCronogramaSubTab] = React.useState<CronogramaSubTab>('cronograma');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [globalData, setGlobalData] = useState<GlobalData>({});
@@ -2924,12 +2922,6 @@ export default function App() {
       ];
     }
 
-    if (activeTab === 'cronograma') {
-      return [
-        { key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: cronogramaSubTab === 'cronograma', onClick: () => setCronogramaSubTab('cronograma') },
-        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: cronogramaSubTab === 'disciplinas', onClick: () => setCronogramaSubTab('disciplinas') },
-      ];
-    }
 
     if (activeTab === 'administracao') {
 
@@ -3234,7 +3226,7 @@ export default function App() {
         )}
 
         <main className={`flex-1 overflow-y-auto ${ (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ? 'p-3' : 'p-8' } bg-[#F8F9FA] dark:bg-[#0B1120]`}>
-          <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${cronogramaSubTab}:${adminSubTab}`}>
+          <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'disciplinas'
@@ -3314,24 +3306,9 @@ export default function App() {
                   : <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />
               )}
               {activeTab === 'cronograma' && currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && (
-                cronogramaSubTab === 'disciplinas'
-                  ? (
-                    <Disciplinas
-                      disciplinas={disciplinas || []}
-                      notes={notes || []}
-                      osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
-                      currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
-                      templates={noteTemplates}
-                      preloadedData={effectiveGlobalData}
-                      onSaveNote={saveAnnotationSheet}
-                      onDeleteNote={deleteAnnotationSheet}
-                      onSaveTemplate={saveNoteTemplate}
-                      onDeleteTemplate={deleteNoteTemplate}
-                    />
-                  )
-                  : userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)
-                    ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
-                    : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)
+                  ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
+                  : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
                 nc2SubTab === 'disciplinas'

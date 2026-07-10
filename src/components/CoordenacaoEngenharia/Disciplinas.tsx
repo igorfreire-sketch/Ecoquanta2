@@ -200,6 +200,7 @@ export default function Disciplinas({ disciplinas, notes, osOptions, currentUser
         <MindMap
           sheets={notes}
           currentUserEmail={currentUser.email}
+          osOptions={sortedOs}
           onOpenNote={(sheet) => setMindMapOpenSheet(sheet)}
           onClose={() => { setCategory(null); setMindMapOpenSheet(null); }}
         />

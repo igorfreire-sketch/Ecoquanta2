@@ -189,12 +189,27 @@ export function exportNotesToMarkdown(sheets: AnnotationSheet[], currentUserEmai
       ? bancos.map((banco, index) => `#### Banco ${index + 1}\n\n${renderBancoTable(banco)}`).join('\n\n')
       : '_Nota sem banco de dados (tabela)._';
 
+    // getSheetTextos cobre tanto os blocos novos quanto o campo texto antigo.
+    const textosMarkdown = getSheetTextos(sheet)
+      .filter((bloco) => bloco.texto.trim())
+      .map((bloco, index) => `#### Texto livre ${index + 1}\n\n${bloco.texto.trim()}`)
+      .join('\n\n');
+
+    const checklistsMarkdown = (sheet.checklists || [])
+      .filter((lista) => lista.itens.length > 0)
+      .map((lista, index) => [
+        `#### Checklist ${index + 1}`,
+        lista.itens.map((item) => `- [${item.feito ? 'x' : ' '}] ${item.texto || '(sem descrição)'}`).join('\n'),
+      ].join('\n\n'))
+      .join('\n\n');
+
     return [
       `<a id="nota-${sheet.id}"></a>`,
       `## ${sheet.titulo || 'Sem título'}`,
       metaLines,
       bancosMarkdown,
-      sheet.texto?.trim() ? `#### Texto livre\n\n${sheet.texto.trim()}` : '',
+      textosMarkdown,
+      checklistsMarkdown,
       linkedTitles.length > 0 ? `**Notas que esta referencia:** ${linkedTitles.join(', ')}` : '',
       backlinkTitles.length > 0 ? `**Notas que referenciam esta:** ${backlinkTitles.join(', ')}` : '',
     ].filter(Boolean).join('\n\n');

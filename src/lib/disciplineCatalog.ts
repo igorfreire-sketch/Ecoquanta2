@@ -147,6 +147,83 @@ export function getUserPrimaryDiscipline(user?: { disciplina?: string; disciplin
   return list[0] || '';
 }
 
+// ---- Setores ----
+// A empresa ainda nao tem um time por disciplina, entao varias disciplinas respondem por um
+// setor so. Os FILTROS falam em setor; a disciplina fina continua gravada nos dados, pronta
+// pra quando os setores forem separados.
+const SETOR_POR_CODIGO: Record<string, string> = {
+  ARQ: 'Arquitetura', URB: 'Arquitetura', LAY: 'Arquitetura',
+  LUM: 'Arquitetura', ACES: 'Arquitetura', APS: 'Arquitetura',
+
+  TSD: 'Serviço de Campo', TOPO: 'Serviço de Campo',
+
+  EST: 'Estrutural', SCO: 'Estrutural', CONT: 'Estrutural',
+  SMT: 'Estrutural', FUND: 'Estrutural',
+
+  HIDS: 'Hidrossanitário', HIDA: 'Hidrossanitário', ESG: 'Hidrossanitário',
+  DREN: 'Hidrossanitário', REUS: 'Hidrossanitário', IMPE: 'Hidrossanitário',
+
+  GAS: 'PCI/Gás', PCI: 'PCI/Gás',
+
+  SUB: 'Elétrico', ELET: 'Elétrico', SPDA: 'Elétrico', EREN: 'Elétrico',
+  CFTV: 'Elétrico', SOM: 'Elétrico', AUVI: 'Elétrico', ACUS: 'Elétrico',
+  CENO: 'Elétrico', DADO: 'Elétrico', AUTO: 'Elétrico', TELE: 'Elétrico',
+  ALA: 'Elétrico',
+
+  AVAC: 'AVAC', ARCO: 'AVAC',
+
+  TERR: 'Terraplanagem/Pavimentação', VPAV: 'Terraplanagem/Pavimentação',
+  SINS: 'Terraplanagem/Pavimentação', VIAR: 'Terraplanagem/Pavimentação',
+};
+
+// Marcadas como "Excluir": somem das listas de filtro. Os dados antigos continuam intactos.
+const SETORES_OCULTOS = new Set(['ECON', 'GEO', 'CLSH', 'GER']);
+
+const CODIGO_POR_ALIAS = (() => {
+  const map = new Map<string, string>();
+  DEFAULT_DISCIPLINES.forEach((item) => {
+    item.aliases.forEach((alias) => map.set(normalizeText(alias), item.code));
+  });
+  return map;
+})();
+
+const ENTRADA_POR_CODIGO = new Map(DEFAULT_DISCIPLINES.map((item) => [item.code, item]));
+
+function codigoDe(value?: string) {
+  return CODIGO_POR_ALIAS.get(normalizeText(normalizeDisciplineEntry(value))) || '';
+}
+
+export function isDisciplineHidden(value?: string) {
+  const codigo = codigoDe(value);
+  return Boolean(codigo) && SETORES_OCULTOS.has(codigo);
+}
+
+// Setor de uma disciplina. Sem agrupamento definido, ela e o proprio setor - e usa o NOME
+// limpo, nao o label "COD - Nome", pra ficar do mesmo jeito que os setores agrupados.
+export function getDisciplineSector(value?: string) {
+  const codigo = codigoDe(value);
+  if (!codigo) return normalizeDisciplineEntry(value);
+  return SETOR_POR_CODIGO[codigo] || ENTRADA_POR_CODIGO.get(codigo)?.name || '';
+}
+
+// Unica lista que os filtros de disciplina podem exibir. Nome fora do catalogo NAO entra:
+// cadastro livre no admin vazava pro filtro e furava o agrupamento.
+export function getSectorOptions(disciplinas: string[]) {
+  const setores = new Set<string>();
+  disciplinas.forEach((item) => {
+    if (!codigoDe(item)) return;
+    if (isDisciplineHidden(item)) return;
+    const setor = getDisciplineSector(item);
+    if (setor) setores.add(setor);
+  });
+  return Array.from(setores).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+
+export function disciplineMatchesSector(disciplina: string, setor: string) {
+  if (!setor) return true;
+  return getDisciplineSector(disciplina) === setor;
+}
+
 export function buildDisciplineRecordsFromValues(values: any) {
   const list = splitDisciplineValues(values);
   return list.length > 0 ? list : [];

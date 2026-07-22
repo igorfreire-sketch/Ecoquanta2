@@ -554,6 +554,28 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
 
   const allFilteredOsSelected = filteredOsOptions.length > 0 && filteredOsOptions.every((os) => selectedOsList.includes(os.code));
 
+  // A tela abre com todas as OS do contrato marcadas. Re-marca ao trocar de contrato
+  // (a chave muda), mas nao desfaz o que o usuario escolher depois.
+  const osInicializadasRef = useRef('');
+  useEffect(() => {
+    if (activeOsOptions.length === 0) return;
+    const chave = `${selectedContract}:${activeOsOptions.length}`;
+    if (osInicializadasRef.current === chave) return;
+    osInicializadasRef.current = chave;
+    setSelectedOsList(activeOsOptions.map((os) => os.code));
+  }, [activeOsOptions, selectedContract]);
+
+  const todasSelecionadas = activeOsOptions.length > 0 && selectedOsList.length === activeOsOptions.length;
+
+  // Estando em "todas", clicar numa OS troca a selecao por ela (o "TODAS" sai sozinho)
+  // em vez de tirar so uma da lista inteira.
+  const selecionarOs = (code: string) => {
+    setSelectedOsList((previous) => {
+      if (todasSelecionadas) return [code];
+      return previous.includes(code) ? previous.filter((item) => item !== code) : [...previous, code];
+    });
+  };
+
   const toggleFilteredOs = () => {
     const visibleCodes = filteredOsOptions.map((os) => os.code);
     if (allFilteredOsSelected) {
@@ -697,7 +719,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
                       {allFilteredOsSelected ? <CheckSquare size={16}/> : <Square size={16}/>} {osSearch ? 'TODAS VISIVEIS' : 'TODAS'}
                     </button>
                     {filteredOsOptions.map(os => (
-                      <button type="button" key={os.code} onClick={() => setSelectedOsList(p => p.includes(os.code) ? p.filter(c => c !== os.code) : [...p, os.code])} className="flex items-center gap-2 text-[12px] text-gray-700 p-2 hover:bg-gray-100 w-full rounded text-left">
+                      <button type="button" key={os.code} onClick={() => selecionarOs(os.code)} className="flex items-center gap-2 text-[12px] text-gray-700 p-2 hover:bg-gray-100 w-full rounded text-left">
                         {selectedOsList.includes(os.code) ? <CheckSquare size={16} className="text-[#3B82F6]"/> : <Square size={16} className="text-gray-400"/>} {os.name}
                       </button>
                     ))}

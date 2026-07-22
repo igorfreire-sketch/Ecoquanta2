@@ -9,7 +9,8 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
-  RefreshCw,
+  Bell,
+  AtSign,
   X,
   LayoutDashboard,
   TrendingUp,
@@ -20,11 +21,13 @@ import {
   CheckSquare,
   UserCheck,
   Layers,
+  Home,
+  Database,
   Sparkles,
   Moon,
   Sun,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import type {
   AppTabKey,
   DisciplinaRequest,
@@ -37,7 +40,10 @@ import type {
 } from './components/Administracao';
 import { ProjectVbaConfigCard } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
-import type { AnnotationBanco, AnnotationSheet, AnnotationTemplate } from './components/CoordenacaoEngenharia/Anotacoes';
+import { getSheetDisciplinas, type AnnotationBanco, type AnnotationSheet } from './components/CoordenacaoEngenharia/Anotacoes';
+import Notificacoes from './components/Notificacoes';
+import FirebaseExplorer from './components/FirebaseExplorer';
+import Principal from './components/Principal';
 
 // Firestore rejects nested arrays, so `rows: string[][]` (legado) and `bancos` (cada um com seu
 // proprio rows: string[][]) sao JSON-encoded em strings unicas para storage.
@@ -65,23 +71,6 @@ function fromWireAnnotationSheet(sheet: WireAnnotationSheet): AnnotationSheet {
   return { ...rest, rows, bancos };
 }
 
-type WireAnnotationTemplate = Omit<AnnotationTemplate, 'rows'> & { rowsJson: string };
-
-function toWireAnnotationTemplate(template: AnnotationTemplate): WireAnnotationTemplate {
-  const { rows, ...rest } = template;
-  return { ...rest, rowsJson: JSON.stringify(rows) };
-}
-
-function fromWireAnnotationTemplate(template: WireAnnotationTemplate): AnnotationTemplate {
-  const { rowsJson, ...rest } = template;
-  let rows: string[][] = [];
-  try {
-    rows = JSON.parse(rowsJson || '[]');
-  } catch {
-    rows = [];
-  }
-  return { ...rest, rows };
-}
 import { getAppVersionLabel } from './config/appVersion';
 import { PATCH_NOTES } from './config/patchNotes';
 import { applyTheme, getStoredTheme, type Theme } from './lib/theme';
@@ -89,7 +78,6 @@ import {
   DEFAULT_DISCIPLINE_SETTINGS,
   getPrimaryDisciplineValue,
   getUserDisciplineList,
-  getUserPrimaryDiscipline,
   splitDisciplineValues,
 } from './lib/disciplineCatalog';
 import {
@@ -102,6 +90,8 @@ import {
   isFirebaseConfigured,
   hashPasswordLikeAppsScript,
   replaceFirebaseAppData,
+  canDeleteNote,
+  canEditNote,
 } from './lib/firebaseDb';
 
 const Atividades = React.lazy(() => import('./components/Atividades'));
@@ -109,7 +99,7 @@ const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEnge
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
-const Disciplinas = React.lazy(() => import('./components/CoordenacaoEngenharia/Disciplinas'));
+const Notes = React.lazy(() => import('./components/CoordenacaoEngenharia/Notes'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
 const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
 const Administracao = React.lazy(() => import('./components/Administracao'));
@@ -150,13 +140,13 @@ function shouldLockUserToContract(user?: AuthUser | null) {
   return Boolean(String(user.contrato || '').trim());
 }
 
-type AppTab = 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'administracao';
+type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'administracao';
 type AreaTecnicaSubTab = 'atividades' | 'disciplinas';
 type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas';
 type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'disciplinas';
 type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | 'disciplinas';
-type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro';
+type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro' | 'firebase';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
   { key: 'nc2', label: 'Conformidade' },
@@ -1585,13 +1575,14 @@ export default function App() {
 
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
 
-  const [activeTab, setActiveTab] = React.useState<AppTab>('registro');
+  const [activeTab, setActiveTab] = React.useState<AppTab>('principal');
   const [areaTecnicaSubTab, setAreaTecnicaSubTab] = React.useState<AreaTecnicaSubTab>('atividades');
-  const [subTab, setSubTab] = React.useState<ControleSubTab>('profissionais');
+  const [subTab, setSubTab] = React.useState<ControleSubTab>('planejamento');
   const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('dashboard');
   const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
-  const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('os');
+  const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('atividades');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
+  const [cronogramaSubTab, setCronogramaSubTab] = React.useState<'cronograma' | 'disciplinas'>('cronograma');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [globalData, setGlobalData] = useState<GlobalData>({});
 
@@ -1618,8 +1609,6 @@ export default function App() {
   // ANOTACOES (Disciplinas)
   const [notes, setNotes] = useState<AnnotationSheet[]>([]);
   const notesLoadAttemptRef = React.useRef(false);
-  const [noteTemplates, setNoteTemplates] = useState<AnnotationTemplate[]>([]);
-  const noteTemplatesLoadAttemptRef = React.useRef(false);
 
   // Aba do usuario: pedido de outras disciplinas, aprovado/negado pelo admin.
   const [disciplinaRequests, setDisciplinaRequests] = useState<DisciplinaRequest[]>([]);
@@ -1631,11 +1620,6 @@ export default function App() {
     const withAdminRegistro = applyAdminDataToRegistro(globalData, currentUser);
     return withAdminRegistro;
   }, [globalData, currentUser]);
-  // Area Tecnica: pra saber se a nota publica de outra pessoa e da mesma disciplina do usuario.
-  const usuarioDisciplinaPorEmail = React.useMemo(
-    () => Object.fromEntries(usuarios.map((user) => [user.email, user.disciplina])),
-    [usuarios]
-  );
   const lockedContractCode = React.useMemo(
     () => {
       if (!shouldLockUserToContract(currentUser)) return '';
@@ -2330,40 +2314,126 @@ export default function App() {
   }, [activeTab, currentUser?.isAdmin, disciplinas.length, loadAdminData, usuarios.length]);
 
   const saveAnnotationSheet = useCallback(async (sheet: AnnotationSheet) => {
+    if (!currentUser) return;
     const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ sheets: WireAnnotationSheet[] }>('notes') : null;
     const baseline = remote?.sheets ? remote.sheets.map(fromWireAnnotationSheet) : notes;
+    // Guarda real: a checagem da UI so esconde os campos, aqui e onde todo caller passa.
+    // Nota nova (ainda nao existe na base) qualquer um cria; alterar exige permissao.
+    const anterior = baseline.find((item) => item.id === sheet.id);
+    if (anterior && !canEditNote(currentUser, anterior.autorEmail, anterior.marcadosUsuarios)) {
+      window.alert('Apenas o autor, um administrador ou um usuário vinculado pode alterar esta nota.');
+      return;
+    }
     const merged = [...baseline.filter((item) => item.id !== sheet.id), sheet];
     if (isFirebaseConfigured()) await replaceFirebaseAppData('notes', { sheets: merged.map(toWireAnnotationSheet) });
     setNotes(merged);
-  }, [notes]);
+  }, [notes, currentUser]);
+
+  // Todas as areas usam a mesma chave de sub-aba pra pagina Notes.
+  const subAbaAtual = ({
+    registro: areaTecnicaSubTab,
+    controle: subTab,
+    planejamento: planejamentoSubTab,
+    contrato: contratoSubTab,
+    nc2: nc2SubTab,
+    cronograma: cronogramaSubTab,
+    administracao: adminSubTab,
+  } as Record<string, string>)[activeTab];
+  const notesPageOpen = subAbaAtual === 'disciplinas';
+
+  // Leva pra pagina de Notas sem sair da area em que a pessoa esta (toda area tem essa sub-aba).
+  const irParaNotas = () => {
+    const setters: Record<string, (valor: any) => void> = {
+      registro: setAreaTecnicaSubTab,
+      controle: setSubTab,
+      planejamento: setPlanejamentoSubTab,
+      contrato: setContratoSubTab,
+      nc2: setNc2SubTab,
+      cronograma: setCronogramaSubTab,
+    };
+    const ir = setters[activeTab];
+    // Administracao nao tem pagina de Notas: cai na Area Tecnica.
+    if (ir) ir('disciplinas');
+    else { setActiveTab('registro'); setAreaTecnicaSubTab('disciplinas'); }
+  };
+
+  // ---- Notificações ----
+  // "Visto" fica no proprio navegador: contador zerado nao merece uma escrita no Firebase.
+  const chaveNotif = currentUser ? `ecoquanta:notif:${currentUser.email}` : '';
+  const [notifVistas, setNotifVistas] = useState<{ setor: string; direta: string }>({ setor: '', direta: '' });
 
   useEffect(() => {
-    if (activeTab !== 'controle' || subTab !== 'disciplinas') return;
+    if (!chaveNotif) return;
+    try {
+      const salvo = localStorage.getItem(chaveNotif);
+      setNotifVistas(salvo ? JSON.parse(salvo) : { setor: '', direta: '' });
+    } catch {
+      setNotifVistas({ setor: '', direta: '' });
+    }
+  }, [chaveNotif]);
+
+  const marcarNotificacoesVistas = (tipo: 'setor' | 'direta') => {
+    if (!chaveNotif) return;
+    const proximo = { ...notifVistas, [tipo]: new Date().toISOString() };
+    setNotifVistas(proximo);
+    try { localStorage.setItem(chaveNotif, JSON.stringify(proximo)); } catch { /* modo privado: so nao persiste */ }
+  };
+
+  const { notificacoesSetor, notificacoesDiretas, naoLidosSetor, naoLidosDiretas } = React.useMemo(() => {
+    const vazio = { notificacoesSetor: [], notificacoesDiretas: [], naoLidosSetor: 0, naoLidosDiretas: 0 };
+    if (!currentUser) return vazio;
+
+    const minhasDisciplinas = new Set(getUserDisciplineList(currentUser));
+    const deOutros = notes.filter((nota) => nota.autorEmail !== currentUser.email);
+    const recentesPrimeiro = (lista: AnnotationSheet[]) => [...lista]
+      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
+      .slice(0, 15);
+
+    const paraItem = (nota: AnnotationSheet) => ({
+      id: nota.id,
+      titulo: nota.titulo || 'Sem título',
+      descricao: nota.autorNome || nota.autorEmail || 'Autor desconhecido',
+      data: nota.updatedAt ? new Date(nota.updatedAt).toLocaleDateString('pt-BR') : undefined,
+    });
+
+    // Setor: nota pública de alguém da mesma disciplina que você.
+    const setor = deOutros.filter((nota) => (
+      nota.publica !== false && getSheetDisciplinas(nota).some((item) => minhasDisciplinas.has(item))
+    ));
+    // Direta: você foi citado (vinculado) na nota.
+    const direta = deOutros.filter((nota) => (nota.marcadosUsuarios || []).includes(currentUser.email));
+
+    const contarNovas = (lista: AnnotationSheet[], desde: string) => (
+      desde ? lista.filter((nota) => (nota.updatedAt || '') > desde).length : lista.length
+    );
+
+    return {
+      notificacoesSetor: recentesPrimeiro(setor).map(paraItem),
+      notificacoesDiretas: recentesPrimeiro(direta).map(paraItem),
+      naoLidosSetor: contarNovas(setor, notifVistas.setor),
+      naoLidosDiretas: contarNovas(direta, notifVistas.direta),
+    };
+  }, [notes, currentUser, notifVistas]);
+
+  const [notaParaAbrir, setNotaParaAbrir] = useState<AnnotationSheet | null>(null);
+  const abrirNotaNotificada = (id: string) => {
+    const nota = notes.find((item) => item.id === id);
+    if (!nota) return;
+    irParaNotas();
+    setNotaParaAbrir(nota);
+  };
+
+  useEffect(() => {
+    // As notas alimentam a pagina de Notas, os dois sinos e os contadores da Principal,
+    // entao carregam uma vez por sessao e nao so ao abrir a aba de Notas.
+    if (!currentUser) return;
     if (notesLoadAttemptRef.current) return;
     notesLoadAttemptRef.current = true;
     (async () => {
       const data = await fetchFirebaseAppData<{ sheets: WireAnnotationSheet[] }>('notes');
       if (data?.sheets) setNotes(data.sheets.map(fromWireAnnotationSheet));
     })();
-  }, [activeTab, subTab]);
-
-  const saveNoteTemplate = useCallback(async (template: AnnotationTemplate) => {
-    const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ templates: WireAnnotationTemplate[] }>('noteTemplates') : null;
-    const baseline = remote?.templates ? remote.templates.map(fromWireAnnotationTemplate) : noteTemplates;
-    const merged = [...baseline.filter((item) => item.id !== template.id), template];
-    if (isFirebaseConfigured()) await replaceFirebaseAppData('noteTemplates', { templates: merged.map(toWireAnnotationTemplate) });
-    setNoteTemplates(merged);
-  }, [noteTemplates]);
-
-  useEffect(() => {
-    if (activeTab !== 'controle' || subTab !== 'disciplinas') return;
-    if (noteTemplatesLoadAttemptRef.current) return;
-    noteTemplatesLoadAttemptRef.current = true;
-    (async () => {
-      const data = await fetchFirebaseAppData<{ templates: WireAnnotationTemplate[] }>('noteTemplates');
-      if (data?.templates) setNoteTemplates(data.templates.map(fromWireAnnotationTemplate));
-    })();
-  }, [activeTab, subTab]);
+  }, [currentUser, notesPageOpen]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -2393,20 +2463,20 @@ export default function App() {
   }, [currentUser, disciplinaRequests]);
 
   const deleteAnnotationSheet = useCallback(async (id: string) => {
+    if (!currentUser) return;
     const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ sheets: WireAnnotationSheet[] }>('notes') : null;
     const baseline = remote?.sheets ? remote.sheets.map(fromWireAnnotationSheet) : notes;
+    // Guarda real: a checagem da UI so esconde o botao, aqui e onde todo caller passa.
+    const alvo = baseline.find((item) => item.id === id);
+    if (!alvo) return;
+    if (!canDeleteNote(currentUser, alvo.autorEmail)) {
+      window.alert('Apenas o autor da nota ou um administrador do sistema pode excluí-la.');
+      return;
+    }
     const merged = baseline.filter((item) => item.id !== id);
     if (isFirebaseConfigured()) await replaceFirebaseAppData('notes', { sheets: merged.map(toWireAnnotationSheet) });
     setNotes(merged);
-  }, [notes]);
-
-  const deleteNoteTemplate = useCallback(async (id: string) => {
-    const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ templates: WireAnnotationTemplate[] }>('noteTemplates') : null;
-    const baseline = remote?.templates ? remote.templates.map(fromWireAnnotationTemplate) : noteTemplates;
-    const merged = baseline.filter((item) => item.id !== id);
-    if (isFirebaseConfigured()) await replaceFirebaseAppData('noteTemplates', { templates: merged.map(toWireAnnotationTemplate) });
-    setNoteTemplates(merged);
-  }, [noteTemplates]);
+  }, [notes, currentUser]);
 
   const handleLogin = async (email: string, password: string, rememberMe: boolean) => {
     if (!isFirebaseConfigured()) {
@@ -2875,14 +2945,28 @@ export default function App() {
 
   if (booting && !preloading) return null;
 
+  // Pagina Notes: uma unica instancia reusada por todas as areas - mesmos dados, mesmo acesso.
+  const notesPage = currentUser ? (
+    <Notes
+      disciplinas={disciplinas || []}
+      notes={notes || []}
+      osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
+      currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
+      preloadedData={effectiveGlobalData}
+      usuarios={usuarios}
+      abrirNota={notaParaAbrir}
+      onNotaAberta={() => setNotaParaAbrir(null)}
+      onSaveNote={saveAnnotationSheet}
+      onDeleteNote={deleteAnnotationSheet}
+    />
+  ) : null;
+
   const headerTabs = (() => {
     if (activeTab === 'controle') {
       return [
-        { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: subTab === 'dashboard', onClick: () => setSubTab('dashboard') },
-        { key: 'profissionais', label: 'Profissionais', icon: <Users size={16} />, active: subTab === 'profissionais', onClick: () => setSubTab('profissionais') },
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
-        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: subTab === 'disciplinas', onClick: () => setSubTab('disciplinas') },
+        { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: subTab === 'disciplinas', onClick: () => setSubTab('disciplinas') },
       ];
     }
 
@@ -2891,7 +2975,7 @@ export default function App() {
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'dashboard', onClick: () => setPlanejamentoSubTab('dashboard') },
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'atividades', onClick: () => setPlanejamentoSubTab('atividades') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: planejamentoSubTab === 'curva-s', onClick: () => setPlanejamentoSubTab('curva-s') },
-        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: planejamentoSubTab === 'disciplinas', onClick: () => setPlanejamentoSubTab('disciplinas') },
+        { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: planejamentoSubTab === 'disciplinas', onClick: () => setPlanejamentoSubTab('disciplinas') },
       ];
     }
 
@@ -2902,26 +2986,31 @@ export default function App() {
         { key: 'preenchimento', label: 'Preenchimento', icon: <Clipboard size={16} />, active: nc2SubTab === 'preenchimento', onClick: () => setNc2SubTab('preenchimento') },
         { key: 'revisoes', label: 'Revisoes', icon: <CheckSquare size={16} />, active: nc2SubTab === 'revisoes', onClick: () => setNc2SubTab('revisoes') },
         { key: 'terceirizadas', label: 'Terceirizadas', icon: <Users size={16} />, active: nc2SubTab === 'terceirizadas', onClick: () => setNc2SubTab('terceirizadas') },
-        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: nc2SubTab === 'disciplinas', onClick: () => setNc2SubTab('disciplinas') },
+        { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: nc2SubTab === 'disciplinas', onClick: () => setNc2SubTab('disciplinas') },
       ];
     }
 
     if (activeTab === 'contrato') {
       return [
-        { key: 'os', label: 'OS', icon: <FileText size={16} />, active: contratoSubTab === 'os', onClick: () => setContratoSubTab('os') },
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: contratoSubTab === 'atividades', onClick: () => setContratoSubTab('atividades') },
-        { key: 'interferencias', label: 'Interferências', icon: <AlertTriangle size={16} />, active: contratoSubTab === 'interferencias', onClick: () => setContratoSubTab('interferencias') },
-        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: contratoSubTab === 'disciplinas', onClick: () => setContratoSubTab('disciplinas') },
+        { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: contratoSubTab === 'disciplinas', onClick: () => setContratoSubTab('disciplinas') },
       ];
     }
 
     if (activeTab === 'registro') {
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: areaTecnicaSubTab === 'atividades', onClick: () => setAreaTecnicaSubTab('atividades') },
-        { key: 'disciplinas', label: 'Notes', icon: <Layers size={16} />, active: areaTecnicaSubTab === 'disciplinas', onClick: () => setAreaTecnicaSubTab('disciplinas') },
+        { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: areaTecnicaSubTab === 'disciplinas', onClick: () => setAreaTecnicaSubTab('disciplinas') },
       ];
     }
 
+
+    if (activeTab === 'cronograma') {
+      return [
+        { key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: cronogramaSubTab === 'cronograma', onClick: () => setCronogramaSubTab('cronograma') },
+        { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: cronogramaSubTab === 'disciplinas', onClick: () => setCronogramaSubTab('disciplinas') },
+      ];
+    }
 
     if (activeTab === 'administracao') {
 
@@ -2930,15 +3019,21 @@ export default function App() {
         { key: 'terceirizadas', label: 'Terceirizadas', icon: <ShieldCheck size={16} />, active: adminSubTab === 'terceirizadas', onClick: () => setAdminSubTab('terceirizadas') },
         { key: 'pre-cadastro', label: 'Pré-cadastro', icon: <UserCheck size={16} />, active: adminSubTab === 'pre-cadastro', onClick: () => setAdminSubTab('pre-cadastro') },
         { key: 'gerenciamento', label: 'Gerenciamento', icon: <Settings size={16} />, active: adminSubTab === 'gerenciamento', onClick: () => setAdminSubTab('gerenciamento') },
+        { key: 'firebase', label: 'Firebase', icon: <Database size={16} />, active: adminSubTab === 'firebase', onClick: () => setAdminSubTab('firebase') },
       ];
     }
 
     return [];
   })();
 
-  const visibleHeaderTabs = activeTab === 'controle'
-    ? headerTabs.filter((tab) => tab.key !== 'alocacoes')
-    : headerTabs;
+  // Sub-abas agora vivem na barra da esquerda, aninhadas sob a area ativa.
+  const subNav = headerTabs.length > 0 ? (
+    <div className="mb-1 mt-0.5 space-y-0.5">
+      {headerTabs.filter((tab) => tab.key !== 'alocacoes').map((tab) => (
+        <SubNavItem key={tab.key} icon={tab.icon} label={tab.label} active={tab.active} onClick={tab.onClick} />
+      ))}
+    </div>
+  ) : null;
 
   if (!currentUser && !preloading) {
     return <LoginScreen onLogin={handleLogin} onRegister={handleRegister} onForgotPassword={handleForgotPassword} onResetPassword={handleResetPassword} />;
@@ -2960,6 +3055,8 @@ export default function App() {
   }
 
   return (
+    // reducedMotion="user": quem pediu menos animacao no sistema recebe as telas sem movimento.
+    <MotionConfig reducedMotion="user">
     <div className="flex h-screen w-full bg-[#F8F9FA] overflow-hidden font-['Montserrat'] dark:bg-[#0B1120]">
       <AnimatePresence mode="wait">
         {sidebarOpen && (
@@ -2969,13 +3066,39 @@ export default function App() {
             </div>
             <div className="px-6 mt-4"><span className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px] dark:text-[#64748B]">MENU</span></div>
             <nav className="px-4 mt-2 flex-1 space-y-1 overflow-y-auto">
-              {currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && <NavItem icon={<ClipboardList size={20} />} label="Área Técnica" active={activeTab === 'registro'} onClick={() => setActiveTab('registro')} />}
-              {currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <NavItem icon={<Settings size={20} />} label="Coordenação de Engenharia" active={activeTab === 'controle'} onClick={() => setActiveTab('controle')} />}
-              {currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && <NavItem icon={<LayoutGrid size={20} />} label="Planejamento" active={activeTab === 'planejamento'} onClick={() => setActiveTab('planejamento')} />}
-              {currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && <NavItem icon={<FileText size={20} />} label="Contrato" active={activeTab === 'contrato'} onClick={() => setActiveTab('contrato')} />}
-              {currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && <NavItem icon={<AlertTriangle size={20} />} label="Conformidade" active={activeTab === 'nc2'} onClick={() => setActiveTab('nc2')} />}
-              {currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && <NavItem icon={<Calendar size={20} />} label="Cronograma" active={activeTab === 'cronograma'} onClick={() => setActiveTab('cronograma')} />}
-              {currentUser && currentUser.isAdmin && <NavItem icon={<ShieldCheck size={20} />} label="Administração" active={activeTab === 'administracao'} onClick={() => setActiveTab('administracao')} />}
+              {currentUser && (
+                <NavItem icon={<Home size={20} />} label="Principal" active={activeTab === 'principal'} onClick={() => setActiveTab('principal')} />
+              )}
+              {currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
+                <>
+                  <NavItem icon={<ClipboardList size={20} />} label="Área Técnica" active={activeTab === 'registro'} onClick={() => setActiveTab('registro')} />
+                  {activeTab === 'registro' && subNav}
+                </>
+              )}
+              {currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && (
+                <>
+                  <NavItem icon={<Settings size={20} />} label="Coordenação de Engenharia" active={activeTab === 'controle'} onClick={() => setActiveTab('controle')} />
+                  {activeTab === 'controle' && subNav}
+                </>
+              )}
+              {currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
+                <>
+                  <NavItem icon={<AlertTriangle size={20} />} label="Conformidade" active={activeTab === 'nc2'} onClick={() => setActiveTab('nc2')} />
+                  {activeTab === 'nc2' && subNav}
+                </>
+              )}
+              {currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && (
+                <>
+                  <NavItem icon={<Calendar size={20} />} label="Cronograma" active={activeTab === 'cronograma'} onClick={() => setActiveTab('cronograma')} />
+                  {activeTab === 'cronograma' && subNav}
+                </>
+              )}
+              {currentUser && currentUser.isAdmin && (
+                <>
+                  <NavItem icon={<ShieldCheck size={20} />} label="Administração" active={activeTab === 'administracao'} onClick={() => setActiveTab('administracao')} />
+                  {activeTab === 'administracao' && subNav}
+                </>
+              )}
             </nav>
             <div className="p-6 border-t border-[#E5E7EB] space-y-4 dark:border-[#1F2937]">
               <button
@@ -3012,7 +3135,8 @@ export default function App() {
             <div className="flex flex-col shrink-0">
               <div className="flex items-center gap-3">
                 <h2 className="text-[18px] font-bold text-[#2D2D2D] leading-tight dark:text-[#F1F5F9]">
-                  {activeTab === 'registro'
+                  {activeTab === 'principal' ? 'Principal'
+                    : activeTab === 'registro'
                     ? (areaTecnicaSubTab === 'atividades' ? 'Atividades' : 'Notas')
                     : activeTab === 'controle' ? 'Coordenação de Engenharia'
                     : activeTab === 'planejamento' ? 'Planejamento'
@@ -3026,36 +3150,25 @@ export default function App() {
             </div>
           </div>
 
-          {false && activeTab === 'controle' && (
-            <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-[#E5E7EB]">
-              <HeaderTab active={subTab === 'profissionais'} onClick={() => setSubTab('profissionais')} icon={<Users size={16} />} label="Dashboard" />
-              <HeaderTab active={subTab === 'curva-s'} onClick={() => setSubTab('curva-s')} icon={<TrendingUp size={16} />} label="Curva S" />
-              <HeaderTab active={subTab === 'planejamento'} onClick={() => setSubTab('planejamento')} icon={<LayoutGrid size={16} />} label="Planejamento" />
-            </div>
-          )}
-
-          {visibleHeaderTabs.length > 0 && (
-            <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-[#E5E7EB] max-w-[58vw] overflow-x-auto dark:bg-[#111827] dark:border-[#27303F]">
-              {visibleHeaderTabs.map((tab) => (
-                <HeaderTab key={tab.key} active={tab.active} onClick={tab.onClick} icon={tab.icon} label={tab.label} />
-              ))}
-            </div>
-          )}
-
-          <div className="flex items-center gap-4">
-            <button
-              type="button"
-              onClick={() => {
-                if (adminHasPendingChanges && !window.confirm('Existem alteracoes administrativas sem salvar. Atualizar vai descarta-las. Deseja continuar?')) return;
-                if (currentUser) void refreshRealtimeEnvironment(currentUser);
-              }}
-              disabled={!currentUser || isBackgroundSyncing}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#9CA3AF] transition-colors hover:bg-[#F8FAFC] hover:text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#27303F] dark:bg-[#111827] dark:text-[#94A3B8] dark:hover:bg-[#1F2937]"
-              aria-label="Atualizar dados do Firebase"
-              title="Atualizar dados do Firebase"
-            >
-              <RefreshCw size={18} className={isBackgroundSyncing ? 'animate-spin' : ''} />
-            </button>
+          <div className="flex items-center gap-3">
+            <Notificacoes
+              icone={<Bell size={18} />}
+              titulo="Notificações do setor"
+              vazio="Nenhuma nota nova da sua disciplina."
+              itens={notificacoesSetor}
+              naoLidos={naoLidosSetor}
+              onAbrir={abrirNotaNotificada}
+              onVisualizar={() => marcarNotificacoesVistas('setor')}
+            />
+            <Notificacoes
+              icone={<AtSign size={18} />}
+              titulo="Você foi citado"
+              vazio="Ninguém te citou em uma nota ainda."
+              itens={notificacoesDiretas}
+              naoLidos={naoLidosDiretas}
+              onAbrir={abrirNotaNotificada}
+              onVisualizar={() => marcarNotificacoesVistas('direta')}
+            />
             <button
               type="button"
               onClick={() => setUserPanelOpen(true)}
@@ -3226,31 +3339,35 @@ export default function App() {
         )}
 
         <main className={`flex-1 overflow-y-auto ${ (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ? 'p-3' : 'p-8' } bg-[#F8F9FA] dark:bg-[#0B1120]`}>
-          <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}`}>
+          <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}:${cronogramaSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
+            {/* So animacao de entrada: com AnimatePresence + mode="wait" a tela nova precisava
+                esperar a antiga sair, e a troca ficava lenta. A chave remonta e a nova entra na hora. */}
+            <motion.div
+              key={`${activeTab}:${subAbaAtual}`}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {activeTab === 'principal' && currentUser && (
+                <Principal
+                  currentUser={currentUser}
+                  citadasDisciplina={notificacoesSetor.length}
+                  citadasVoce={notificacoesDiretas.length}
+                  onVerDisciplina={irParaNotas}
+                  onVerCitado={irParaNotas}
+                />
+              )}
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'disciplinas'
-                  ? (
-                    <Disciplinas
-                      disciplinas={disciplinas || []}
-                      notes={notes || []}
-                      osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
-                      currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
-                      templates={noteTemplates}
-                      preloadedData={effectiveGlobalData}
-                      restrictToOs
-                      forcePublica
-                      autoDisciplinaOs={getUserPrimaryDiscipline(currentUser)}
-                      authorDisciplinaByEmail={usuarioDisciplinaPorEmail}
-                      onSaveNote={saveAnnotationSheet}
-                      onDeleteNote={deleteAnnotationSheet}
-                      onSaveTemplate={saveNoteTemplate}
-                      onDeleteTemplate={deleteNoteTemplate}
-                    />
-                  )
+                  ? notesPage
                   : <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines autoSelectUserDisciplineFilter disciplineFilterEnabled splitOsCardsByDiscipline />
               )}
-              {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} noteTemplates={noteTemplates} onSaveNoteTemplate={saveNoteTemplate} onDeleteNoteTemplate={deleteNoteTemplate} />}
+              {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && (
+                subTab === 'disciplinas'
+                  ? notesPage
+                  : <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />
+              )}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
                 planejamentoSubTab === 'atividades'
                   ? (
@@ -3266,20 +3383,7 @@ export default function App() {
                   : planejamentoSubTab === 'curva-s'
                     ? <CurvaS preloadedData={effectiveGlobalData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                     : planejamentoSubTab === 'disciplinas'
-                      ? (
-                        <Disciplinas
-                          disciplinas={disciplinas || []}
-                          notes={notes || []}
-                          osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
-                          currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
-                          templates={noteTemplates}
-                          preloadedData={effectiveGlobalData}
-                          onSaveNote={saveAnnotationSheet}
-                          onDeleteNote={deleteAnnotationSheet}
-                          onSaveTemplate={saveNoteTemplate}
-                          onDeleteTemplate={deleteNoteTemplate}
-                        />
-                      )
+                      ? notesPage
                       : (
                         <div className="w-full flex flex-col gap-6 font-['Montserrat']">
                           <ProjectVbaConfigCard />
@@ -3289,43 +3393,19 @@ export default function App() {
               )}
               {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && (
                 contratoSubTab === 'disciplinas'
-                  ? (
-                    <Disciplinas
-                      disciplinas={disciplinas || []}
-                      notes={notes || []}
-                      osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
-                      currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
-                      templates={noteTemplates}
-                      preloadedData={effectiveGlobalData}
-                      onSaveNote={saveAnnotationSheet}
-                      onDeleteNote={deleteAnnotationSheet}
-                      onSaveTemplate={saveNoteTemplate}
-                      onDeleteTemplate={deleteNoteTemplate}
-                    />
-                  )
+                  ? notesPage
                   : <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />
               )}
               {activeTab === 'cronograma' && currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && (
-                userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)
-                  ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
-                  : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                cronogramaSubTab === 'disciplinas'
+                  ? notesPage
+                  : userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)
+                    ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
+                    : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
                 nc2SubTab === 'disciplinas'
-                  ? (
-                    <Disciplinas
-                      disciplinas={disciplinas || []}
-                      notes={notes || []}
-                      osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
-                      currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
-                      templates={noteTemplates}
-                      preloadedData={effectiveGlobalData}
-                      onSaveNote={saveAnnotationSheet}
-                      onDeleteNote={deleteAnnotationSheet}
-                      onSaveTemplate={saveNoteTemplate}
-                      onDeleteTemplate={deleteNoteTemplate}
-                    />
-                  )
+                  ? notesPage
                   : (
                 <NaoConformidades
                   activeTab={nc2SubTab}
@@ -3345,7 +3425,8 @@ export default function App() {
                 />
                   )
               )}
-              {activeTab === 'administracao' && currentUser?.isAdmin && (
+              {activeTab === 'administracao' && currentUser?.isAdmin && adminSubTab === 'firebase' && <FirebaseExplorer />}
+              {activeTab === 'administracao' && currentUser?.isAdmin && adminSubTab !== 'firebase' && (
                 <Administracao
                   usuarios={usuarios} disciplinas={disciplinas} disciplineSettings={disciplineSettings} cargos={cargos} alocacoes={alocacoes} terceirizadas={adminTerceirizadas} contratos={contratos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
                   onUpdateUsuario={updateUsuarioDraft}
@@ -3365,11 +3446,13 @@ export default function App() {
                   onResolveDisciplinaRequest={resolveDisciplinaRequest}
                 />
               )}
+            </motion.div>
             </React.Suspense>
           </TabErrorBoundary>
         </main>
       </div>
     </div>
+    </MotionConfig>
   );
 }
 
@@ -3381,25 +3464,22 @@ function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode; labe
   );
 }
 
-function HeaderTab({ active, onClick, icon, label }: { key?: string; active: boolean; onClick: () => void; icon: React.ReactNode; label: React.ReactNode; }) {
+// Sub-aba na barra da esquerda: mais fina que o NavItem e recuada, pra ler como filha dele.
+function SubNavItem({ icon, label, active, onClick }: { key?: string; icon: React.ReactNode; label: React.ReactNode; active?: boolean; onClick?: () => void; }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`flex h-9 shrink-0 items-center gap-2 overflow-hidden rounded-lg px-4 transition-colors duration-200 ${
+      className={`flex w-full items-center gap-2.5 rounded-lg py-2 pl-9 pr-3 text-left text-[13px] transition-colors ${
         active
-          ? 'bg-[#F05D28] text-white shadow-sm'
-          : 'text-[#757575] hover:bg-[#F0F1F2] hover:text-[#2D2D2D] dark:text-[#94A3B8] dark:hover:bg-[#1F2937] dark:hover:text-[#F1F5F9]'
+          ? 'bg-[#F05D28]/10 font-bold text-[#F05D28]'
+          : 'font-medium text-[#8A8A8A] hover:bg-[#F4F5F7] hover:text-[#2D2D2D] dark:text-[#94A3B8] dark:hover:bg-[#1F2937] dark:hover:text-[#F1F5F9]'
       }`}
-      title={typeof label === 'string' ? label : undefined}
-      aria-label={typeof label === 'string' ? label : undefined}
     >
-      <span className="shrink-0">
-        {icon}
-      </span>
-      <span className="whitespace-nowrap text-[13px] font-bold">
-        {label}
-      </span>
+      {icon}
+      <span className="truncate">{label}</span>
     </button>
   );
 }
+
 

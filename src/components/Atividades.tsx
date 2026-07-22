@@ -20,8 +20,9 @@ import {
   Waves,
   X
 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
-import { DEFAULT_DISCIPLINES, getUserDisciplineList, resolveDisciplineEntry } from '../lib/disciplineCatalog';
+import { DEFAULT_DISCIPLINES, disciplineMatchesSector, getSectorOptions, getUserDisciplineList, resolveDisciplineEntry } from '../lib/disciplineCatalog';
 
 export type ProductionStatus =
   | 'Não iniciado'
@@ -1618,19 +1619,37 @@ function FilterMultiSelectDropdown({
   onChange: (next: string[]) => void;
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  // Painel vai por portal pro <body>: dentro do modal de filtros (que rola e tem transform)
+  // um dropdown absolute nasce recortado.
+  const [coords, setCoords] = useState({ left: 0, width: 0, top: 0 });
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
-      if (!wrapperRef.current) return;
-      if (!wrapperRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      const alvo = event.target as Node;
+      if (wrapperRef.current?.contains(alvo) || panelRef.current?.contains(alvo)) return;
+      setOpen(false);
     };
 
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const medir = () => {
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      if (rect) setCoords({ left: rect.left, width: rect.width, top: rect.bottom + 8 });
+    };
+    medir();
+    window.addEventListener('scroll', medir, true);
+    window.addEventListener('resize', medir);
+    return () => {
+      window.removeEventListener('scroll', medir, true);
+      window.removeEventListener('resize', medir);
+    };
+  }, [open]);
 
   const [search, setSearch] = useState('');
   const selectedLabels = options.filter((option) => value.includes(option));
@@ -1646,17 +1665,17 @@ function FilterMultiSelectDropdown({
   };
 
   return (
-    <div ref={wrapperRef} className="relative min-w-0">
+    <div ref={wrapperRef} className="flex min-w-0 flex-col gap-1.5">
       <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#757575]">{label}</label>
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="mt-1 flex h-11 w-full items-center justify-between gap-3 rounded-xl border border-[#E5E7EB] bg-white px-3 text-left text-[13px] font-medium text-[#2D2D2D] outline-none transition-colors hover:border-[#F7C7B7] focus:border-[#F05D28]"
+        className="flex h-11 w-full items-center justify-between gap-3 rounded-xl border border-[#E5E7EB] bg-white px-3 text-left text-[13px] font-medium text-[#2D2D2D] outline-none transition-colors hover:border-[#F7C7B7] focus:border-[#F05D28]"
       >
         <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
           {selectedLabels.length > 0 ? (
             selectedLabels.map((item) => (
-              <span key={item} className="inline-flex max-w-full items-center rounded-full bg-[#EEF6FD] px-2.5 py-1 text-[11px] font-semibold text-[#0F4C81]">
+              <span key={item} className="inline-flex max-w-full items-center rounded-full bg-[#FFF3EC] px-2.5 py-1 text-[11px] font-semibold text-[#F05D28]">
                 <span className="truncate">{getDisciplineFilterLabel(item)}</span>
               </span>
             ))
@@ -1667,12 +1686,14 @@ function FilterMultiSelectDropdown({
         <ChevronDown size={16} className={`shrink-0 text-[#94A3B8] transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open && (
+      {open && createPortal(
         <motion.div
-          initial={{ opacity: 0, y: -6, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -6, scale: 0.98 }}
-          className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_20px_48px_rgba(15,76,129,0.14)]"
+          ref={panelRef}
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.14 }}
+          style={{ left: coords.left, width: coords.width, top: coords.top }}
+          className="fixed z-[500] overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_20px_48px_rgba(15,23,42,0.18)]"
         >
           <div className="border-b border-[#F1F5F9] p-2">
             <input
@@ -1713,7 +1734,8 @@ function FilterMultiSelectDropdown({
           <div className="border-t border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-[10px] font-medium text-[#64748B]">
             Sem seleção, todas as disciplinas aparecem.
           </div>
-        </motion.div>
+        </motion.div>,
+        document.body,
       )}
     </div>
   );
@@ -1735,19 +1757,37 @@ function MultiCheckboxDropdown({
   onChange: (next: string[]) => void;
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  // Painel vai por portal pro <body>: dentro do modal de filtros (que rola e tem transform)
+  // um dropdown absolute nasce recortado.
+  const [coords, setCoords] = useState({ left: 0, width: 0, top: 0 });
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
-      if (!wrapperRef.current) return;
-      if (!wrapperRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      const alvo = event.target as Node;
+      if (wrapperRef.current?.contains(alvo) || panelRef.current?.contains(alvo)) return;
+      setOpen(false);
     };
 
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const medir = () => {
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      if (rect) setCoords({ left: rect.left, width: rect.width, top: rect.bottom + 8 });
+    };
+    medir();
+    window.addEventListener('scroll', medir, true);
+    window.addEventListener('resize', medir);
+    return () => {
+      window.removeEventListener('scroll', medir, true);
+      window.removeEventListener('resize', medir);
+    };
+  }, [open]);
 
   const [search, setSearch] = useState('');
   const selectedLabels = options
@@ -1788,12 +1828,14 @@ function MultiCheckboxDropdown({
         <ChevronDown size={16} className={`shrink-0 text-[#94A3B8] transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open && (
+      {open && createPortal(
         <motion.div
-          initial={{ opacity: 0, y: -6, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -6, scale: 0.98 }}
-          className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_20px_48px_rgba(15,76,129,0.14)]"
+          ref={panelRef}
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.14 }}
+          style={{ left: coords.left, width: coords.width, top: coords.top }}
+          className="fixed z-[500] overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_20px_48px_rgba(15,23,42,0.18)]"
         >
           <div className="border-b border-[#F1F5F9] p-2">
             <input
@@ -1835,7 +1877,8 @@ function MultiCheckboxDropdown({
           <div className="border-t border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-[10px] font-medium text-[#64748B]">
             {helperText}
           </div>
-        </motion.div>
+        </motion.div>,
+        document.body,
       )}
     </div>
   );
@@ -1933,10 +1976,6 @@ const osAccentColorMap: Record<string, string> = {
   'OS 050': '#EA580C',
   'OS 053': '#15803D'
 };
-
-const LINKED_DISCIPLINE_GROUPS: string[][] = [
-  ['Estrutura Metálica', 'Estrutura de Concreto'],
-];
 
 const OS_COLOR_PALETTE = [
   '#0F766E', '#166534', '#D97706', '#2563EB', '#7C3AED',
@@ -2948,18 +2987,12 @@ export default function Atividades({
     return Array.from(collected);
   }, [preloadedData?.admin, activitiesWithDiscipline]);
 
-  // Disciplinas que sempre devem ser marcadas juntas no filtro (ex: Estrutura Metálica e
-  // Estrutura de Concreto costumam ser olhadas em conjunto pelo coordenador).
-  const handleFilterDisciplinasChange = (next: string[]) => {
-    const addedItem = next.find((item) => !filterDisciplinas.includes(item));
-    const linkedGroup = addedItem
-      ? LINKED_DISCIPLINE_GROUPS.find((group) => group.some((item) => resolveDisciplineEntry(item) === resolveDisciplineEntry(addedItem)))
-      : undefined;
-    if (!linkedGroup) { setFilterDisciplinas(next); return; }
-    const linkedKeys = new Set(linkedGroup.map(resolveDisciplineEntry));
-    const toAdd = disciplinasDisponiveis.filter((option) => linkedKeys.has(resolveDisciplineEntry(option)) && !next.includes(option));
-    setFilterDisciplinas([...next, ...toAdd]);
-  };
+  // O filtro exibe setores, nao disciplinas soltas: hoje um time responde por varias.
+  const setoresDisponiveis = useMemo(() => getSectorOptions(disciplinasDisponiveis), [disciplinasDisponiveis]);
+
+  // O agrupamento por setor ja junta o que antes era LINKED_DISCIPLINE_GROUPS: Estrutura
+  // Metalica e de Concreto caem as duas em "Estrutural", entao marcar uma marca as duas.
+  const handleFilterDisciplinasChange = (next: string[]) => setFilterDisciplinas(next);
 
   const disciplineAutoMatchedRef = useRef(false);
   useEffect(() => {
@@ -2969,17 +3002,18 @@ export default function Atividades({
   useEffect(() => {
     if (!autoSelectUserDisciplineFilter) return;
     if (disciplineAutoMatchedRef.current) return;
-    if (!disciplinasDisponiveis.length) return;
+    if (!setoresDisponiveis.length) return;
     const userDisciplines = getUserDisciplineList(currentUser || {});
     if (!userDisciplines.length) return;
-    const matched = disciplinasDisponiveis.filter((d) =>
-      userDisciplines.some((ud) => resolveDisciplineEntry(d) === resolveDisciplineEntry(ud))
+    // filterDisciplinas guarda SETOR: pre-seleciona o setor da disciplina do usuario.
+    const matched = setoresDisponiveis.filter((setor) =>
+      userDisciplines.some((ud) => disciplineMatchesSector(ud, setor))
     );
     if (matched.length > 0) {
       setFilterDisciplinas(matched);
       disciplineAutoMatchedRef.current = true;
     }
-  }, [autoSelectUserDisciplineFilter, disciplinasDisponiveis, currentUser]);
+  }, [autoSelectUserDisciplineFilter, setoresDisponiveis, currentUser]);
 
   const etapasDisponiveis = useMemo(() => ['Todos', ...TECHNICAL_STEPS], []);
 
@@ -3029,7 +3063,8 @@ export default function Atividades({
         const activityDisciplinas = splitDisciplinas(activity.disciplinas || activity.disciplina);
         const matchesDisciplina = !disciplineFilterEnabled
           || filterDisciplinas.length === 0
-          || filterDisciplinas.some((fd) => activityDisciplinas.some((ad) => resolveDisciplineEntry(ad) === resolveDisciplineEntry(fd)));
+          // Filtro fala em setor: 'Arquitetura' traz URB, LAY, LUM, ACES e APS junto.
+          || filterDisciplinas.some((fd) => activityDisciplinas.some((ad) => disciplineMatchesSector(ad, fd)));
         const matchesEtapa = filterEtapa === 'Todos' || activity.etapaTecnica === filterEtapa;
         const matchesLod = filterLod === 'Todos' || String(activity.lodAtual) === filterLod || String(activity.lodAlvoSemana) === filterLod;
         const matchesStatus = filterStatus === 'Todos' || getEffectiveStatus(activity) === filterStatus;
@@ -3341,76 +3376,128 @@ export default function Atividades({
     ? ((boardTrackWidth - scrollbarThumbWidth) * boardScrollLeft) / boardScrollMax
     : 0;
 
+  const fecharFiltros = () => { onCloseHeaderFilters?.(); setShowFiltersInternal(false); };
+
+  const corpoFiltros = (
+    <>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Filtros</p>
+          <p className="mt-1 text-[13px] font-semibold text-[#475569]">Busca rápida, semana, contrato, OS, disciplina, concluídos e terceirizada.</p>
+        </div>
+        {!filtersAlwaysVisible && (
+          <button
+            type="button"
+            onClick={fecharFiltros}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] text-[#64748B] transition-colors hover:border-[#F7C7B7] hover:text-[#F05D28]"
+            aria-label="Fechar filtros"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="flex min-w-0 flex-col gap-1.5 md:col-span-2">
+          <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#757575]">Busca rápida</label>
+          <div className="flex h-11 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 focus-within:border-[#F05D28]">
+            <Search size={15} className="text-[#94A3B8]" />
+            <input
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="OS, atividade ou responsável"
+              spellCheck
+              lang="pt-BR"
+              className="h-full w-full border-0 bg-transparent text-[13px] font-medium text-[#2D2D2D] outline-none placeholder:text-[#94A3B8]"
+            />
+          </div>
+        </div>
+
+        <FilterSelect label="Semana" value={filterSemana} onChange={setFilterSemana} options={weekOptions} />
+        <FilterSelect label="Contrato" value={filterContrato} onChange={setFilterContrato} options={contratosDisponiveis} />
+        <FilterSelect label="OS" value={filterOs} onChange={setFilterOs} options={osDisponiveis} />
+        {disciplineFilterEnabled && (
+          <FilterMultiSelectDropdown
+            label="Disciplina"
+            value={filterDisciplinas}
+            options={disciplinasDisponiveis}
+            placeholder="Selecionar..."
+            onChange={handleFilterDisciplinasChange}
+          />
+        )}
+        {/* Mesma altura e mesmo formato dos campos ao lado, logo a direita da Disciplina. */}
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#757575]">Concluídos</label>
+          <label className="flex h-11 cursor-pointer items-center gap-2.5 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium outline-none transition-colors hover:border-[#F7C7B7]">
+            <input
+              type="checkbox"
+              checked={filterShowCompleted}
+              onChange={(event) => setFilterShowCompleted(event.target.checked)}
+              className="h-4 w-4 flex-shrink-0 accent-[#F05D28] cursor-pointer"
+            />
+            <span className={`truncate ${filterShowCompleted ? 'text-[#2D2D2D]' : 'text-[#94A3B8]'}`}>
+              {filterShowCompleted ? 'Exibindo concluídos' : 'Ocultando concluídos'}
+            </span>
+          </label>
+        </div>
+      </div>
+    </>
+  );
+
   return (
     <div className="flex w-full flex-col gap-3 font-['Montserrat'] animate-in fade-in duration-500">
-      {(filtersAlwaysVisible || isHeaderFiltersOpen || showFiltersInternal) && (
-        <motion.section
-          initial={filtersAlwaysVisible ? false : { opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          className={filtersAlwaysVisible
-            ? 'rounded-2xl border border-[#E5E7EB] bg-white px-4 py-4 shadow-sm'
-            : 'fixed right-8 top-[92px] z-50 w-[min(92vw,980px)] rounded-2xl border border-[#E5E7EB] bg-white px-4 py-4 shadow-[0_18px_42px_rgba(15,76,129,0.12)]'}
-        >
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Filtros</p>
-              <p className="mt-1 text-[13px] font-semibold text-[#475569]">Busca rápida, semana, contrato, OS, disciplina, concluídos e terceirizada.</p>
-            </div>
-            {!filtersAlwaysVisible && (
-              <button
-                type="button"
-                onClick={() => { onCloseHeaderFilters?.(); setShowFiltersInternal(false); }}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] text-[#64748B] transition-colors hover:border-[#F7C7B7] hover:text-[#F05D28]"
-                aria-label="Fechar filtros"
+      {/* Conteudo dos filtros: mesmo corpo servindo o painel fixo e o modal central. */}
+      {filtersAlwaysVisible ? (
+        <section className="rounded-2xl border border-[#E5E7EB] bg-white px-4 py-4 shadow-sm">
+          {corpoFiltros}
+        </section>
+      ) : (
+        <AnimatePresence>
+          {(isHeaderFiltersOpen || showFiltersInternal) && (
+            <motion.div
+              key="filtros-modal"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.16 }}
+              onClick={fecharFiltros}
+              className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/40 p-4"
+            >
+              {/* So opacity e scale: a GPU compoe sem repintar o resto da tela. */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.97 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.97 }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                onClick={(event) => event.stopPropagation()}
+                className="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-2xl border border-[#E5E7EB] bg-white px-5 py-5 shadow-[0_24px_60px_rgba(15,23,42,0.22)]"
               >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-            <div className="md:col-span-2">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#757575]">Busca rápida</label>
-              <div className="mt-1 flex h-11 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 focus-within:border-[#F05D28]">
-                <Search size={15} className="text-[#94A3B8]" />
-                <input
-                  value={searchText}
-                  onChange={(event) => setSearchText(event.target.value)}
-                  placeholder="OS, atividade ou responsável"
-                  className="h-full w-full border-0 bg-transparent text-[13px] font-medium text-[#2D2D2D] outline-none placeholder:text-[#94A3B8]"
-                />
-              </div>
-            </div>
-
-            <FilterSelect label="Semana" value={filterSemana} onChange={setFilterSemana} options={weekOptions} />
-            <FilterSelect label="Contrato" value={filterContrato} onChange={setFilterContrato} options={contratosDisponiveis} />
-            <FilterSelect label="OS" value={filterOs} onChange={setFilterOs} options={osDisponiveis} />
-            <label className="flex h-full cursor-pointer items-center gap-3 rounded-xl border border-[#E5E7EB] bg-white px-3 py-2 text-[13px] font-semibold text-[#334155] transition-colors hover:border-[#F7C7B7]">
-              <input
-                type="checkbox"
-                checked={filterShowCompleted}
-                onChange={(event) => setFilterShowCompleted(event.target.checked)}
-                className="h-4 w-4 rounded border-[#CBD5E1] text-[#F05D28] focus:ring-[#F05D28]"
-              />
-              <span>Marcar concluidos</span>
-            </label>
-            {disciplineFilterEnabled && (
-              <FilterMultiSelectDropdown
-                label="Disciplina"
-                value={filterDisciplinas}
-                options={disciplinasDisponiveis}
-                placeholder="Selecionar..."
-                onChange={handleFilterDisciplinasChange}
-              />
-            )}
-          </div>
-        </motion.section>
+                {corpoFiltros}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       )}
 
       <section className="overflow-hidden rounded-[34px] border border-[#E5E7EB] bg-[linear-gradient(180deg,#FFFFFF_0%,#F8FAFC_100%)] p-2.5 shadow-sm">
         <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-          <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 md:grid-cols-3 xl:max-w-[900px] xl:grid-cols-[1.35fr_0.75fr_0.75fr_0.75fr_0.75fr_0.95fr]">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 md:grid-cols-3 xl:max-w-[980px] xl:grid-cols-[0.8fr_1.35fr_0.75fr_0.75fr_0.75fr_0.75fr_0.95fr]">
+            {/* Mesmo formato de chip dos CompactStat ao lado, e primeiro da fila. */}
+            {!filtersAlwaysVisible && (
+              <button
+                type="button"
+                onClick={() => setShowFiltersInternal((prev) => !prev)}
+                className={`inline-flex min-w-0 items-center gap-2 rounded-[20px] border bg-white px-2 py-1.5 text-left shadow-sm transition-colors ${showFiltersInternal || isHeaderFiltersOpen ? 'border-[#F05D28]' : 'border-[#E5E7EB] hover:border-[#F7C7B7]'}`}
+              >
+                <div className={showFiltersInternal || isHeaderFiltersOpen ? 'text-[#F05D28]' : 'text-[#94A3B8]'}>
+                  <Filter size={14} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Exibir</p>
+                  <p className="text-[13px] font-black text-[#2D2D2D]">Filtros</p>
+                </div>
+              </button>
+            )}
             <div className="inline-flex min-w-0 items-center gap-1 rounded-[20px] border border-[#E5E7EB] bg-white px-2 py-1.5 shadow-sm">
               <button
                 type="button"
@@ -3461,16 +3548,6 @@ export default function Atividades({
               </div>
             </div>
           </div>
-          {!filtersAlwaysVisible && (
-            <button
-              type="button"
-              onClick={() => setShowFiltersInternal((prev) => !prev)}
-              className={`inline-flex flex-shrink-0 items-center gap-2 rounded-[20px] border px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.7px] shadow-sm transition-colors ${showFiltersInternal || isHeaderFiltersOpen ? 'border-[#F05D28] bg-[#F05D28] text-white' : 'border-[#E5E7EB] bg-white text-[#94A3B8] hover:border-[#F7C7B7] hover:text-[#F05D28]'}`}
-            >
-              <Filter size={13} />
-              Filtros
-            </button>
-          )}
         </div>
 
         <div className="mb-3">

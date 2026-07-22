@@ -31,6 +31,9 @@ interface GraphNode {
   privada?: boolean;
 }
 
+// Pai das notas sem OS, pra elas nunca ficarem soltas no mapa.
+const HUB_GERAL = 'os:__geral__';
+
 function hexToRgb(hex: string) {
   const clean = hex.replace('#', '');
   const value = parseInt(clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean, 16);
@@ -121,10 +124,13 @@ export default function MindMap({ sheets, currentUserEmail, osOptions = [], onOp
       const hubByCodigo = new Map<string, GraphNode>();
       const links: Array<{ source: string; target: string }> = [];
       filteredSheets.forEach((sheet) => {
-        if (!sheet.osCodigo) return;
-        const hubId = `os:${sheet.osCodigo}`;
+        // Nota sem OS cai no hub "Geral": antes ela era pulada e ficava solta no grafo,
+        // sem nenhum pai pra se ligar.
+        const hubId = sheet.osCodigo ? `os:${sheet.osCodigo}` : HUB_GERAL;
         if (!hubByCodigo.has(hubId)) {
-          const nome = osOptions.find((os) => os.codigo === sheet.osCodigo)?.nome || sheet.osCodigo;
+          const nome = sheet.osCodigo
+            ? (osOptions.find((os) => os.codigo === sheet.osCodigo)?.nome || sheet.osCodigo)
+            : 'Geral';
           hubByCodigo.set(hubId, { id: hubId, name: nome, kind: 'hub' });
         }
         links.push({ source: hubId, target: sheet.id });

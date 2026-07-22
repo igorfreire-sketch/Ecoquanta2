@@ -248,6 +248,22 @@ function userOnlySeesThirdParties(user: AuthUserLike, admin?: any) {
   return Boolean(match?.onlyThirdParty || match?.onlyThirdPartyUsers || match?.somenteTerceirizados);
 }
 
+// Nota so pode ser excluida pelo proprio autor ou por admin do sistema.
+// Lideranca/coordenacao NAO exclui nota de outro.
+export function canDeleteNote(user: AuthUserLike, autorEmail?: string) {
+  if (user.isAdmin) return true;
+  const autor = normalizeEmail(autorEmail);
+  return Boolean(autor) && normalizeEmail(user.email) === autor;
+}
+
+// Nota so pode ser alterada pelo autor, por admin do sistema, ou por um usuario
+// vinculado a ela (marcado em Vincular Usuarios).
+export function canEditNote(user: AuthUserLike, autorEmail?: string, marcadosUsuarios?: string[]) {
+  if (canDeleteNote(user, autorEmail)) return true;
+  const email = normalizeEmail(user.email);
+  return Boolean(email) && (marcadosUsuarios || []).some((item) => normalizeEmail(item) === email);
+}
+
 export function isLeadershipOrAdmin(user: AuthUserLike) {
   if (user.isAdmin) return true;
   const role = normalizeDiscipline(user.role);

@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search } from 'lucide-react';
 
 export interface SearchableSelectProps {
@@ -88,8 +89,12 @@ export default function SearchableSelect({
   const [openUpward, setOpenUpward] = useState(false);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  // Coordenadas do painel na viewport: ele vai por portal pro <body>, senao qualquer
+  // ancestral com overflow (modal, card rolavel) recorta a lista.
+  const [coords, setCoords] = useState({ left: 0, width: 0, top: 0, bottom: 0 });
   const reactId = useId();
   const listboxId = `${id || name || 'ss'}-${reactId}-listbox`;
 
@@ -118,13 +123,13 @@ export default function SearchableSelect({
     [close, onChange, value],
   );
 
-  // Fecha ao clicar fora.
+  // Fecha ao clicar fora. O painel esta no <body> via portal, entao nao basta olhar o wrapper.
   useEffect(() => {
     if (!open) return;
     const handlePointer = (event: MouseEvent | TouchEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
-        close();
-      }
+      const alvo = event.target as Node;
+      const dentro = wrapperRef.current?.contains(alvo) || panelRef.current?.contains(alvo);
+      if (!dentro) close();
     };
     document.addEventListener('mousedown', handlePointer);
     document.addEventListener('touchstart', handlePointer);
@@ -134,18 +139,36 @@ export default function SearchableSelect({
     };
   }, [open, close]);
 
-  // Ao abrir: foca a busca, posiciona o destaque no item selecionado e decide a direcao.
+  // Ao abrir: foca a busca, posiciona o destaque no item selecionado e mede o gatilho.
+  // Reposiciona em scroll/resize pra lista nao descolar do campo.
   useLayoutEffect(() => {
     if (!open) return;
     const selectedIndex = filtered.findIndex((option) => option.value === String(value ?? ''));
     setHighlight(selectedIndex >= 0 ? selectedIndex : 0);
-    if (wrapperRef.current) {
-      const rect = wrapperRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUpward(spaceBelow < 280 && rect.top > spaceBelow);
-    }
+
+    const medir = () => {
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const espacoAbaixo = window.innerHeight - rect.bottom;
+      const paraCima = espacoAbaixo < 280 && rect.top > espacoAbaixo;
+      setOpenUpward(paraCima);
+      setCoords({
+        left: rect.left,
+        width: rect.width,
+        top: rect.bottom + 4,
+        bottom: window.innerHeight - rect.top + 4,
+      });
+    };
+    medir();
+    window.addEventListener('scroll', medir, true);
+    window.addEventListener('resize', medir);
+
     const raf = requestAnimationFrame(() => searchRef.current?.focus());
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('scroll', medir, true);
+      window.removeEventListener('resize', medir);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -209,10 +232,15 @@ export default function SearchableSelect({
         <ChevronDown size={16} style={{ flexShrink: 0, opacity: 0.6 }} aria-hidden />
       </button>
 
-      {open && (
+      {open && createPortal(
         <div
-          className="absolute z-50 left-0 right-0 rounded-xl border border-[#E5E7EB] bg-white shadow-lg"
-          style={openUpward ? { bottom: 'calc(100% + 4px)' } : { top: 'calc(100% + 4px)' }}
+          ref={panelRef}
+          className="fixed z-[500] rounded-xl border border-[#E5E7EB] bg-white shadow-lg"
+          style={{
+            left: coords.left,
+            width: coords.width,
+            ...(openUpward ? { bottom: coords.bottom } : { top: coords.top }),
+          }}
         >
           <div className="flex items-center gap-2 border-b border-[#F1F5F9] px-3 py-2">
             <Search size={14} style={{ flexShrink: 0, opacity: 0.5 }} aria-hidden />
@@ -269,7 +297,8 @@ export default function SearchableSelect({
               })
             )}
           </ul>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

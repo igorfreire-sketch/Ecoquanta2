@@ -6,8 +6,6 @@ import {
 import Atividades from './Atividades';
 import DashboardEngenharia from './CoordenacaoEngenharia/DashboardEngenharia';
 import CurvaS from './CoordenacaoEngenharia/CurvaS';
-import Disciplinas from './CoordenacaoEngenharia/Disciplinas';
-import type { AnnotationSheet, AnnotationTemplate } from './CoordenacaoEngenharia/Anotacoes';
 import type { AuthUser } from './LoginScreen';
 
 interface CoordenacaoEngenhariaProps {
@@ -25,12 +23,6 @@ interface CoordenacaoEngenhariaProps {
     eap?: any;
   };
   disciplinas?: string[];
-  notes?: AnnotationSheet[];
-  onSaveNote?: (sheet: AnnotationSheet) => Promise<void>;
-  onDeleteNote?: (id: string) => Promise<void>;
-  noteTemplates?: AnnotationTemplate[];
-  onSaveNoteTemplate?: (template: AnnotationTemplate) => Promise<void>;
-  onDeleteNoteTemplate?: (id: string) => Promise<void>;
   subTab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas';
   onSubTabChange: (tab: 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas') => void;
 }
@@ -84,7 +76,7 @@ function getLatestEapDisplayDate(eap?: any) {
   return 'Nao publicada';
 }
 
-export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, disciplinas, notes, onSaveNote, onDeleteNote, noteTemplates, onSaveNoteTemplate, onDeleteNoteTemplate, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
+export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, preloadedData, disciplinas, subTab, lockedContractCode }: CoordenacaoEngenhariaProps) {
   const effectiveSubTab = subTab === 'alertas' ? 'dashboard' : subTab;
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
@@ -125,20 +117,6 @@ export default function CoordenacaoEngenharia({ currentUser, filtrosAtivos, prel
           </div>
         )}
         {effectiveSubTab === 'curva-s' && <CurvaS preloadedData={preloadedData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={activeContractCode} />}
-        {effectiveSubTab === 'disciplinas' && (
-          <Disciplinas
-            disciplinas={disciplinas || []}
-            notes={notes || []}
-            osOptions={Array.isArray(preloadedData?.registro?.osOptions) ? preloadedData.registro.osOptions : []}
-            currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
-            preloadedData={preloadedData}
-            templates={noteTemplates || []}
-            onSaveNote={onSaveNote || (async () => {})}
-            onDeleteNote={onDeleteNote || (async () => {})}
-            onSaveTemplate={onSaveNoteTemplate || (async () => {})}
-            onDeleteTemplate={onDeleteNoteTemplate || (async () => {})}
-          />
-        )}
       </div>
     </div>
   );

@@ -77,6 +77,7 @@ import { PATCH_NOTES } from './config/patchNotes';
 import { applyAcessibilidade, getStoredAcessibilidade, type Acessibilidade } from './lib/theme';
 import { estadoNotificacao, notificarDesktop, pedirPermissaoNotificacao, type PermissaoNotificacao } from './lib/desktopNotify';
 import { getLatestEapDisplayDate } from './lib/eapDate';
+import KonamiGame from './components/KonamiGame';
 import {
   DEFAULT_DISCIPLINE_SETTINGS,
   getPrimaryDisciplineValue,
@@ -1604,6 +1605,8 @@ export default function App() {
     const aoTeclar = (event: KeyboardEvent) => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (document.body.dataset.minigame === 'on') return; // minigame secreto usa as setas
+
       const alvo = document.activeElement as HTMLElement | null;
       if (alvo && (alvo.tagName === 'INPUT' || alvo.tagName === 'TEXTAREA' || alvo.tagName === 'SELECT' || alvo.isContentEditable)) return;
       const abas = subAbasNavRef.current;
@@ -3164,6 +3167,7 @@ export default function App() {
   return (
     // reducedMotion="user": quem pediu menos animacao no sistema recebe as telas sem movimento.
     <MotionConfig reducedMotion="user">
+    <KonamiGame />
     <div className="flex h-screen w-full bg-[#F8F9FA] overflow-hidden font-['Montserrat']">
       <AnimatePresence mode="wait">
         {/* Rail: 84px no fluxo, expande por cima do conteudo no hover — a tela nao se mexe. */}

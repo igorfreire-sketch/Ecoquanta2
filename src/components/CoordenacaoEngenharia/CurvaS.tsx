@@ -1,5 +1,6 @@
 import SearchableSelect from '../SearchableSelect';
 import React, { useEffect, useMemo, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList
 } from 'recharts';
@@ -409,6 +410,9 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const osDropdownRef = useRef<HTMLDivElement>(null);
+  // Painel da lista de OS vai por portal pro body (senao abre atras do rail); ref separado pra o
+  // clique-fora nao fechar quando o clique e dentro do painel portado.
+  const osPanelRef = useRef<HTMLDivElement>(null);
 
   // 1. CARREGAMENTO AUTÔNOMO (Caso entre direto na aba ou dê F5)
   const fetchCurvasData = async (forceRefresh = false) => {
@@ -598,7 +602,8 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
     if (!osExpanded) return;
 
     const handleOutsideClick = (event: MouseEvent) => {
-      if (!osDropdownRef.current?.contains(event.target as Node)) {
+      const alvo = event.target as Node;
+      if (!osDropdownRef.current?.contains(alvo) && !osPanelRef.current?.contains(alvo)) {
         setOsExpanded(false);
         setOsSearch('');
       }
@@ -706,8 +711,17 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
                 <ChevronDown size={16} className={`transition-transform ${osExpanded ? 'rotate-180' : ''}`} />
               </button>
             </div>
-            {osExpanded && (
-              <div id="curva-s-os-options" className="absolute top-full left-0 right-0 z-30 mt-1 rounded-xl p-2 bg-white shadow-xl custom-scrollbar max-h-[360px] overflow-y-auto">
+            {osExpanded && (() => {
+              // Portal pro body: o <main> (relative z-10) prendia este dropdown, que abria atras
+              // do rail (z-40). No body, ancorado ao campo, fica por cima de tudo.
+              const r = osDropdownRef.current?.getBoundingClientRect();
+              return createPortal(
+              <div
+                ref={osPanelRef}
+                id="curva-s-os-options"
+                className="fixed z-[300] mt-1 rounded-xl p-2 bg-white shadow-xl custom-scrollbar max-h-[360px] overflow-y-auto"
+                style={r ? { left: r.left, top: r.bottom + 4, width: r.width } : undefined}
+              >
                 {activeOsOptions.length === 0 ? <p className="text-[12px] text-gray-400 p-2 text-center">Aguardando contrato...</p> : filteredOsOptions.length === 0 ? (
                   <p className="text-[12px] text-gray-400 p-2 text-center">Nenhuma OS encontrada.</p>
                 ) : (
@@ -722,8 +736,10 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
                     ))}
                   </>
                 )}
-              </div>
-            )}
+              </div>,
+              document.body,
+              );
+            })()}
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Eixo X</label>

@@ -414,6 +414,16 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
   // clique-fora nao fechar quando o clique e dentro do painel portado.
   const osPanelRef = useRef<HTMLDivElement>(null);
 
+  // Cache local e so otimizacao (F5 instantaneo); a fonte real e o Firebase. O payload da EAP
+  // pode passar do limite (~5MB) do localStorage — quando passa, ignora o cache em vez de crashar.
+  const salvarCacheCurvas = (data: unknown) => {
+    try {
+      localStorage.setItem('curvasAppData', JSON.stringify(data));
+    } catch {
+      try { localStorage.removeItem('curvasAppData'); } catch {}
+    }
+  };
+
   // 1. CARREGAMENTO AUTÔNOMO (Caso entre direto na aba ou dê F5)
   const fetchCurvasData = async (forceRefresh = false) => {
     setError('');
@@ -444,7 +454,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
       if (!nextData) throw new Error('Nenhum dado publicado encontrado para a Curva S.');
 
       if (nextData) {
-        localStorage.setItem('curvasAppData', JSON.stringify(nextData));
+        salvarCacheCurvas(nextData);
         setRawData(nextData);
         if (forceRefresh) {
           setSelectedContract('TODOS');
@@ -491,7 +501,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
       latestEapPublishedAt: new Date().toISOString(),
     });
     setRawData(nextData);
-    localStorage.setItem('curvasAppData', JSON.stringify(nextData));
+    salvarCacheCurvas(nextData);
   };
 
   // 2. DESCOMPACTAÇÃO RÁPIDA DA MATRIZ (Lógica do React RLE)

@@ -3,6 +3,14 @@ import { getDisciplineDisplayName } from '../components/Atividades';
 import { getSheetBancos, getSheetDisciplinas, getSheetTextos, type AnnotationBanco, type AnnotationSheet } from '../components/CoordenacaoEngenharia/Anotacoes';
 import { cellKey, quebrarTexto } from './bancoGrid';
 
+// Cor de celula/texto vem como hex (#RGB ou #RRGGBB) dos presets. Converte pro [r,g,b] do jsPDF.
+function hexToRgb(value?: string): [number, number, number] | null {
+  const hex = String(value || '').trim().replace(/^#/, '');
+  const full = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return null;
+  return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16)];
+}
+
 function safeFileName(titulo: string) {
   return (titulo || 'anotacao')
     .normalize('NFD')
@@ -92,7 +100,6 @@ export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] =
 
     banco.rows.forEach((row, r) => {
       const isHeader = r === 0;
-      doc.setFont('helvetica', isHeader ? 'bold' : 'normal');
       doc.setFontSize(9);
       // Quebra o texto de cada celula na largura da coluna antes de desenhar, pra saber
       // quantas linhas ela ocupa - e a linha da tabela cresce pra maior celula, ninguem vaza.
@@ -100,14 +107,24 @@ export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] =
       const maxLinhas = Math.max(1, ...linhasPorCelula.map((linhas) => linhas.length));
       const rowHeight = Math.max(8, maxLinhas * lineHeight + padY * 2);
       ensureSpace(rowHeight);
-      if (isHeader) {
-        doc.setFillColor(243, 244, 246);
-        doc.rect(marginX, y, colWidth * banco.colCount, rowHeight, 'F');
-      }
       row.forEach((cell, c) => {
         const x = marginX + c * colWidth;
-        doc.rect(x, y, colWidth, rowHeight);
-        const align = banco.styles?.[cellKey(r, c)]?.align || 'left';
+        const style = banco.styles?.[cellKey(r, c)];
+        // Fundo da celula: cor propria da nota; senao cinza do cabecalho; senao sem preenchimento.
+        const bg = hexToRgb(style?.bg) || (isHeader ? [243, 244, 246] as [number, number, number] : null);
+        if (bg) {
+          doc.setFillColor(bg[0], bg[1], bg[2]);
+          doc.rect(x, y, colWidth, rowHeight, 'F');
+        }
+        doc.rect(x, y, colWidth, rowHeight); // grade
+        // Negrito/italico da celula (cabecalho continua negrito por padrao).
+        const bold = isHeader || Boolean(style?.bold);
+        const italic = Boolean(style?.italic);
+        doc.setFont('helvetica', bold && italic ? 'bolditalic' : bold ? 'bold' : italic ? 'italic' : 'normal');
+        // Cor do texto da nota; padrao preto.
+        const fg = hexToRgb(style?.color) || [0, 0, 0];
+        doc.setTextColor(fg[0], fg[1], fg[2]);
+        const align = style?.align || 'left';
         const textX = align === 'center' ? x + colWidth / 2 : align === 'right' ? x + colWidth - padX : x + padX;
         linhasPorCelula[c].forEach((linha, li) => {
           doc.text(linha, textX, y + padY + lineHeight * (li + 0.75), { align, maxWidth: colWidth - padX * 2 });
@@ -115,6 +132,8 @@ export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] =
       });
       y += rowHeight;
     });
+    // Reseta cor do texto pra nao vazar pros blocos seguintes.
+    doc.setTextColor(0, 0, 0);
     y += 8;
   };
 

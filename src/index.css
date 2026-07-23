@@ -1,10 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&display=swap');
 @import "tailwindcss";
 
-/* Modo escuro por classe (.dark na <html>), controlado pelo usuario e guardado em localStorage
-   (src/lib/theme.ts) — sem isso o Tailwind v4 usaria so prefers-color-scheme do SO. */
-@custom-variant dark (&:where(.dark, .dark *));
-
 @theme {
   --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
   --color-bentham-orange: #F05D28;
@@ -13,13 +9,6 @@
   --color-bentham-gray: #757575;
   --color-bentham-border: #E5E7EB;
   --color-bentham-bg: #F8F9FA;
-}
-
-.dark {
-  --color-bentham-dark: #F1F5F9;
-  --color-bentham-gray: #94A3B8;
-  --color-bentham-border: #27303F;
-  --color-bentham-bg: #0F172A;
 }
 
 @layer base {
@@ -34,14 +23,62 @@
   }
 
   .bentham-input {
-    @apply w-full h-11 px-4 bg-white dark:bg-[#111827] border border-bentham-border rounded-xl text-[14px] font-normal text-bentham-dark placeholder:text-bentham-gray/50 transition-all focus:border-bentham-orange focus:ring-2 focus:ring-bentham-orange/20 focus:outline-none appearance-none;
+    @apply w-full h-11 px-4 bg-white border border-bentham-border rounded-xl text-[14px] font-normal text-bentham-dark placeholder:text-bentham-gray/50 transition-all focus:border-bentham-orange focus:ring-2 focus:ring-bentham-orange/20 focus:outline-none appearance-none;
   }
 
   .bentham-select {
-    @apply w-full h-11 px-4 bg-white dark:bg-[#111827] border border-bentham-border rounded-xl text-[14px] font-normal text-bentham-dark placeholder:text-bentham-gray/50 transition-all focus:border-bentham-orange focus:ring-2 focus:ring-bentham-orange/20 focus:outline-none appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2024%2024%20stroke%3D%22%23757575%22%3E%3Cpath%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%222%22%20d%3D%22m19%209-7%207-7-7%22%2F%3E%3C%2Fsvg%3E')] bg-[length:20px] bg-[right_12px_center] bg-no-repeat pr-10;
+    @apply w-full h-11 px-4 bg-white border border-bentham-border rounded-xl text-[14px] font-normal text-bentham-dark placeholder:text-bentham-gray/50 transition-all focus:border-bentham-orange focus:ring-2 focus:ring-bentham-orange/20 focus:outline-none appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2024%2024%20stroke%3D%22%23757575%22%3E%3Cpath%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%222%22%20d%3D%22m19%209-7%207-7-7%22%2F%3E%3C%2Fsvg%3E')] bg-[length:20px] bg-[right_12px_center] bg-no-repeat pr-10;
   }
 
   .bentham-textarea {
-    @apply w-full px-4 bg-white dark:bg-[#111827] border border-bentham-border rounded-xl text-[14px] font-normal text-bentham-dark placeholder:text-bentham-gray/50 transition-all focus:border-bentham-orange focus:ring-2 focus:ring-bentham-orange/20 focus:outline-none appearance-none h-auto py-3 min-h-[100px] resize-none;
+    @apply w-full px-4 bg-white border border-bentham-border rounded-xl text-[14px] font-normal text-bentham-dark placeholder:text-bentham-gray/50 transition-all focus:border-bentham-orange focus:ring-2 focus:ring-bentham-orange/20 focus:outline-none appearance-none h-auto py-3 min-h-[100px] resize-none;
   }
 }
+
+/* ================= CARTOES TRANSLUCIDOS =================
+   Os cartoes de conteudo deixam a folha do fundo transparecer. O alvo e a sombra do padrao
+   "folha aberta" — seletor por substring da classe, que evita escapar parenteses e virgulas
+   do valor arbitrario do Tailwind. So dentro de <main>: cabecalho, menus, dropdowns e modais
+   ficam opacos de proposito, senao vira sopa visual em cima de conteudo. */
+main [class*="shadow-[0_10px_30px"] {
+  background-color: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(3px);
+}
+/* Menu/dropdown/modal que por acaso carregue a mesma sombra volta a ser solido. */
+main [class*="shadow-[0_10px_30px"]:is(.fixed, .absolute, [role="menu"], [role="dialog"]),
+main :is(.fixed, [role="dialog"]) [class*="shadow-[0_10px_30px"] {
+  background-color: #FFFFFF;
+  backdrop-filter: none;
+}
+
+/* ================= MODO DALTONICO =================
+   As telas foram escritas com cores literais, entao em vez de caçar centenas de classes
+   arquivo por arquivo, remapeamos aqui as literais que carregam significado. Vale pro
+   sistema inteiro e some junto com a classe .daltonico na <html>.
+
+   Verde (sucesso) -> azul #0072B2 ; vermelho (erro) -> carmim escuro #9E1B32.
+   O par nao muda so de matiz: muda de luminosidade, entao continua legivel para
+   protanopia, deuteranopia e ate acromatopsia. O laranja da marca fica intacto.
+   A informacao tambem nao depende so da cor — os componentes carregam icone e rotulo. */
+
+.daltonico .text-\[\#10B981\], .daltonico .text-\[\#059669\], .daltonico .text-\[\#16A34A\],
+.daltonico .text-\[\#22C55E\], .daltonico .text-\[\#15803D\] { color: #0072B2; }
+.daltonico .bg-\[\#10B981\], .daltonico .bg-\[\#059669\], .daltonico .bg-\[\#16A34A\],
+.daltonico .bg-\[\#22C55E\] { background-color: #0072B2; }
+.daltonico .border-\[\#10B981\], .daltonico .border-\[\#16A34A\],
+.daltonico .border-\[\#22C55E\] { border-color: #0072B2; }
+.daltonico .bg-\[\#ECFDF5\], .daltonico .bg-\[\#D1FAE5\], .daltonico .bg-\[\#DCFCE7\],
+.daltonico .bg-\[\#F0FDF4\] { background-color: #E0F0FA; }
+
+.daltonico .text-\[\#EF4444\], .daltonico .text-\[\#DC2626\], .daltonico .text-\[\#B91C1C\],
+.daltonico .text-\[\#F87171\], .daltonico .text-\[\#991B1B\] { color: #9E1B32; }
+.daltonico .bg-\[\#EF4444\], .daltonico .bg-\[\#DC2626\], .daltonico .bg-\[\#B91C1C\] { background-color: #9E1B32; }
+.daltonico .border-\[\#EF4444\], .daltonico .border-\[\#DC2626\],
+.daltonico .border-\[\#FCA5A5\] { border-color: #9E1B32; }
+.daltonico .bg-\[\#FEE2E2\], .daltonico .bg-\[\#FEF2F2\], .daltonico .bg-\[\#FFE4E6\] { background-color: #F7E3E8; }
+
+/* Recharts e SVGs pintam por atributo, nao por classe. */
+.daltonico [fill="#10B981"], .daltonico [fill="#16A34A"], .daltonico [fill="#22C55E"] { fill: #0072B2; }
+.daltonico [stroke="#10B981"], .daltonico [stroke="#16A34A"], .daltonico [stroke="#22C55E"] { stroke: #0072B2; }
+.daltonico [fill="#EF4444"], .daltonico [fill="#DC2626"] { fill: #9E1B32; }
+.daltonico [stroke="#EF4444"], .daltonico [stroke="#DC2626"] { stroke: #9E1B32; }

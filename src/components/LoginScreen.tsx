@@ -16,7 +16,7 @@ export interface AuthUser {
   sessionVersion?: string;
 }
 
-type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
+type AuthMode = 'login' | 'register' | 'reset';
 
 interface LoginScreenProps {
   onLogin: (email: string, password: string, rememberMe: boolean) => Promise<void>;
@@ -44,11 +44,11 @@ export default function LoginScreen({
   const [registerEmail, setRegisterEmail] = React.useState('');
   const [registerPassword, setRegisterPassword] = React.useState('');
 
-  const [forgotEmail, setForgotEmail] = React.useState('');
-
   const [resetEmail, setResetEmail] = React.useState('');
   const [resetCode, setResetCode] = React.useState('');
   const [resetPassword, setResetPasswordValue] = React.useState('');
+  // Codigo e nova senha so destravam depois que o e-mail com o codigo sai.
+  const [codigoEnviado, setCodigoEnviado] = React.useState(false);
 
   const clearFeedback = () => {
     setMessage('');
@@ -76,9 +76,9 @@ export default function LoginScreen({
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] font-['Montserrat'] flex items-center justify-center px-6 py-10 dark:bg-[#0B1120]">
-      <div className="w-full max-w-[1160px] grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] bg-white border border-[#E5E7EB] rounded-[28px] shadow-sm overflow-hidden dark:bg-[#0F172A] dark:border-[#1F2937]">
-        <div className="bg-white p-10 lg:p-14 flex flex-col justify-between dark:bg-[#0F172A]">
+    <div className="min-h-screen bg-[#F8F9FA] font-['Montserrat'] flex items-center justify-center px-6 py-10">
+      <div className="w-full max-w-[1160px] grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] bg-white border border-[#E5E7EB] rounded-[28px] shadow-sm overflow-hidden">
+        <div className="bg-white p-10 lg:p-14 flex flex-col justify-between">
           <div>
             <img
               src="https://i.imgur.com/Net1yEQ.png"
@@ -88,13 +88,13 @@ export default function LoginScreen({
             />
 
             <div className="mt-14 max-w-[520px]">
-              <p className="text-[11px] font-medium text-[#757575] uppercase tracking-[1.5px] dark:text-[#94A3B8]">
+              <p className="text-[11px] font-medium text-[#757575] uppercase tracking-[1.5px]">
                 Acesso ao ecossistema
               </p>
-              <h1 className="text-[34px] leading-tight font-bold text-[#2D2D2D] mt-3 dark:text-[#F1F5F9]">
+              <h1 className="text-[34px] leading-tight font-bold text-[#2D2D2D] mt-3">
                 Bem-vindo ao EcoQuanta.
               </h1>
-              <p className="text-[15px] text-[#757575] mt-5 leading-relaxed dark:text-[#94A3B8]">
+              <p className="text-[15px] text-[#757575] mt-5 leading-relaxed">
                 Grandes obras não nascem de mãos solitárias, nascem da força de quem constrói junto.
               </p>
             </div>
@@ -127,11 +127,8 @@ export default function LoginScreen({
               <ModeButton active={mode === 'register'} onClick={() => switchMode('register')}>
                 Cadastrar
               </ModeButton>
-              <ModeButton active={mode === 'forgot'} onClick={() => switchMode('forgot')}>
-                Esqueci a senha
-              </ModeButton>
               <ModeButton active={mode === 'reset'} onClick={() => switchMode('reset')}>
-                Redefinir
+                Esqueci a senha
               </ModeButton>
             </div>
 
@@ -256,57 +253,33 @@ export default function LoginScreen({
               </form>
             )}
 
-            {mode === 'forgot' && (
-              <form
-                className="space-y-5"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void runAction(async () => {
-                    const msg = await onForgotPassword(forgotEmail);
-                    setResetEmail(forgotEmail.trim());
-                    setMode('reset');
-                    setMessage(msg);
-                  });
-                }}
-              >
-                <HeaderTitle
-                  title="Solicitar código"
-                  subtitle="Vamos enviar um código para o e-mail informado."
-                />
-
-                <InputGroup label="E-mail" icon={<Mail size={18} className="text-[#757575]" />}>
-                  <input
-                    className="bentham-input !pl-11"
-                    type="email"
-                    value={forgotEmail}
-                    onChange={(e) => setForgotEmail(e.target.value)}
-                    placeholder="nome@empresa.com"
-                    required
-                  />
-                </InputGroup>
-
-                <PrimaryButton loading={loading}>Enviar código</PrimaryButton>
-              </form>
-            )}
-
             {mode === 'reset' && (
               <form
                 className="space-y-5"
                 onSubmit={(e) => {
                   e.preventDefault();
                   void runAction(async () => {
+                    if (!codigoEnviado) {
+                      const msg = await onForgotPassword(resetEmail);
+                      setCodigoEnviado(true);
+                      setMessage(msg);
+                      return;
+                    }
                     const msg = await onResetPassword(resetEmail, resetCode, resetPassword);
                     setMessage(msg);
                     setResetEmail('');
                     setResetCode('');
                     setResetPasswordValue('');
+                    setCodigoEnviado(false);
                     setMode('login');
                   });
                 }}
               >
                 <HeaderTitle
-                  title="Redefinir senha"
-                  subtitle="Informe o código recebido e defina uma nova senha."
+                  title="Esqueci a senha"
+                  subtitle={codigoEnviado
+                    ? 'Informe o código que enviamos e defina uma nova senha.'
+                    : 'Informe seu e-mail para receber o código de verificação.'}
                 />
 
                 <InputGroup label="E-mail" icon={<Mail size={18} className="text-[#757575]" />}>
@@ -314,7 +287,7 @@ export default function LoginScreen({
                     className="bentham-input !pl-11"
                     type="email"
                     value={resetEmail}
-                    onChange={(e) => setResetEmail(e.target.value)}
+                    onChange={(e) => { setResetEmail(e.target.value); setCodigoEnviado(false); }}
                     placeholder="nome@empresa.com"
                     required
                   />
@@ -322,32 +295,36 @@ export default function LoginScreen({
 
                 <InputGroup label="Código" icon={<KeyRound size={18} className="text-[#757575]" />}>
                   <input
-                    className="bentham-input !pl-11"
+                    className="bentham-input !pl-11 disabled:cursor-not-allowed disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF]"
                     type="text"
                     value={resetCode}
                     onChange={(e) => setResetCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="Código de 6 dígitos"
+                    placeholder={codigoEnviado ? 'Código de 6 dígitos' : 'Envie o código primeiro'}
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     pattern="[0-9]{6}"
-                    required
+                    disabled={!codigoEnviado}
+                    required={codigoEnviado}
                   />
                 </InputGroup>
 
                 <InputGroup label="Nova senha" icon={<LockKeyhole size={18} className="text-[#757575]" />}>
                   <input
-                    className="bentham-input !pl-11"
+                    className="bentham-input !pl-11 disabled:cursor-not-allowed disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF]"
                     type="password"
                     value={resetPassword}
                     onChange={(e) => setResetPasswordValue(e.target.value)}
-                    placeholder="Nova senha"
+                    placeholder={codigoEnviado ? 'Nova senha' : 'Envie o código primeiro'}
                     minLength={6}
                     autoComplete="new-password"
-                    required
+                    disabled={!codigoEnviado}
+                    required={codigoEnviado}
                   />
                 </InputGroup>
 
-                <PrimaryButton loading={loading}>Salvar nova senha</PrimaryButton>
+                <PrimaryButton loading={loading}>
+                  {codigoEnviado ? 'Salvar nova senha' : 'Enviar código para o e-mail'}
+                </PrimaryButton>
               </form>
             )}
           </div>

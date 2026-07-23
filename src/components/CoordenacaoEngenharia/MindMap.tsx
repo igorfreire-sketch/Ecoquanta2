@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d';
 import { X } from 'lucide-react';
 import { getDisciplineDisplayName } from '../Atividades';
@@ -347,9 +348,11 @@ export default function MindMap({ sheets, currentUserEmail, osOptions = [], onOp
     );
   }
 
-  return (
+  // Portal pro body: fora do stacking context do <main> (relative z-10), senao o rail (z-40)
+  // ficaria por cima deste overlay fullscreen. Assim o z-[200] vale de verdade.
+  return createPortal(
     <div className="fixed inset-0 z-[200] flex flex-col overflow-hidden bg-white">
-      <div className="flex items-center justify-between gap-4 border-b border-[#E5E7EB] px-5 py-2.5">
+      <div className="flex items-center justify-between gap-4 px-5 py-3">
         <div className="flex items-center gap-4">
           <h2 className="text-[15px] font-black text-[#2D2D2D]">Mapa Mental</h2>
           <span className="text-[11px] text-[#94A3B8]">{graphData.nodes.length} nó(s) · {graphData.links.length} vínculo(s)</span>
@@ -375,7 +378,7 @@ export default function MindMap({ sheets, currentUserEmail, osOptions = [], onOp
       </div>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="w-64 flex-shrink-0 overflow-y-auto border-r border-[#E5E7EB] p-4">
+        <aside className="w-64 flex-shrink-0 overflow-y-auto p-4">
           <div className="mb-5">
             <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-[#94A3B8]">Modo</p>
             <div className="flex flex-col gap-1.5">
@@ -518,6 +521,7 @@ export default function MindMap({ sheets, currentUserEmail, osOptions = [], onOp
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

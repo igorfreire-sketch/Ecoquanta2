@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, Save } from 'lucide-react';
+import { CheckCircle2, Clock3, Loader2, Save } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
 import { getDemoRecords, getRecords, updateRecord, type Nc2Item, type Nc2Record } from './ncStore';
 
@@ -70,7 +70,7 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
   if (loading) {
     return (
       <div className="flex min-h-[320px] items-center justify-center">
-        <div className="flex items-center gap-3 rounded-xl border border-[#E5E7EB] bg-white px-5 py-4 text-[13px] font-bold text-[#757575] shadow-sm">
+        <div className="flex items-center gap-3 rounded-xl bg-white px-5 py-4 text-[13px] font-bold text-[#757575] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
           <Loader2 size={16} className="animate-spin text-[#F05D28]" />
           Carregando revisoes...
         </div>
@@ -80,23 +80,24 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-[980px] mx-auto animate-in fade-in duration-500 pb-10">
-      <div className="mb-2">
-        <h2 className="text-[24px] font-bold text-[#2D2D2D] mb-1">Revisoes</h2>
-        <p className="text-[15px] font-medium text-[#757575]">
+      <div>
+        <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">CONFORMIDADE</p>
+        <h2 className="text-[18px] font-black text-[#2D2D2D]">Revisões</h2>
+        <p className="mt-1 text-[15px] font-medium text-[#757575]">
           Todas as atividades registradas no preenchimento aparecem aqui e podem ser editadas por qualquer usuario com acesso.
         </p>
       </div>
 
       {errorMessage && (
-        <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">
+        <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#EF4444]">
           {errorMessage}
         </div>
       )}
 
       {records.length === 0 && (
-        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-12 flex flex-col items-center gap-3 text-center shadow-sm">
+        <div className="rounded-2xl bg-white p-12 flex flex-col items-center gap-3 text-center shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
           <p className="text-[15px] font-bold text-[#2D2D2D]">{errorMessage ? 'Falha ao carregar revisoes' : 'Nenhuma revisao registrada'}</p>
-          <p className="text-[13px] text-[#9CA3AF]">
+          <p className="text-[13px] text-[#94A3B8]">
             {errorMessage ? 'Confira a conexao com o Firebase e tente novamente.' : 'Quando houver atividades enviadas em Preenchimento, elas aparecerao aqui.'}
           </p>
         </div>
@@ -105,23 +106,24 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
       {records.map((rec) => {
         const saving = savingIds.has(rec.id);
         return (
-          <div key={rec.id} className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
-            <div className="flex flex-wrap items-center gap-3 px-6 py-4 border-b border-[#F3F4F6]">
+          <div key={rec.id} className="rounded-2xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden">
+            <div className="flex flex-wrap items-center gap-3 px-6 py-4">
               <span className="bg-[#F05D28] text-white text-[11px] font-bold px-3 py-1 rounded-md shrink-0">
                 {rec.osCodigo || rec.os}
               </span>
               <span className="text-[14px] font-bold text-[#2D2D2D]">{rec.objetoOs}</span>
-              <span className="text-[13px] font-medium text-[#6B7280]">{rec.disciplina}</span>
-              <span className="text-[12px] text-[#9CA3AF]">{rec.avaliador}</span>
+              <span className="text-[13px] font-medium text-[#757575]">{rec.disciplina}</span>
+              <span className="text-[12px] text-[#94A3B8]">{rec.avaliador}</span>
               <div className="ml-auto flex items-center gap-3">
-                <span className={`text-[11px] font-bold px-3 py-1 rounded-full ${rec.concluido ? 'bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0]' : 'bg-[#FFF7ED] text-[#C2410C] border border-[#FED7AA]'}`}>
+                <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1 rounded-full ${rec.concluido ? 'bg-[#ECFDF5] text-[#10B981]' : 'bg-[#FFF3EC] text-[#F05D28]'}`}>
+                  {rec.concluido ? <CheckCircle2 size={12} /> : <Clock3 size={12} />}
                   {rec.concluido ? 'Concluida' : 'Pendente'}
                 </span>
-                <span className="text-[11px] text-[#9CA3AF] whitespace-nowrap">{rec.dataHora}</span>
+                <span className="text-[11px] text-[#94A3B8] whitespace-nowrap">{rec.dataHora}</span>
               </div>
             </div>
 
-            <div className="p-6 space-y-5">
+            <div className="px-6 pb-6 space-y-5">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div>
                   <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Objeto da OS</label>
@@ -172,14 +174,14 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
               </div>
 
               <div>
-                <p className="text-[10px] font-bold text-[#9CA3AF] uppercase tracking-widest mb-4">Itens avaliados</p>
+                <p className="text-[10px] font-bold text-[#94A3B8] uppercase tracking-widest mb-4">Itens avaliados</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {(rec.itens || []).map((item) => (
-                    <div key={item.itemKey} className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+                    <div key={item.itemKey} className="rounded-xl bg-[#F8F9FA] p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className="text-[13px] font-bold text-[#2D2D2D]">{item.itemLabel}</p>
-                          <p className="text-[11px] text-[#9CA3AF] mt-1">
+                          <p className="text-[11px] text-[#94A3B8] mt-1">
                             C: {item.quantidadeC} / T: {item.quantidadeT} {itemUnitLabel(item)}
                           </p>
                         </div>
@@ -196,8 +198,9 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
                                 return { ...record, itens: nextItens, itensT: nextItensT, concluido };
                               });
                             }}
-                            className={`px-3 py-2 rounded-xl text-[11px] font-black uppercase tracking-wide ${item.revisado ? 'bg-[#10B981] text-white' : 'bg-white border border-[#D1D5DB] text-[#374151]'}`}
+                            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-black uppercase tracking-wide ${item.revisado ? 'bg-[#10B981] text-white' : 'bg-white border border-[#D1D5DB] text-[#757575]'}`}
                           >
+                            {item.revisado ? <CheckCircle2 size={13} /> : <Clock3 size={13} />}
                             {item.revisado ? 'Revisado' : 'Marcar revisado'}
                           </button>
                         )}

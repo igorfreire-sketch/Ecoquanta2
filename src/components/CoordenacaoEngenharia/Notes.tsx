@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { FileText, Globe, Lock, Network, Plus } from 'lucide-react';
 import { getDisciplineDisplayName, buildActivitiesFromEap } from '../Atividades';
 import SearchableSelect from '../SearchableSelect';
@@ -36,6 +37,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
   const [filtroContrato, setFiltroContrato] = React.useState('');
   const [filtroOs, setFiltroOs] = React.useState('');
   const [filtroDisciplina, setFiltroDisciplina] = React.useState('');
+  const [filtroAutor, setFiltroAutor] = React.useState('');
 
   React.useEffect(() => {
     if (!abrirNota) return;
@@ -72,21 +74,31 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
     [sortedOs, filtroContrato]
   );
 
-  // Janela de criacao lista so as notas do proprio usuario (publicas e particulares).
+  // Autores disponiveis no filtro: eu primeiro, depois os usuarios cadastrados.
+  const autorOptions = React.useMemo(
+    () => usuarios
+      .filter((item) => item.email && item.email !== currentUser.email)
+      .sort((a, b) => (a.nome || a.email).localeCompare(b.nome || b.email, 'pt-BR')),
+    [usuarios, currentUser.email]
+  );
+
+  // Janela de criacao: minhas notas (publicas e particulares) + todas as publicas dos outros.
   const minhasNotas = React.useMemo(() => {
     const codigosDoContrato = new Set(osFiltradas.map((os) => os.codigo));
     return notes
-      .filter((nota) => nota.autorEmail === currentUser.email)
+      .filter((nota) => nota.autorEmail === currentUser.email || nota.publica !== false)
+      .filter((nota) => !filtroAutor || nota.autorEmail === filtroAutor)
       .filter((nota) => !filtroContrato || (nota.osCodigo ? codigosDoContrato.has(nota.osCodigo) : false))
       .filter((nota) => !filtroOs || nota.osCodigo === filtroOs)
       .filter((nota) => !filtroDisciplina || getSheetDisciplinas(nota).some((item) => disciplineMatchesSector(item, filtroDisciplina)))
       .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-  }, [notes, currentUser.email, filtroContrato, filtroOs, filtroDisciplina, osFiltradas]);
+  }, [notes, currentUser.email, filtroAutor, filtroContrato, filtroOs, filtroDisciplina, osFiltradas]);
 
   const abrirCriacao = () => {
     setFiltroContrato('');
     setFiltroOs('');
     setFiltroDisciplina('');
+    setFiltroAutor('');
     setCriarAberto(true);
   };
 
@@ -133,7 +145,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
   }
 
   return (
-    <div className="rounded-2xl border border-[#E5E7EB] bg-white p-6">
+    <div className="rounded-2xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
       <div className="mb-5 flex items-center justify-between gap-3">
         <button
           type="button"
@@ -155,8 +167,10 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
 
       {editor}
 
-      {criarAberto && (
-        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setCriarAberto(false)}>
+      {criarAberto && createPortal(
+        // Portal pro body + ancorado no alto: fora do <main> o overflow nao empurra o modal pra
+        // baixo; ele nasce mais alto (pt-[8vh]) em vez de centralizado lá embaixo.
+        <div className="fixed inset-0 z-[220] flex items-start justify-center bg-slate-950/40 px-4 pb-4 pt-[8vh]" onClick={() => setCriarAberto(false)}>
           <div
             className="flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white p-5 shadow-xl"
             onClick={(event) => event.stopPropagation()}
@@ -174,10 +188,22 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
             </div>
 
             <p className="mt-2 text-[12px] text-[#94A3B8]">
-              Ou parta de uma nota sua já criada — ela será copiada com bancos, notas e checklists.
+              Ou parta de uma nota já criada (sua ou pública de outro usuário) — ela será copiada com bancos, notas e checklists.
             </p>
 
             <div className="mt-3 flex flex-wrap gap-2">
+              <SearchableSelect
+                value={filtroAutor}
+                onChange={(event) => setFiltroAutor(event.target.value)}
+                searchPlaceholder="Pesquisar autor..."
+                className="h-11 w-[240px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+              >
+                <option value="">Todas as notas públicas</option>
+                <option value={currentUser.email}>Notas criadas por mim</option>
+                {autorOptions.map((autor) => (
+                  <option key={autor.email} value={autor.email}>{autor.nome || autor.email}</option>
+                ))}
+              </SearchableSelect>
               <SearchableSelect
                 value={filtroContrato}
                 onChange={(event) => { setFiltroContrato(event.target.value); setFiltroOs(''); }}
@@ -216,7 +242,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
             <div className="mt-4 flex-1 overflow-auto">
               {minhasNotas.length === 0 ? (
                 <p className="px-1 py-3 text-[13px] text-[#94A3B8]">
-                  Nenhuma nota sua com esses filtros. Use "Criar em branco".
+                  Nenhuma nota com esses filtros. Use "Criar em branco".
                 </p>
               ) : (
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -227,7 +253,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
                         key={nota.id}
                         type="button"
                         onClick={() => criarCopia(nota)}
-                        className="rounded-xl border border-[#E5E7EB] bg-white p-3 text-left transition-colors hover:border-[#F7C7B7] hover:bg-[#FFF7F3]"
+                        className="rounded-xl bg-white p-3 text-left shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)] transition-colors hover:bg-[#FFF7F3]"
                       >
                         <div className="flex items-center gap-1.5">
                           <FileText size={13} className="flex-shrink-0 text-[#F05D28]" />
@@ -237,6 +263,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
                             : <Globe size={11} className="flex-shrink-0 text-[#10B981]" />}
                         </div>
                         <p className="mt-1 truncate text-[11px] font-medium text-[#94A3B8]">
+                          {nota.autorEmail !== currentUser.email ? `${nota.autorNome || nota.autorEmail} · ` : ''}
                           {os ? `OS ${os.codigo} - ${os.nome}` : getDisciplineDisplayName(nota.disciplina) || 'Sem disciplina'}
                         </p>
                       </button>
@@ -246,7 +273,8 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

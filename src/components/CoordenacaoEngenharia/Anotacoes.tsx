@@ -1,5 +1,6 @@
 import React from 'react';
-import { Brush, Check, FileSpreadsheet, FileText, Globe, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { AlignCenter, AlignLeft, AlignRight, Brush, Check, FileSpreadsheet, FileText, Globe, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
 import SearchableSelect from '../SearchableSelect';
 import { getDisciplineDisplayName, getDisciplineIconInfo, type EngineeringActivity } from '../Atividades';
 import { disciplineMatchesSector, getSectorOptions } from '../../lib/disciplineCatalog';
@@ -10,6 +11,7 @@ import {
   LARGURA_QUEBRA_PX, mergeAt, mergeIntersects, PADDING_CELULA_X, quebrarTexto, remapMerges,
   remapStyles, spliceSizes, type BancoMerge, type CellStyle,
 } from '../../lib/bancoGrid';
+import { aquecerCorretor, sugerirCorrecoes, trocarPalavra, type SugestaoOrtografica } from '../../lib/spellcheck';
 import CronogramaResumo from './CronogramaResumo';
 import MindMap from './MindMap';
 
@@ -216,6 +218,7 @@ export default function Anotacoes({
   const normalizeForEditing = (sheet: AnnotationSheet): AnnotationSheet => ({ ...sheet, bancos: getSheetBancos(sheet), textos: getSheetTextos(sheet) });
   const [editing, setEditing] = React.useState<AnnotationSheet | null>(() => (controlledSheet ? normalizeForEditing(controlledSheet) : null));
   const [contextMenu, setContextMenu] = React.useState<ContextMenuState>(null);
+  const [sugestoesOrtografia, setSugestoesOrtografia] = React.useState<SugestaoOrtografica[]>([]);
   const [saving, setSaving] = React.useState(false);
   const [configOpen, setConfigOpen] = React.useState(false);
   // Selecao retangular de celulas (clicar e arrastar). Base do menu de formatacao,
@@ -329,6 +332,26 @@ export default function Anotacoes({
     ...banco,
     rows: banco.rows.map((row, ri) => (ri === r ? row.map((cell, ci) => (ci === c ? value : cell)) : row)),
   }));
+  // Editor aberto: comeca a montar o dicionario ja, pra o menu nao esperar os ~13s de carga.
+  React.useEffect(() => { if (editing) aquecerCorretor(); }, [Boolean(editing)]);
+
+  // Menu aberto: procura erros de ortografia na celula pra montar a coluna de correcoes.
+  const textoDaCelulaDoMenu = contextMenu
+    ? (editing?.bancos ?? [])[contextMenu.bancoIndex]?.rows?.[contextMenu.row]?.[contextMenu.col] || ''
+    : '';
+  React.useEffect(() => {
+    if (!contextMenu) { setSugestoesOrtografia([]); return; }
+    let cancelado = false;
+    void sugerirCorrecoes(textoDaCelulaDoMenu).then((lista) => { if (!cancelado) setSugestoesOrtografia(lista); });
+    return () => { cancelado = true; };
+  }, [contextMenu, textoDaCelulaDoMenu]);
+
+  const corrigirPalavra = (de: string, para: string) => {
+    if (!contextMenu) return;
+    updateCell(contextMenu.bancoIndex, contextMenu.row, contextMenu.col, trocarPalavra(textoDaCelulaDoMenu, de, para));
+    setContextMenu(null);
+  };
+
   const insertRow = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => {
     const rows = [...banco.rows];
     rows.splice(at, 0, Array.from({ length: banco.colCount }, () => ''));
@@ -710,9 +733,12 @@ export default function Anotacoes({
     // Se a aba escolhida sumiu (usuario limpou a OS, por ex.), cai na primeira disponivel.
     const abaAtiva = sidebarTabs.find((tab) => tab.key === sidebarTab)?.key ?? sidebarTabs[0].key;
 
-    return (
+    // Portal pro body: fullscreen de verdade (fora do <main> relative z-10). Sem isso o editor
+    // ficava preso no contexto do main — rail por cima, cortado pelo overflow e "jogado pra baixo".
+    // Igual Gantt e Mapa Mental.
+    return createPortal(
       <div className="fixed inset-0 z-[200] flex flex-col overflow-hidden bg-white">
-        <div className="flex items-center justify-between gap-4 border-b border-[#E5E7EB] px-5 py-2.5">
+        <div className="flex items-center justify-between gap-4 px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
             <h2 className="truncate text-[15px] font-black text-[#2D2D2D]">{editing.titulo || 'Nova anotação'}</h2>
             {autorInfo && <span className="whitespace-nowrap text-[11px] text-[#94A3B8]">{autorInfo}</span>}
@@ -743,7 +769,7 @@ export default function Anotacoes({
                 {configOpen && (
                   <>
                     <div className="fixed inset-0 z-[205]" onClick={() => setConfigOpen(false)} />
-                    <div className="absolute right-0 top-full z-[206] mt-1 w-44 rounded-xl border border-[#E5E7EB] bg-white p-1.5 shadow-lg">
+                    <div className="absolute right-0 top-full z-[206] mt-1 w-44 rounded-xl bg-white p-1.5 shadow-xl">
                       <button
                         type="button"
                         onClick={() => { addTextoBlock(); setConfigOpen(false); }}
@@ -978,6 +1004,12 @@ export default function Anotacoes({
                               const merge = mergeAt(banco.merges, r, c);
                               const estilo = banco.styles?.[cellKey(r, c)];
                               const selecionada = naSelecao(bancoIndex, r, c);
+                              // Altura explicita na celula (nao so na linha): "height" em % nao
+                              // resolve dentro de <td>, entao o textarea h-full ficava preso ao
+                              // tamanho intrinseco (~2 linhas) mesmo com a linha maior. Soma as
+                              // linhas cobertas pela mesclagem pra nao espremer celula mesclada.
+                              const alturaCelulaPx = Array.from({ length: merge?.rowSpan || 1 }, (_, i) => banco.rowHeights?.[r + i] ?? BANCO_ROW_HEIGHT)
+                                .reduce((total, altura) => total + altura, 0);
                               return (
                                 <td
                                   key={c}
@@ -999,7 +1031,7 @@ export default function Anotacoes({
                                     if (!naSelecao(bancoIndex, r, c)) setSelecao({ bancoIndex, r1: r, c1: c, r2: r, c2: c });
                                     setContextMenu({ bancoIndex, row: r, col: c, x: event.clientX, y: event.clientY });
                                   }}
-                                  style={{ backgroundColor: estilo?.bg || (r === 0 ? '#F3F4F6' : '#FFFFFF') }}
+                                  style={{ backgroundColor: estilo?.bg || (r === 0 ? '#F3F4F6' : '#FFFFFF'), height: `${alturaCelulaPx}px` }}
                                   className={`relative border border-[#E5E7EB] p-0 ${selecionada ? 'shadow-[inset_0_0_0_2px_#F05D28]' : ''} ${pincel ? 'cursor-copy' : ''}`}
                                 >
                                   {/* textarea (nao input) pra que o texto quebre em varias linhas. */}
@@ -1068,7 +1100,7 @@ export default function Anotacoes({
           {checklists.length > 0 && (
             <div className="mt-4 flex flex-col gap-4">
               {checklists.map((lista, index) => (
-                <div key={lista.id} className="rounded-xl border border-[#E5E7EB] p-4">
+                <div key={lista.id} className="rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)]">
                   <div className="mb-2 flex items-center justify-between">
                     <h4 className="text-[13px] font-bold text-[#2D2D2D]">
                       Checklist {index + 1}
@@ -1137,7 +1169,7 @@ export default function Anotacoes({
               {textos.map((bloco, index) => {
                 const links = Array.from(bloco.texto.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g));
                 return (
-                  <div key={bloco.id} className="rounded-xl border border-[#E5E7EB] p-4">
+                  <div key={bloco.id} className="rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)]">
                     <div className="mb-2 flex items-center justify-between">
                       <h4 className="text-[13px] font-bold text-[#2D2D2D]">Notas {index + 1}</h4>
                       {podeEditar && (
@@ -1194,7 +1226,7 @@ export default function Anotacoes({
             </div>
           ) : null}
 
-          <div className="mt-4 rounded-xl border border-[#E5E7EB] p-4">
+          <div className="mt-4 rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)]">
             {podeEditar && (
               <div className="flex items-center gap-4">
                 <button
@@ -1314,12 +1346,13 @@ export default function Anotacoes({
               onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); }}
             />
             <div
-              className="fixed z-[211] w-64 rounded-xl border border-[#E5E7EB] bg-white p-2 shadow-lg"
+              className="fixed z-[211] flex items-start gap-2"
               style={{
-                left: Math.min(contextMenu.x, window.innerWidth - 272),
+                left: Math.min(contextMenu.x, window.innerWidth - (sugestoesOrtografia.length ? 540 : 272)),
                 top: Math.min(contextMenu.y, window.innerHeight - 430),
               }}
             >
+            <div className="w-64 rounded-xl bg-white p-2 shadow-xl">
               <div className="flex items-center gap-1">
                 {([['bold', 'N', 'font-black'], ['italic', 'I', 'italic'], ['strike', 'S', 'line-through']] as const).map(([chave, rotulo, classe]) => (
                   <button
@@ -1338,6 +1371,23 @@ export default function Anotacoes({
                 >
                   Limpar formato
                 </button>
+              </div>
+
+              <div className="mt-1.5 flex items-center gap-1">
+                {([['left', AlignLeft, 'Alinhar à esquerda'], ['center', AlignCenter, 'Centralizar'], ['right', AlignRight, 'Alinhar à direita']] as const).map(([align, Icone, titulo]) => {
+                  const ativo = ((editing.bancos ?? [])[contextMenu.bancoIndex]?.styles?.[cellKey(contextMenu.row, contextMenu.col)]?.align || 'left') === align;
+                  return (
+                    <button
+                      key={align}
+                      type="button"
+                      title={titulo}
+                      onClick={() => aplicarEstilo({ align })}
+                      className={`flex h-8 w-8 items-center justify-center rounded-lg border text-[#374151] hover:border-[#F7C7B7] hover:text-[#F05D28] ${ativo ? 'border-[#F05D28] bg-[#FFF3EC] text-[#F05D28]' : 'border-[#E5E7EB]'}`}
+                    >
+                      <Icone size={14} />
+                    </button>
+                  );
+                })}
               </div>
 
               <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">Cor de fundo</p>
@@ -1435,6 +1485,30 @@ export default function Anotacoes({
                 </button>
               </div>
             </div>
+
+            {/* Segunda coluna: so aparece quando o corretor achou erro na celula. */}
+            {sugestoesOrtografia.length > 0 && (
+              <div className="w-64 rounded-xl bg-white p-2 shadow-xl">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">Ortografia</p>
+                {sugestoesOrtografia.map((item) => (
+                  <div key={item.palavra} className="mt-1.5 border-t border-[#F1F5F9] pt-1.5 first:border-t-0 first:pt-0">
+                    <p className="px-1 text-[11px] font-bold text-[#DC2626] line-through">{item.palavra}</p>
+                    {item.opcoes.map((opcao) => (
+                      <button
+                        key={opcao}
+                        type="button"
+                        onClick={() => corrigirPalavra(item.palavra, opcao)}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6] hover:text-[#F05D28]"
+                      >
+                        <Check size={14} />
+                        {opcao}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+            </div>
           </>
         )}
 
@@ -1508,7 +1582,8 @@ export default function Anotacoes({
             </div>
           </div>
         )}
-      </div>
+      </div>,
+      document.body,
     );
   }
 
@@ -1536,7 +1611,7 @@ export default function Anotacoes({
     const marcadoParaMim = (sheet.marcadosUsuarios || []).includes(currentUser.email);
 
     return (
-      <div key={sheet.id} className={`relative overflow-hidden rounded-xl border p-4 transition-colors hover:border-[#F7C7B7] ${marcadoParaMim ? 'border-[#FED7AA] bg-[#FFF3EC]' : 'border-[#E5E7EB] bg-white'}`}>
+      <div key={sheet.id} className={`relative overflow-hidden rounded-xl p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)] transition-colors ${marcadoParaMim ? 'bg-[#FFF3EC]' : 'bg-white'}`}>
         {/* Selo redondo no canto, sem a faixa cinza que cortava o card ao meio. */}
         {disciplinaIcon && (
           <div
@@ -1583,7 +1658,7 @@ export default function Anotacoes({
         {openCardMenuId === sheet.id && (
           <>
             <div className="fixed inset-0 z-[190]" onClick={() => setOpenCardMenuId(null)} />
-            <div className="fixed z-[191] w-44 rounded-xl border border-[#E5E7EB] bg-white p-1.5 shadow-lg" style={{ left: cardMenuPos.x, top: cardMenuPos.y }}>
+            <div className="fixed z-[191] w-44 rounded-xl bg-white p-1.5 shadow-xl" style={{ left: cardMenuPos.x, top: cardMenuPos.y }}>
               <button
                 type="button"
                 onClick={() => { setOpenCardMenuId(null); exportNoteToCsv(sheet); }}

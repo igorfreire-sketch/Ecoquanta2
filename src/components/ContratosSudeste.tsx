@@ -194,12 +194,17 @@ export default function ContratosSudeste({ preloadedData }: ContratosSudesteProp
     setExpandedRows(newExpanded);
   };
 
+  // ponytail: contador simples pra zebra entre linhas de niveis diferentes, sem duplicar estado.
+  let rowIndex = -1;
+
   const renderRow = (row: TreeRow, level = 0) => {
     const hasChildren = Boolean(row.children?.length);
+    rowIndex += 1;
+    const zebra = rowIndex % 2 === 1;
 
     return (
       <React.Fragment key={row.id}>
-        <tr className={`${level === 0 ? 'bg-white' : level === 1 ? 'bg-[#F8F9FA]/70' : 'bg-white'} hover:bg-[#F8F9FA] transition-colors group`}>
+        <tr className={`${zebra ? 'bg-[#FAFBFC]' : 'bg-white'} hover:bg-[#F8F9FA] transition-colors group`}>
           <td className="py-3.5 px-6">
             <button
               onClick={() => hasChildren && toggleRow(row.id)}
@@ -236,11 +241,11 @@ export default function ContratosSudeste({ preloadedData }: ContratosSudesteProp
         </div>
       </div>
 
-      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[1100px]">
             <thead>
-              <tr className="bg-[#F9FAFB] border-b border-[#E5E7EB]">
+              <tr className="bg-[#F9FAFB]">
                 <th className="py-4 px-6 text-[11px] font-bold text-[#757575] uppercase tracking-[1px] w-[160px]">Topico</th>
                 <th className="py-4 px-4 text-[11px] font-bold text-[#757575] uppercase tracking-[1px]">Tarefa</th>
                 <th className="py-4 px-4 text-[11px] font-bold text-[#757575] uppercase tracking-[1px] whitespace-nowrap">Inicio</th>
@@ -251,7 +256,7 @@ export default function ContratosSudeste({ preloadedData }: ContratosSudesteProp
                 <th className="py-4 px-6 text-[11px] font-bold text-[#757575] uppercase tracking-[1px]">Barra de %</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#E5E7EB]">
+            <tbody>
               {rows.length > 0 ? rows.map((row) => renderRow(row)) : (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-[13px] font-medium text-[#757575]">

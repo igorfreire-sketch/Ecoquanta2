@@ -47,7 +47,7 @@ const CustomTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
     const data: AtividadeConsolidada = payload[0].payload;
     return (
-      <div className="bg-white border border-gray-200 p-3 rounded-lg shadow-xl animate-in fade-in zoom-in duration-200">
+      <div className="bg-white p-3 rounded-lg shadow-xl animate-in fade-in zoom-in duration-200">
         <p className="text-[11px] font-black text-gray-800 uppercase leading-tight mb-1">{data.descricao}</p>
         <div className="flex gap-2 items-center mb-2">
           <span className="text-[9px] font-bold text-gray-500 uppercase">{data.os}</span>
@@ -97,7 +97,7 @@ const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos }) => {
           <ChipResumo label="Atividades" valor={resumo.atividades} color="text-[#1E40AF]" />
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-4 text-[9px] font-bold text-[#757575] uppercase border-t pt-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-4 text-[9px] font-bold text-[#757575] uppercase">
           {Object.entries(CORES_AVALIACAO).map(([label, cor]) => (
             <div key={label} className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-sm shadow-sm" style={{ backgroundColor: cor }} />
@@ -108,7 +108,7 @@ const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos }) => {
         </div>
       </div>
 
-      <div className="relative flex-1 flex flex-col items-center justify-center py-4 bg-gray-50/30 rounded-xl border border-gray-50">
+      <div className="relative flex-1 flex flex-col items-center justify-center py-4 bg-gray-50/30 rounded-xl">
         <div className="absolute top-3 left-6 right-6 flex justify-between pointer-events-none z-10">
           <div className="text-[9px] font-black text-emerald-700/60 uppercase tracking-tighter">Alto impacto + baixo esforco</div>
           <div className="text-[9px] font-black text-orange-700/60 uppercase tracking-tighter">Alto impacto + alto esforco</div>
@@ -159,13 +159,13 @@ const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos }) => {
 
       {selectedAtividade && (
         <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="w-[360px] bg-white border border-gray-200 rounded-[20px] shadow-2xl p-6 relative overflow-hidden">
+          <div className="w-[360px] bg-white rounded-[20px] shadow-2xl p-6 relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-brand" />
             <button onClick={() => setSelectedAtividade(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50 transition-colors">
               <X size={18} />
             </button>
 
-            <div className="flex gap-4 items-center mb-6 border-b pb-4">
+            <div className="flex gap-4 items-center mb-6">
               <div className="w-14 h-14 rounded-[12px] bg-red-100 flex items-center justify-center shrink-0">
                 <TrendingUp size={28} className="text-red-600" />
               </div>
@@ -188,18 +188,18 @@ const MatrizImpactoEsforcoInterativa: React.FC<Props> = ({ dadosBrutos }) => {
                 <span className="text-gray-500 font-bold uppercase tracking-tight">Alocacao total:</span>
                 <span className="font-black text-gray-800">{Math.round(selectedAtividade.alocacaoTotal)}%</span>
               </div>
-              <div className="flex items-center gap-2 pt-1 border-t border-gray-50 mt-2">
+              <div className="flex items-center gap-2 pt-1 mt-2">
                 <Users size={16} className="text-slate-400" />
                 <span className="text-[11px] font-bold text-slate-500">Equipe de {selectedAtividade.profissionaisEnvolvidos} profissionais</span>
               </div>
             </div>
 
             <div className="flex justify-between gap-3 text-center">
-              <div className="flex-1 bg-slate-50 p-3 rounded-xl border border-slate-100">
+              <div className="flex-1">
                 <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Impacto</p>
                 <p className="text-2xl font-black text-slate-800">{Math.round(selectedAtividade.impacto)}</p>
               </div>
-              <div className="flex-1 bg-slate-50 p-3 rounded-xl border border-slate-100">
+              <div className="flex-1">
                 <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Esforco</p>
                 <p className="text-2xl font-black text-slate-800">{Math.round(selectedAtividade.esforco)}</p>
               </div>

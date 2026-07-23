@@ -27,9 +27,9 @@ import { downloadProjectVbaConfig } from '../lib/projectVbaAssets';
 
 export function ProjectVbaConfigCard() {
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
+    <div className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6 flex flex-col gap-5">
       <div className="space-y-2">
-        <div className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
+        <div className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
           MS Project
         </div>
         <h3 className="text-[16px] font-bold text-[#2D2D2D]">Configuração Project</h3>
@@ -94,6 +94,8 @@ export interface UserAccessRecord {
   status: UserStatus;
   allowedTabs: AppTabKey[];
   sessionVersion?: string;
+  // false/undefined = usuario novo, ainda sem nenhuma interacao de admin (fica verde na lista).
+  adminReviewed?: boolean;
 }
 
 export interface DatabaseLinkRecord {
@@ -240,8 +242,8 @@ function MultiTabSelector({
   onToggle: (tabKey: AppTabKey) => void;
 }) {
   return (
-    <div className="bg-[#F9FAFB] border border-[#E5E7EB] rounded-xl p-3 max-h-[170px] overflow-y-auto">
-      <div className="space-y-2">
+    <div className="max-h-[170px] overflow-y-auto">
+      <div className="space-y-1">
         {appTabs
           .filter((tab) => (user.isAdmin ? true : tab.key !== 'administracao'))
           .map((tab) => {
@@ -250,7 +252,7 @@ function MultiTabSelector({
             return (
               <label
                 key={tab.key}
-                className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-white transition-colors cursor-pointer"
+                className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-[#F9FAFB] transition-colors cursor-pointer"
               >
                 <span className="text-[12px] font-medium text-[#2D2D2D] leading-tight">{tab.label}</span>
 
@@ -300,7 +302,7 @@ function InlineListManager({
   };
 
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
+    <div className="flex flex-col gap-5">
       <div>
         <h3 className="text-[16px] font-bold text-[#2D2D2D]">{title}</h3>
         <p className="text-[13px] text-[#757575] mt-1">{subtitle}</p>
@@ -331,15 +333,15 @@ function InlineListManager({
         </button>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-1">
         {items.length === 0 && (
           <span className="text-[13px] text-[#757575]">Nenhum item cadastrado.</span>
         )}
 
-        {items.map((item) => (
+        {items.map((item, index) => (
           <div
             key={item}
-            className="flex items-center justify-between gap-3 rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] p-4"
+            className={`flex items-center justify-between gap-3 rounded-xl px-4 py-3 ${index % 2 === 1 ? 'bg-[#FAFBFC]' : ''}`}
           >
             <span className="text-[14px] font-bold text-[#2D2D2D]">{item}</span>
 
@@ -370,9 +372,9 @@ function ManagementLauncherCard({
   onOpen: () => void;
 }) {
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
+    <div className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6 flex flex-col gap-5">
       <div className="space-y-2">
-        <div className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
+        <div className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
           {badge}
         </div>
         <h3 className="text-[16px] font-bold text-[#2D2D2D]">{title}</h3>
@@ -437,7 +439,7 @@ function DisciplineSettingsManager({
   };
 
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
+    <div className="flex flex-col gap-5">
       <div>
         <h3 className="text-[16px] font-bold text-[#2D2D2D]">Gerenciar Disciplinas</h3>
         <p className="text-[13px] text-[#757575] mt-1">
@@ -470,15 +472,15 @@ function DisciplineSettingsManager({
         </button>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-1">
         {itemsWithSettings.length === 0 && (
           <span className="text-[13px] text-[#757575]">Nenhuma disciplina cadastrada.</span>
         )}
 
-        {itemsWithSettings.map((item) => (
+        {itemsWithSettings.map((item, index) => (
           <div
             key={item.nome}
-            className="flex flex-col gap-3 rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] p-4"
+            className={`flex flex-col gap-3 rounded-xl px-4 py-3 ${index % 2 === 1 ? 'bg-[#FAFBFC]' : ''}`}
           >
             <div className="flex items-center justify-between gap-3">
               <span className="text-[14px] font-bold text-[#2D2D2D]">{item.nome}</span>
@@ -565,9 +567,9 @@ function FadeModal({
       />
 
       <div
-        className={`relative z-[81] w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-[28px] border border-[#E5E7EB] bg-white shadow-2xl shadow-black/20 transition-all duration-200 ${visible ? 'translate-y-0 scale-100' : 'translate-y-3 scale-[0.98]'}`}
+        className={`relative z-[81] w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-black/20 transition-all duration-200 ${visible ? 'translate-y-0 scale-100' : 'translate-y-3 scale-[0.98]'}`}
       >
-        <div className="px-6 md:px-8 py-5 border-b border-[#E5E7EB] flex items-start justify-between gap-4">
+        <div className="px-6 md:px-8 pt-6 pb-2 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-[20px] font-bold text-[#2D2D2D]">{title}</h2>
             <p className="text-[13px] text-[#757575] mt-1">{subtitle}</p>
@@ -576,13 +578,13 @@ function FadeModal({
           <button
             type="button"
             onClick={onClose}
-            className="w-11 h-11 rounded-xl border border-[#E5E7EB] bg-white text-[#757575] hover:text-[#2D2D2D] hover:border-[#F05D28] transition-colors inline-flex items-center justify-center shrink-0"
+            className="w-11 h-11 rounded-xl bg-[#F9FAFB] text-[#757575] hover:text-[#2D2D2D] hover:text-[#F05D28] transition-colors inline-flex items-center justify-center shrink-0"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="p-6 md:p-8 overflow-y-auto max-h-[calc(85vh-88px)] bg-[#FCFCFD]">
+        <div className="p-6 md:p-8 pt-4 overflow-y-auto max-h-[calc(85vh-88px)]">
           {children}
         </div>
       </div>
@@ -604,25 +606,26 @@ function RoleTabPermissionsManager({
   const visibleTabs = appTabs.filter((tab) => tab.key !== 'administracao');
 
   return (
-    <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
-      <div className="px-8 py-6 border-b border-[#E5E7EB]">
-        <h2 className="text-[18px] font-bold text-[#2D2D2D]">Abas por Cargo</h2>
+    <section className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden">
+      <div className="px-8 pt-6 pb-2">
+        <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">Permissões</p>
+        <h2 className="text-[18px] font-black text-[#2D2D2D]">Abas por Cargo</h2>
         <p className="text-[13px] text-[#757575] mt-1">
           Esta matriz agora funciona somente como pre-selecao. Quando um usuario recebe um cargo, essas abas sao marcadas automaticamente em "Abas permitidas".
         </p>
       </div>
 
-      <div className="p-6 space-y-4">
+      <div className="p-6 space-y-1">
         {cargos.length === 0 && (
           <div className="text-[13px] text-[#757575]">Cadastre cargos para liberar esta matriz.</div>
         )}
 
-        {cargos.map((cargo) => {
+        {cargos.map((cargo, index) => {
           const allowed = roleTabPermissions[cargo] || [];
 
           return (
-            <details key={cargo} className="group border border-[#E5E7EB] bg-[#F9FAFB] rounded-2xl overflow-hidden">
-              <summary className="min-h-[60px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-white transition-colors [&::-webkit-details-marker]:hidden">
+            <details key={cargo} className={`group rounded-xl overflow-hidden ${index % 2 === 1 ? 'bg-[#FAFBFC]' : ''}`}>
+              <summary className="min-h-[60px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-[#F9FAFB] transition-colors [&::-webkit-details-marker]:hidden">
                 <div className="min-w-0 flex-1">
                   <p className="text-[14px] font-bold text-[#2D2D2D] truncate">{cargo}</p>
                   <p className="text-[12px] text-[#757575]">
@@ -633,7 +636,7 @@ function RoleTabPermissionsManager({
                 <ChevronRight size={20} className="shrink-0 text-[#757575] transition-transform group-open:rotate-90" />
               </summary>
 
-              <div className="border-t border-[#E5E7EB] p-5">
+              <div className="px-5 pb-5">
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                   {visibleTabs.map((tab) => {
                     const checked = allowed.includes(tab.key);
@@ -693,7 +696,7 @@ function DatabaseForm({
   };
 
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6">
+    <div className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6">
       <div className="mb-5">
         <h3 className="text-[16px] font-bold text-[#2D2D2D]">Cadastrar Banco de Dados</h3>
         <p className="text-[13px] text-[#757575] mt-1">
@@ -782,8 +785,8 @@ function TerceirizadasManager({
   };
 
   return (
-    <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
-      <div className="px-8 py-6 border-b border-[#E5E7EB]">
+    <section className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden">
+      <div className="px-8 pt-6 pb-2">
         <div className="flex items-center gap-3">
           <Users size={18} className="text-[#F05D28]" />
           <h2 className="text-[18px] font-bold text-[#2D2D2D]">Terceirizadas por Disciplina</h2>
@@ -831,14 +834,14 @@ function TerceirizadasManager({
           </button>
         </form>
 
-        <div className="space-y-4">
+        <div className="space-y-1">
           {terceirizadas.length === 0 && (
             <p className="text-[13px] text-[#757575]">Nenhuma terceirizada cadastrada.</p>
           )}
 
-          {terceirizadas.map((item) => (
-            <details key={item.id} className="group border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] overflow-hidden">
-              <summary className="min-h-[64px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-white transition-colors [&::-webkit-details-marker]:hidden">
+          {terceirizadas.map((item, index) => (
+            <details key={item.id} className={`group rounded-xl overflow-hidden ${index % 2 === 1 ? 'bg-[#FAFBFC]' : ''}`}>
+              <summary className="min-h-[64px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-[#F9FAFB] transition-colors [&::-webkit-details-marker]:hidden">
                 <div className="w-10 h-10 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm shrink-0">
                   {getUserInitials(item.nome)}
                 </div>
@@ -848,12 +851,12 @@ function TerceirizadasManager({
                   <p className="text-[12px] text-[#757575] truncate">{item.disciplina}</p>
                 </div>
 
-                <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-white text-[#757575] text-[11px] font-bold shrink-0">
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#F9FAFB] text-[#757575] text-[11px] font-bold shrink-0">
                   TERCEIRIZADA
                 </span>
 
                 {pendingIds.includes(item.id) && (
-                  <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#FED7AA] bg-[#FFF7ED] text-[#C2410C] text-[11px] font-bold shrink-0">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#FFF7ED] text-[#C2410C] text-[11px] font-bold shrink-0">
                     Alteracoes pendentes
                   </span>
                 )}
@@ -861,13 +864,11 @@ function TerceirizadasManager({
                 <ChevronRight size={20} className="shrink-0 text-[#757575] transition-transform group-open:rotate-90" />
               </summary>
 
-              <div className="border-t border-[#E5E7EB] p-5">
+              <div className="px-5 pb-5">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                   <div className="flex flex-col gap-1.5">
                     <label className="bentham-label">Disciplina</label>
-                    <div className="h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center text-[13px] font-medium text-[#2D2D2D]">
-                      {item.disciplina}
-                    </div>
+                    <p className="text-[13px] font-medium text-[#2D2D2D]">{item.disciplina}</p>
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -1072,10 +1073,10 @@ export default function Administracao({
 
       {activeSection === 'usuarios' && (
         <>
-      <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 lg:p-8">
+      <section className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6 lg:p-8">
         <div className="space-y-6">
           <div>
-            <p className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">
+            <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">
               Gestão de acesso
             </p>
             <h1 className="text-[24px] font-bold text-[#2D2D2D] mt-2">Administração de Usuários</h1>
@@ -1095,23 +1096,23 @@ export default function Administracao({
       </section>
 
       {disciplinaRequests.length > 0 && (
-        <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 lg:p-8">
-          <p className="mb-4 text-[11px] font-bold uppercase tracking-widest text-[#94A3B8]">
+        <section className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6 lg:p-8">
+          <p className="mb-4 text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">
             Pedidos de disciplina pendentes ({disciplinaRequests.length})
           </p>
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4">
             {disciplinaRequests.map((request) => {
               const unchecked = uncheckedByRequest[request.id] || [];
               const checkedDisciplinas = request.disciplinas.filter((item) => !unchecked.includes(item));
               return (
-                <div key={request.id} className="rounded-xl border border-[#E5E7EB] p-4">
+                <div key={request.id} className="pb-4">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <p className="text-[13px] font-bold text-[#2D2D2D]">{request.userNome}</p>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => void onResolveDisciplinaRequest(request, [])}
-                        className="h-8 rounded-lg border border-[#FECACA] px-3 text-[11px] font-bold text-[#B91C1C] hover:bg-[#FEF2F2]"
+                        className="h-8 rounded-lg bg-[#FEF2F2] px-3 text-[11px] font-bold text-[#B91C1C] hover:bg-[#FEE2E2]"
                       >
                         Negar tudo
                       </button>
@@ -1131,7 +1132,7 @@ export default function Administracao({
                       return (
                         <label
                           key={item}
-                          className={`flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium cursor-pointer ${checked ? 'border-[#F05D28] bg-[#FFF3EE] text-[#F05D28]' : 'border-[#E5E7EB] text-[#94A3B8] line-through'}`}
+                          className={`flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium cursor-pointer ${checked ? 'bg-[#FFF3EE] text-[#F05D28]' : 'bg-[#F9FAFB] text-[#94A3B8] line-through'}`}
                         >
                           <input
                             type="checkbox"
@@ -1155,7 +1156,7 @@ export default function Administracao({
         </section>
       )}
 
-      <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-5 lg:p-6">
+      <section className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-5 lg:p-6">
         <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-[minmax(280px,1.2fr)_minmax(180px,220px)_minmax(180px,220px)_auto] gap-4 items-end">
           <div>
             <label className="bentham-label">Pesquisar usuário</label>
@@ -1208,7 +1209,7 @@ export default function Administracao({
               if (hasPendingChanges && !window.confirm('Existem alteracoes sem enviar. Atualizar vai descarta-las. Deseja continuar?')) return;
               void onRefresh();
             }}
-            className="h-11 px-4 rounded-xl border border-[#E5E7EB] bg-white text-[#2D2D2D] text-[13px] font-bold hover:border-[#F05D28] hover:text-[#F05D28] transition-colors inline-flex items-center justify-center gap-2"
+            className="h-11 px-4 rounded-xl bg-[#F9FAFB] text-[#2D2D2D] text-[13px] font-bold hover:text-[#F05D28] transition-colors inline-flex items-center justify-center gap-2"
           >
             <RefreshCcw size={16} />
             Atualizar
@@ -1220,19 +1221,20 @@ export default function Administracao({
         </div>
       </section>
 
-      <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-6 lg:px-8 py-6 border-b border-[#E5E7EB]">
-          <h2 className="text-[18px] font-bold text-[#2D2D2D]">Lista de Usuários Cadastrados</h2>
+      <section className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden">
+        <div className="px-6 lg:px-8 pt-6 pb-2">
+          <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">Usuários</p>
+          <h2 className="text-[18px] font-black text-[#2D2D2D]">Lista de Usuários Cadastrados</h2>
           <p className="text-[13px] text-[#757575] mt-1">
             Usuários pendentes aguardam aceite do administrador. Usuários bloqueados perdem acesso ao app.
           </p>
         </div>
 
-        <div className="p-4 lg:p-6 space-y-4">
-          {usuariosFiltrados.map((user) => (
-            <details key={user.id} className="group border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] overflow-hidden">
-              <summary className="min-h-[64px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-white transition-colors [&::-webkit-details-marker]:hidden">
-                <div className="w-10 h-10 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm shrink-0">
+        <div className="p-4 lg:p-6 space-y-1">
+          {usuariosFiltrados.map((user, index) => (
+            <details key={user.id} className={`group rounded-2xl overflow-hidden ${user.adminReviewed ? (index % 2 === 1 ? 'bg-[#FAFBFC]' : 'bg-white') : 'bg-[#ECFDF5]'}`}>
+              <summary className="min-h-[64px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-[#F9FAFB] transition-colors [&::-webkit-details-marker]:hidden">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${user.adminReviewed ? 'bg-[#F05D28]/10 text-[#F05D28]' : 'bg-[#10B981]/15 text-[#047857]'}`}>
                   {getUserInitials(user.nome)}
                 </div>
 
@@ -1241,10 +1243,16 @@ export default function Administracao({
                   <p className="text-[12px] text-[#757575] truncate">{user.email}</p>
                 </div>
 
+                {!user.adminReviewed && (
+                  <span className="shrink-0 rounded-full border border-[#A7F3D0] bg-white px-2.5 py-1 text-[11px] font-bold text-[#047857]">
+                    Novo
+                  </span>
+                )}
+
                 <ChevronRight size={20} className="shrink-0 text-[#757575] transition-transform group-open:rotate-90" />
               </summary>
 
-              <div className="border-t border-[#E5E7EB] p-5">
+              <div className="px-5 pb-5">
                 <div className="grid grid-cols-1 xl:grid-cols-[minmax(260px,1fr)_minmax(0,1.5fr)] gap-5 items-start">
                   <div className="min-w-0">
                     <p className="text-[12px] text-[#757575] truncate">{user.email}</p>
@@ -1278,7 +1286,7 @@ export default function Administracao({
                   <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="bentham-label">Status</label>
-                  <div className="h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center">
+                  <div className="h-11 flex items-center">
                     <StatusOnline online={user.online} />
                   </div>
                 </div>
@@ -1466,9 +1474,9 @@ export default function Administracao({
       )}
 
       {activeSection === 'pre-cadastro' && (
-        <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 lg:p-8 space-y-6">
+        <section className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6 lg:p-8 space-y-6">
           <div>
-            <p className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">Pré-cadastro</p>
+            <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">Pré-cadastro</p>
             <h1 className="text-[24px] font-bold text-[#2D2D2D] mt-2">Pré-cadastro de Usuários</h1>
             <p className="text-[14px] text-[#757575] mt-2 max-w-[840px] leading-relaxed">
               Pré-configure o e-mail, cargo e disciplina de um usuário. Quando ele se cadastrar com esse e-mail, o acesso será aprovado automaticamente com as configurações definidas aqui.
@@ -1561,7 +1569,7 @@ export default function Administracao({
           {appTabs.filter((t) => t.key !== 'administracao').length > 0 && (
             <div className="space-y-2">
               <label className="text-[12px] font-medium text-[#757575]">Abas liberadas ao registrar</label>
-              <div className="bg-[#F9FAFB] border border-[#E5E7EB] rounded-xl p-3 flex flex-wrap gap-x-4 gap-y-2">
+              <div className="flex flex-wrap gap-x-4 gap-y-2">
                 {appTabs.filter((t) => t.key !== 'administracao').map((tab) => (
                   <label key={tab.key} className="flex items-center gap-2 cursor-pointer text-[12px] font-medium text-[#2D2D2D]">
                     <input
@@ -1582,10 +1590,10 @@ export default function Administracao({
           {preRegistrations.length > 0 && (
             <div className="space-y-3">
               <p className="text-[13px] font-bold text-[#2D2D2D]">{preRegistrations.length} e-mail(s) pré-cadastrado(s)</p>
-              <div className="rounded-2xl border border-[#E5E7EB] overflow-hidden">
+              <div className="rounded-2xl overflow-hidden">
                 <table className="w-full text-[13px]">
                   <thead>
-                    <tr className="bg-[#F9FAFB] border-b border-[#E5E7EB]">
+                    <tr className="bg-[#F9FAFB]">
                       <th className="text-left px-4 py-3 font-semibold text-[#757575]">E-mail</th>
                       <th className="text-left px-4 py-3 font-semibold text-[#757575]">Cargo</th>
                       <th className="text-left px-4 py-3 font-semibold text-[#757575]">Disciplina</th>
@@ -1596,8 +1604,8 @@ export default function Administracao({
                     </tr>
                   </thead>
                   <tbody>
-                    {preRegistrations.map((reg) => (
-                      <tr key={reg.email} className="border-b border-[#E5E7EB] last:border-0 hover:bg-[#F9FAFB] transition-colors">
+                    {preRegistrations.map((reg, index) => (
+                      <tr key={reg.email} className={`hover:bg-[#F9FAFB] transition-colors ${index % 2 === 1 ? 'bg-[#FAFBFC]' : ''}`}>
                         <td className="px-4 py-3 font-medium text-[#2D2D2D]">{reg.email}</td>
                         <td className="px-4 py-3 text-[#757575]">{reg.cargo || '—'}</td>
                         <td className="px-4 py-3 text-[#757575]">{reg.disciplina || '—'}</td>
@@ -1658,9 +1666,9 @@ export default function Administracao({
           onOpen={() => setActiveManagementModal('alocacoes')}
         />
 
-        <div className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
+        <div className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6 flex flex-col gap-5">
           <div className="space-y-2">
-            <div className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
+            <div className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
               Backup
             </div>
             <h3 className="text-[16px] font-bold text-[#2D2D2D]">BKP do sistema</h3>
@@ -1785,9 +1793,9 @@ function MetricCard({
   value: string;
 }) {
   return (
-    <div className="min-w-0 bg-[#F9FAFB] border border-[#E5E7EB] rounded-2xl px-4 py-4">
+    <div className="min-w-0 bg-[#F9FAFB] rounded-2xl px-4 py-4">
       <div className="flex items-center justify-between gap-3">
-        <span className="w-9 h-9 rounded-xl bg-white border border-[#E5E7EB] flex items-center justify-center shrink-0">
+        <span className="w-9 h-9 rounded-xl bg-white flex items-center justify-center shrink-0">
           {icon}
         </span>
         <span className="text-[20px] font-bold text-[#2D2D2D] truncate">{value}</span>

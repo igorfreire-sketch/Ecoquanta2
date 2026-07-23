@@ -7,7 +7,6 @@ import {
   AlertTriangle,
   Calendar,
   LogOut,
-  ChevronLeft,
   ChevronRight,
   Bell,
   AtSign,
@@ -26,6 +25,8 @@ import {
   Sparkles,
   Moon,
   Sun,
+  ClipboardPaste,
+  CalendarClock,
 } from 'lucide-react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import type {
@@ -73,7 +74,9 @@ function fromWireAnnotationSheet(sheet: WireAnnotationSheet): AnnotationSheet {
 
 import { getAppVersionLabel } from './config/appVersion';
 import { PATCH_NOTES } from './config/patchNotes';
-import { applyTheme, getStoredTheme, type Theme } from './lib/theme';
+import { applyAcessibilidade, getStoredAcessibilidade, type Acessibilidade } from './lib/theme';
+import { estadoNotificacao, notificarDesktop, pedirPermissaoNotificacao, type PermissaoNotificacao } from './lib/desktopNotify';
+import { getLatestEapDisplayDate } from './lib/eapDate';
 import {
   DEFAULT_DISCIPLINE_SETTINGS,
   getPrimaryDisciplineValue,
@@ -103,6 +106,8 @@ const Notes = React.lazy(() => import('./components/CoordenacaoEngenharia/Notes'
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
 const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
 const Administracao = React.lazy(() => import('./components/Administracao'));
+// Importacao semi-automatica da EAP: o planejamento cola o bloco do MS Project e recebe de volta conferido.
+const ImportarEAP = React.lazy(() => import('./components/Planejamento/ImportarEAP'));
 
 const EAP_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
 const APP_VERSION_LABEL = getAppVersionLabel();
@@ -143,7 +148,7 @@ function shouldLockUserToContract(user?: AuthUser | null) {
 type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'administracao';
 type AreaTecnicaSubTab = 'atividades' | 'disciplinas';
 type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas';
-type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas';
+type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas' | 'importar';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'disciplinas';
 type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | 'disciplinas';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro' | 'firebase';
@@ -156,6 +161,12 @@ const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'cronograma', label: 'Cronograma' },
   { key: 'administracao', label: 'Administração' },
 ];
+
+// Rotulo de cada area pro breadcrumb (Area > Sub-aba), igual ao nome no rail.
+const AREA_LABELS: Record<string, string> = {
+  principal: 'Principal',
+  ...Object.fromEntries(ADMIN_APP_TABS.map((tab) => [tab.key, tab.label])),
+};
 
 interface AuthResponse {
   success: boolean;
@@ -278,7 +289,7 @@ function getEapRows(eapData: any) {
 function isEapOsName(value: any) {
   const text = normalizeEapCode(value);
   if (!text) return false;
-  return /^_?OS(?=$|[\s_\-.0-9A-Za-zÀ-ÿ])/i.test(text);
+  return /^_?OS(?=$|[\s_\-.0-9A-Za-zì-ÿ])/i.test(text);
 }
 
 function buildRegistroDataFromEapRows(eapData: any) {
@@ -944,6 +955,11 @@ function normalizeUserAccessRecord(raw: any): UserAccessRecord {
       .map((tab: any) => String(tab).trim())
       .filter(Boolean) as AppTabKey[],
     sessionVersion: getRecordSessionVersion(raw),
+    // Usuario novo fica verde na Administracao ate um admin mexer nele. Base antiga
+    // (quem ja tem cargo ou abas) entra como revisada pra nao ficar tudo verde.
+    adminReviewed: raw?.adminReviewed === true
+      || Boolean(String(raw?.cargo || raw?.role || '').trim())
+      || allowedTabsSource.filter(Boolean).length > 0,
   };
 }
 
@@ -990,6 +1006,7 @@ function getUserInitials(nome: string) {
 }
 
 function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleTabPermissions = {}) {
+  if (tab === 'principal') return true; // Principal e a casa de todo usuario logado.
   if (user.isAdmin) return true;
   const userTabs = Array.isArray(user.abas) ? user.abas.map(String) : [];
   if (tab === 'registro') {
@@ -1011,15 +1028,9 @@ function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleT
   return userTabs.includes(tab);
 }
 
-function getFirstAccessibleTab(user: AuthUser, roleTabPermissions: RoleTabPermissions = {}): AppTab | null {
-  if (userHasTabAccess(user, 'registro', roleTabPermissions)) return 'registro';
-  if (userHasTabAccess(user, 'controle', roleTabPermissions)) return 'controle';
-  if (userHasTabAccess(user, 'planejamento', roleTabPermissions)) return 'planejamento';
-  if (userHasTabAccess(user, 'contrato', roleTabPermissions)) return 'contrato';
-  if (userHasTabAccess(user, 'nc2', roleTabPermissions)) return 'nc2';
-  if (userHasTabAccess(user, 'cronograma', roleTabPermissions)) return 'cronograma';
-  if (userHasTabAccess(user, 'administracao', roleTabPermissions)) return 'administracao';
-  return null;
+// Entrar no sistema (login ou sessao restaurada) sempre cai na Principal.
+function getFirstAccessibleTab(_user: AuthUser, _roleTabPermissions: RoleTabPermissions = {}): AppTab {
+  return 'principal';
 }
 
 function normalizeAdminUsers(data: GlobalData): UserAccessRecord[] {
@@ -1565,26 +1576,47 @@ export default function App() {
   const [loadText, setLoadText] = useState('Iniciando conexão...');
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
   const [patchNotesOpen, setPatchNotesOpen] = useState(false);
-  const [userPanelOpen, setUserPanelOpen] = useState(false);
   const [requestedDisciplinas, setRequestedDisciplinas] = useState<string[]>([]);
-  const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
+  const [acessibilidade, setAcessibilidade] = useState<Acessibilidade>(() => getStoredAcessibilidade());
 
   useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+    applyAcessibilidade(acessibilidade);
+  }, [acessibilidade]);
 
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
 
   const [activeTab, setActiveTab] = React.useState<AppTab>('principal');
   const [areaTecnicaSubTab, setAreaTecnicaSubTab] = React.useState<AreaTecnicaSubTab>('atividades');
   const [subTab, setSubTab] = React.useState<ControleSubTab>('planejamento');
-  const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('dashboard');
+  const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('atividades');
   const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('atividades');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [cronogramaSubTab, setCronogramaSubTab] = React.useState<'cronograma' | 'disciplinas'>('cronograma');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [globalData, setGlobalData] = useState<GlobalData>({});
+
+  // Setas <-/-> trocam a sub-aba dentro do setor atual (ex.: Curva S -> Notas). A lista ordenada
+  // (headerTabs) e escrita neste ref a cada render; o listener global le dela. Para nas bordas,
+  // nao cruza de setor, e ignora quando o foco esta num campo de texto.
+  const subAbasNavRef = React.useRef<Array<{ active?: boolean; onClick?: () => void }>>([]);
+  useEffect(() => {
+    const aoTeclar = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const alvo = document.activeElement as HTMLElement | null;
+      if (alvo && (alvo.tagName === 'INPUT' || alvo.tagName === 'TEXTAREA' || alvo.tagName === 'SELECT' || alvo.isContentEditable)) return;
+      const abas = subAbasNavRef.current;
+      if (abas.length < 2) return;
+      const atual = abas.findIndex((aba) => aba.active);
+      if (atual < 0) return;
+      const proximo = event.key === 'ArrowRight' ? atual + 1 : atual - 1;
+      if (proximo < 0 || proximo >= abas.length) return;
+      abas[proximo].onClick?.();
+    };
+    window.addEventListener('keydown', aoTeclar);
+    return () => window.removeEventListener('keydown', aoTeclar);
+  }, []);
 
   // ADMIN
   const [usuarios, setUsuarios] = useState<UserAccessRecord[]>([]);
@@ -1691,6 +1723,7 @@ export default function App() {
         status: user.status,
         allowedTabs: user.allowedTabs,
         sessionVersion: user.sessionVersion || '',
+        adminReviewed: user.adminReviewed === true,
       })),
       disciplinas: snapshotDisciplineSettings.map((item) => ({
         nome: item.nome,
@@ -2105,15 +2138,8 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return;
-    if (!userHasTabAccess(currentUser, activeTab, roleTabPermissions)) {
-      if (userHasTabAccess(currentUser, 'registro', roleTabPermissions)) setActiveTab('registro');
-      else if (userHasTabAccess(currentUser, 'controle', roleTabPermissions)) setActiveTab('controle');
-      else if (userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)) setActiveTab('planejamento');
-      else if (userHasTabAccess(currentUser, 'contrato', roleTabPermissions)) setActiveTab('contrato');
-      else if (userHasTabAccess(currentUser, 'nc2', roleTabPermissions)) setActiveTab('nc2');
-      else if (userHasTabAccess(currentUser, 'cronograma', roleTabPermissions)) setActiveTab('cronograma');
-      else if (userHasTabAccess(currentUser, 'administracao', roleTabPermissions)) setActiveTab('administracao');
-    }
+    // Principal e liberada pra todo mundo: sem acesso a aba atual, sempre volta pra ela.
+    if (!userHasTabAccess(currentUser, activeTab, roleTabPermissions)) setActiveTab('principal');
   }, [currentUser, activeTab, roleTabPermissions]);
 
   const loadFirebaseModule = useCallback(async (moduleName: 'registro' | 'cronograma' | 'eap') => {
@@ -2251,7 +2277,7 @@ export default function App() {
     setAdminHasPendingChanges(true);
   }, []);
 
-  const addPreRegistration = useCallback((record: PreRegistrationRecord) => {
+  const addPreRegistration = useCallback(async (record: PreRegistrationRecord) => {
     const source = adminDraftRef.current?.preRegistrations || preRegistrations;
     const idx = source.findIndex((r) => r.email.toLowerCase() === record.email.toLowerCase());
     const next = idx >= 0
@@ -2261,15 +2287,19 @@ export default function App() {
     setPreRegistrations(next);
     updateAdminDraftRef({ preRegistrations: next });
     markAdminChangesPending();
-  }, [markAdminChangesPending, preRegistrations, updateAdminDraftRef]);
+    // Persiste na hora: o pre-cadastro e estado compartilhado, entao passa a valer para todos
+    // os admins sem depender do botao global "Salvar".
+    await persistAdminChanges({ silent: true });
+  }, [markAdminChangesPending, persistAdminChanges, preRegistrations, updateAdminDraftRef]);
 
-  const removePreRegistration = useCallback((email: string) => {
+  const removePreRegistration = useCallback(async (email: string) => {
     const source = adminDraftRef.current?.preRegistrations || preRegistrations;
     const next = source.filter((r) => r.email.toLowerCase() !== email.toLowerCase());
     setPreRegistrations(next);
     updateAdminDraftRef({ preRegistrations: next });
     markAdminChangesPending();
-  }, [markAdminChangesPending, preRegistrations, updateAdminDraftRef]);
+    await persistAdminChanges({ silent: true });
+  }, [markAdminChangesPending, persistAdminChanges, preRegistrations, updateAdminDraftRef]);
 
   useEffect(() => {
     if (!globalData.admin) return;
@@ -2415,6 +2445,44 @@ export default function App() {
     };
   }, [notes, currentUser, notifVistas]);
 
+  // --- Notificacao de desktop ---
+  // Dispara quando chega nota nova que cita voce ou que e da sua disciplina. A primeira
+  // passada so registra o que ja existia: sem isso o usuario tomaria um bombardeio ao logar.
+  const [permissaoNotificacao, setPermissaoNotificacao] = useState<PermissaoNotificacao>(() => estadoNotificacao());
+  const jaAvisadas = React.useRef<Set<string> | null>(null);
+
+  useEffect(() => {
+    const conhecidas = jaAvisadas.current;
+    const atuais = [
+      ...notificacoesDiretas.map((item) => ({ ...item, tipo: 'direta' as const })),
+      ...notificacoesSetor.map((item) => ({ ...item, tipo: 'setor' as const })),
+    ];
+
+    if (conhecidas === null) {
+      jaAvisadas.current = new Set(atuais.map((item) => `${item.tipo}:${item.id}`));
+      return;
+    }
+
+    for (const item of atuais) {
+      const chave = `${item.tipo}:${item.id}`;
+      if (conhecidas.has(chave)) continue;
+      conhecidas.add(chave);
+      notificarDesktop({
+        titulo: item.tipo === 'direta' ? 'Você foi citado numa nota' : 'Nova nota da sua disciplina',
+        corpo: `${item.titulo} — ${item.descricao}`,
+        tag: chave,
+        aoClicar: () => abrirNotaNotificada(item.id),
+      });
+    }
+  }, [notificacoesDiretas, notificacoesSetor]);
+
+  // Trocar de usuario zera o rastro, senao o proximo login herdaria o que o anterior ja viu.
+  useEffect(() => { jaAvisadas.current = null; }, [currentUser?.email]);
+
+  const pedirPermissaoNotificacaoDesktop = useCallback(async () => {
+    setPermissaoNotificacao(await pedirPermissaoNotificacao());
+  }, []);
+
   const [notaParaAbrir, setNotaParaAbrir] = useState<AnnotationSheet | null>(null);
   const abrirNotaNotificada = (id: string) => {
     const nota = notes.find((item) => item.id === id);
@@ -2461,6 +2529,24 @@ export default function App() {
     if (isFirebaseConfigured()) await replaceFirebaseAppData('disciplinaRequests', { requests: merged });
     setDisciplinaRequests(merged);
   }, [currentUser, disciplinaRequests]);
+
+  // Primeira disciplina do usuario entra direto (sem invalidar a sessao dele); troca depois vira pedido.
+  const definirDisciplinasDoUsuario = useCallback(async (escolhidas: string[]) => {
+    if (!currentUser || escolhidas.length === 0) return;
+    if (getUserDisciplineList(currentUser).length > 0) {
+      await submitDisciplinaRequest(escolhidas);
+      return;
+    }
+    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+    const nextUsers = sourceUsers.map((user) => (user.email !== currentUser.email ? user : {
+      ...user,
+      disciplina: getPrimaryDisciplineValue(escolhidas[0]),
+      disciplinas: escolhidas,
+    }));
+    setUsuarios(nextUsers);
+    updateAdminDraftRef({ usuarios: nextUsers });
+    await persistAdminChanges({ silent: true });
+  }, [currentUser, persistAdminChanges, submitDisciplinaRequest, updateAdminDraftRef, usuarios]);
 
   const deleteAnnotationSheet = useCallback(async (id: string) => {
     if (!currentUser) return;
@@ -2598,6 +2684,23 @@ export default function App() {
   };
 
   const handleRegister = async (name: string, email: string, password: string) => {
+    // Trava de e-mail duplicado no cliente: le os usuarios do auth (Firebase, leitura anonima) e
+    // barra na hora com mensagem clara, sem depender so da checagem do Apps Script (que tambem
+    // valida). Se a leitura falhar, nao bloqueia — o servidor ainda faz a checagem final.
+    const emailNorm = String(email || '').trim().toLowerCase();
+    if (emailNorm && isFirebaseConfigured()) {
+      try {
+        const authData = await fetchFirebaseAppData<any>('auth');
+        const jaExiste = getAuthUsersList(authData).some(
+          (item: any) => String(item?.email || item?.id || '').trim().toLowerCase() === emailNorm,
+        );
+        if (jaExiste) throw new Error('Este e-mail já está cadastrado.');
+      } catch (erro) {
+        if (erro instanceof Error && erro.message === 'Este e-mail já está cadastrado.') throw erro;
+        // Falha de leitura do Firebase: segue e deixa o Apps Script decidir.
+      }
+    }
+
     // Apps Script registra o usuário e envia e-mail de confirmação
     const response = await postToAppsScript<GenericResponse>({ action: 'registerUser', name, email, password });
     if (!response.success) throw new Error(response.error || 'Falha ao registrar.');
@@ -2628,8 +2731,10 @@ export default function App() {
     setDirtyUserIds((prev) => prev.includes(userId) ? prev : [...prev, userId]);
   }, []);
 
+  // Todo caminho de edicao do admin passa por aqui: e o gatilho que tira o usuario do estado "novo".
   const invalidateUserSession = useCallback((user: UserAccessRecord): UserAccessRecord => ({
     ...user,
+    adminReviewed: true,
     online: false,
     sessionVersion: createSessionVersion(),
   }), []);
@@ -2716,7 +2821,7 @@ export default function App() {
     markAdminChangesPending();
   }, [invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
-  const saveConfigOptions = useCallback((nextCargos: string[], nextDisciplinas: string[], nextAlocacoes: string[], nextDisciplineSettings?: DisciplineSettingRecord[]) => {
+  const saveConfigOptions = useCallback(async (nextCargos: string[], nextDisciplinas: string[], nextAlocacoes: string[], nextDisciplineSettings?: DisciplineSettingRecord[]) => {
     const nextSettings = nextDisciplineSettings || adminDraftRef.current?.disciplineSettings || disciplineSettings;
     setCargos(nextCargos);
     setDisciplinas(nextDisciplinas);
@@ -2738,7 +2843,10 @@ export default function App() {
       },
     }));
     markAdminChangesPending();
-  }, [disciplineSettings, markAdminChangesPending, updateAdminDraftRef]);
+    // Disciplina/cargo/alocacao salvam na hora, igual a edicao de usuario — nao dependem mais do
+    // botao global "Salvar" (era o motivo de "novas disciplinas nao sao salvas").
+    await persistAdminChanges({ silent: true });
+  }, [disciplineSettings, markAdminChangesPending, persistAdminChanges, updateAdminDraftRef]);
 
   const saveRoleTabPermissions = useCallback((nextPermissions: RoleTabPermissions) => {
     setRoleTabPermissions(nextPermissions);
@@ -2972,10 +3080,10 @@ export default function App() {
 
     if (activeTab === 'planejamento') {
       return [
-        { key: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'dashboard', onClick: () => setPlanejamentoSubTab('dashboard') },
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'atividades', onClick: () => setPlanejamentoSubTab('atividades') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: planejamentoSubTab === 'curva-s', onClick: () => setPlanejamentoSubTab('curva-s') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: planejamentoSubTab === 'disciplinas', onClick: () => setPlanejamentoSubTab('disciplinas') },
+        { key: 'importar', label: 'Importar', icon: <ClipboardPaste size={16} />, active: planejamentoSubTab === 'importar', onClick: () => setPlanejamentoSubTab('importar') },
       ];
     }
 
@@ -3005,12 +3113,8 @@ export default function App() {
     }
 
 
-    if (activeTab === 'cronograma') {
-      return [
-        { key: 'cronograma', label: 'Cronograma', icon: <Calendar size={16} />, active: cronogramaSubTab === 'cronograma', onClick: () => setCronogramaSubTab('cronograma') },
-        { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: cronogramaSubTab === 'disciplinas', onClick: () => setCronogramaSubTab('disciplinas') },
-      ];
-    }
+    // Cronograma nao tem subaba: e um botao unico no menu.
+    if (activeTab === 'cronograma') return [];
 
     if (activeTab === 'administracao') {
 
@@ -3026,9 +3130,12 @@ export default function App() {
     return [];
   })();
 
+  // Lista ordenada que as setas do teclado percorrem (mesma ordem/visibilidade do subNav).
+  subAbasNavRef.current = headerTabs.filter((tab) => tab.key !== 'alocacoes');
+
   // Sub-abas agora vivem na barra da esquerda, aninhadas sob a area ativa.
   const subNav = headerTabs.length > 0 ? (
-    <div className="mb-1 mt-0.5 space-y-0.5">
+    <div data-subnav className="mb-1 mt-0.5 space-y-0.5">
       {headerTabs.filter((tab) => tab.key !== 'alocacoes').map((tab) => (
         <SubNavItem key={tab.key} icon={tab.icon} label={tab.label} active={tab.active} onClick={tab.onClick} />
       ))}
@@ -3041,12 +3148,12 @@ export default function App() {
 
   if (preloading) {
     return (
-      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center font-['Montserrat'] flex-col px-6 dark:bg-[#0B1120]">
+      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center font-['Montserrat'] flex-col px-6">
         <img src="https://i.imgur.com/Net1yEQ.png" alt="Logo" className="h-12 object-contain mb-8 animate-pulse" referrerPolicy="no-referrer" />
-        <div className="w-full max-w-[420px] bg-white rounded-3xl shadow-sm border border-[#E5E7EB] p-8 text-center dark:bg-[#0F172A] dark:border-[#1F2937]">
-          <h2 className="text-[20px] font-bold text-[#2D2D2D] mb-1 dark:text-[#F1F5F9]">Preparando ambiente</h2>
-          <p className="text-[13px] font-medium text-[#757575] mb-8 h-4 dark:text-[#94A3B8]">{loadText}</p>
-          <div className="relative w-full h-3 bg-[#F3F4F6] rounded-full overflow-hidden dark:bg-[#1F2937]">
+        <div className="w-full max-w-[420px] bg-white rounded-3xl shadow-sm border border-[#E5E7EB] p-8 text-center">
+          <h2 className="text-[20px] font-bold text-[#2D2D2D] mb-1">Preparando ambiente</h2>
+          <p className="text-[13px] font-medium text-[#757575] mb-8 h-4">{loadText}</p>
+          <div className="relative w-full h-3 bg-[#F3F4F6] rounded-full overflow-hidden">
             <div className="absolute top-0 left-0 h-full bg-[#F05D28] transition-all duration-[600ms] rounded-full" style={{ width: `${loadProgress}%` }} />
           </div>
         </div>
@@ -3057,15 +3164,33 @@ export default function App() {
   return (
     // reducedMotion="user": quem pediu menos animacao no sistema recebe as telas sem movimento.
     <MotionConfig reducedMotion="user">
-    <div className="flex h-screen w-full bg-[#F8F9FA] overflow-hidden font-['Montserrat'] dark:bg-[#0B1120]">
+    <div className="flex h-screen w-full bg-[#F8F9FA] overflow-hidden font-['Montserrat']">
       <AnimatePresence mode="wait">
+        {/* Rail: 84px no fluxo, expande por cima do conteudo no hover — a tela nao se mexe. */}
         {sidebarOpen && (
-          <motion.aside initial={{ width: 0, opacity: 0 }} animate={{ width: 260, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={{ type: 'spring', damping: 20, stiffness: 100 }} className="h-full bg-white border-r border-[#E5E7EB] flex flex-col shrink-0 overflow-hidden dark:bg-[#0F172A] dark:border-[#1F2937]">
-            <div className="p-8 flex items-center justify-between">
-              <img src="https://i.imgur.com/Net1yEQ.png" alt="Logo" className="h-10 object-contain" referrerPolicy="no-referrer" />
+          <motion.aside
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 84, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+            className="group/rail relative z-40 h-full shrink-0"
+          >
+            {/* Sem arredondamento e sempre clara: a barra da marca nao acompanha o tema escuro. */}
+            {/* Abre/fecha como agua assentando: curva longa e desacelerada, nada de corte seco. */}
+            <div className="brandbar absolute inset-y-0 left-0 flex w-[84px] flex-col overflow-hidden bg-white shadow-[1px_0_0_#E5E7EB] transition-[width,box-shadow] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/rail:w-[286px] group-hover/rail:shadow-[0_18px_40px_-24px_rgba(15,23,42,0.35)]">
+            <NervurasRail />
+            {/* Recolhido mostra so o simbolo; no hover a marca completa aparece. */}
+            <div className="relative flex h-24 items-center pl-[22px]">
+              <img
+                src="https://i.imgur.com/Net1yEQ.png"
+                alt="Logo"
+                referrerPolicy="no-referrer"
+                // A marca e 4,41:1. Recolhida, a janela de 50px mostra o simbolo inteiro; aberta,
+                // 176px e exatamente a largura natural em h-9 — nao sobra nem falta pixel.
+                className="h-9 w-[50px] max-w-none object-cover object-left transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/rail:w-[176px] group-hover/rail:object-contain"
+              />
             </div>
-            <div className="px-6 mt-4"><span className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px] dark:text-[#64748B]">MENU</span></div>
-            <nav className="px-4 mt-2 flex-1 space-y-1 overflow-y-auto">
+            <nav className="relative mt-2 flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-4 [&_[data-subnav]]:hidden group-hover/rail:[&_[data-subnav]]:block">
               {currentUser && (
                 <NavItem icon={<Home size={20} />} label="Principal" active={activeTab === 'principal'} onClick={() => setActiveTab('principal')} />
               )}
@@ -3079,6 +3204,12 @@ export default function App() {
                 <>
                   <NavItem icon={<Settings size={20} />} label="Coordenação de Engenharia" active={activeTab === 'controle'} onClick={() => setActiveTab('controle')} />
                   {activeTab === 'controle' && subNav}
+                </>
+              )}
+              {currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
+                <>
+                  <NavItem icon={<TrendingUp size={20} />} label="Planejamento" active={activeTab === 'planejamento'} onClick={() => setActiveTab('planejamento')} />
+                  {activeTab === 'planejamento' && subNav}
                 </>
               )}
               {currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
@@ -3100,98 +3231,99 @@ export default function App() {
                 </>
               )}
             </nav>
-            <div className="p-6 border-t border-[#E5E7EB] space-y-4 dark:border-[#1F2937]">
-              <button
-                type="button"
-                onClick={() => setUserPanelOpen(true)}
-                className="w-full bg-[#F9FAFB] p-3 rounded-xl flex items-center gap-3 text-left transition-colors hover:bg-[#F3F4F6] dark:bg-[#111827] dark:hover:bg-[#1F2937]"
-              >
-                <div className="w-10 h-10 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm">
-                  {currentUser ? getUserInitials(currentUser.nome) : 'US'}
+            {/* Rodape em bloco 2x2: usuario | notificacao setor / notificacao citado | sair. */}
+            <div className="relative px-2 py-3">
+              {currentUser && (
+                <div className="mx-auto grid w-fit grid-cols-2 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('principal')}
+                    title="Área do usuário (Principal)"
+                    className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-[#FFF3EC] text-[9px] font-black text-[#F05D28] transition-colors hover:bg-[#FDE3D5]"
+                  >
+                    {getUserInitials(currentUser.nome)}
+                  </button>
+                  <Notificacoes
+                    variante="rail"
+                    icone={<Bell size={15} />}
+                    titulo="Notificações do setor"
+                    vazio="Nenhuma nota nova da sua disciplina."
+                    itens={notificacoesSetor}
+                    naoLidos={naoLidosSetor}
+                    onAbrir={abrirNotaNotificada}
+                    onVisualizar={() => marcarNotificacoesVistas('setor')}
+                  />
+                  <Notificacoes
+                    variante="rail"
+                    icone={<AtSign size={15} />}
+                    titulo="Você foi citado"
+                    vazio="Ninguém te citou em uma nota ainda."
+                    itens={notificacoesDiretas}
+                    naoLidos={naoLidosDiretas}
+                    onAbrir={abrirNotaNotificada}
+                    onVisualizar={() => marcarNotificacoesVistas('direta')}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    title="Sair"
+                    className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg text-[#9CA3AF] transition-colors hover:bg-[#FEF2F2] hover:text-[#EF4444]"
+                  >
+                    <LogOut size={15} />
+                  </button>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-[#2D2D2D] truncate dark:text-[#F1F5F9]">{currentUser?.nome}</p>
-                  <p className="text-xs text-[#757575] truncate dark:text-[#94A3B8]">{currentUser?.disciplina || 'Sem disciplina'}</p>
-                  <p className="text-xs text-[#757575] truncate dark:text-[#94A3B8]">{currentUser?.role}</p>
-                </div>
-              </button>
-              <p className="px-1 text-[10px] font-bold uppercase tracking-[1.5px] text-[#9CA3AF]">{APP_VERSION_LABEL}</p>
+              )}
+              <p className="mt-2 text-center text-[9px] font-bold uppercase tracking-[1.5px] text-[#9CA3AF] opacity-0 transition-opacity duration-500 group-hover/rail:opacity-100">{APP_VERSION_LABEL}</p>
+            </div>
             </div>
           </motion.aside>
         )}
       </AnimatePresence>
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-24 bg-white border-b border-[#E5E7EB] flex items-center justify-between px-8 shrink-0 relative dark:bg-[#0F172A] dark:border-[#1F2937]">
-          <div className="flex items-center gap-6">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-[#F8FAFC] text-[#9CA3AF] transition-colors hover:bg-[#F1F5F9] hover:text-[#6B7280] dark:border-[#27303F] dark:bg-[#111827] dark:hover:bg-[#1F2937]"
-              aria-label={sidebarOpen ? 'Recuar menu lateral' : 'Expandir menu lateral'}
-              title={sidebarOpen ? 'Recuar menu lateral' : 'Expandir menu lateral'}
-            >
-              {sidebarOpen ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
-            </button>
-            <div className="flex flex-col shrink-0">
-              <div className="flex items-center gap-3">
-                <h2 className="text-[18px] font-bold text-[#2D2D2D] leading-tight dark:text-[#F1F5F9]">
-                  {activeTab === 'principal' ? 'Principal'
-                    : activeTab === 'registro'
-                    ? (areaTecnicaSubTab === 'atividades' ? 'Atividades' : 'Notas')
-                    : activeTab === 'controle' ? 'Coordenação de Engenharia'
-                    : activeTab === 'planejamento' ? 'Planejamento'
-                    : activeTab === 'contrato' ? 'Contrato'
-                    : activeTab === 'nc2' ? 'Conformidade'
-                    : activeTab === 'cronograma' ? 'Cronograma'
-                    : 'Administração'}
-                </h2>
-              </div>
-              <span className="text-[10px] font-medium text-[#757575] uppercase tracking-widest mt-1 dark:text-[#64748B]">EcoQuanta · Ecossistema Quanta</span>
+      <div className="relative flex-1 flex flex-col overflow-hidden">
+        {/* A folha vive aqui, atras de tudo — inclusive do cabecalho, que agora nao tem fundo
+            proprio. Como esta fora do <main>, ela nao rola junto com o conteudo. */}
+        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+          <NervurasFundo />
+        </div>
+        {/* Cabecalho global removido: cada aba ja tem seu proprio titulo interno e o espaco
+            vira area util. Usuario e notificacoes vivem no rodape do rail. */}
+        {/* Caminho (breadcrumb) fixo: mesma posicao em toda aba, fora do <main> (nao rola) e fora
+            do fade (nao desliza) — o nome nunca "muda de lugar". Altura reservada mesmo na
+            Principal pra todas as paginas nascerem no mesmo ponto. Documentado no padrao.md. */}
+        <div className="relative z-10 flex h-[42px] flex-shrink-0 items-center justify-between gap-3 px-8">
+          {activeTab !== 'principal' ? (
+            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
+              <span>{AREA_LABELS[activeTab] || ''}</span>
+              {headerTabs.find((tab) => tab.active)?.label && (
+                <>
+                  <ChevronRight size={12} />
+                  <span className="text-[#F05D28]">{headerTabs.find((tab) => tab.active)?.label}</span>
+                </>
+              )}
             </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Notificacoes
-              icone={<Bell size={18} />}
-              titulo="Notificações do setor"
-              vazio="Nenhuma nota nova da sua disciplina."
-              itens={notificacoesSetor}
-              naoLidos={naoLidosSetor}
-              onAbrir={abrirNotaNotificada}
-              onVisualizar={() => marcarNotificacoesVistas('setor')}
-            />
-            <Notificacoes
-              icone={<AtSign size={18} />}
-              titulo="Você foi citado"
-              vazio="Ninguém te citou em uma nota ainda."
-              itens={notificacoesDiretas}
-              naoLidos={naoLidosDiretas}
-              onAbrir={abrirNotaNotificada}
-              onVisualizar={() => marcarNotificacoesVistas('direta')}
-            />
-            <button
-              type="button"
-              onClick={() => setUserPanelOpen(true)}
-              className="w-10 h-10 rounded-full border border-[#E5E7EB] bg-white flex items-center justify-center text-[#F05D28] font-bold text-sm hidden sm:flex dark:border-[#27303F] dark:bg-[#111827]"
-              title="Área do usuário"
-            >
-              {currentUser ? getUserInitials(currentUser.nome) : ''}
-            </button>
-          </div>
-        </header>
-
+          ) : <span />}
+          {/* Data da EAP fica na MESMA linha do caminho, só na Coordenação de Engenharia. */}
+          {activeTab === 'controle' && (
+            <div className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest text-[#757575] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+              <CalendarClock size={13} className="text-[#F05D28]" />
+              <span>EAP atualizada em</span>
+              <span className="text-[#2D2D2D]">{getLatestEapDisplayDate(effectiveGlobalData?.eap)}</span>
+            </div>
+          )}
+        </div>
         {patchNotesOpen && (
           <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setPatchNotesOpen(false)}>
-            <div className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-[#0F172A]" onClick={(event) => event.stopPropagation()}>
-              <div className="flex items-center justify-between gap-4 border-b border-[#E5E7EB] px-5 py-4 dark:border-[#1F2937]">
+            <div className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(event) => event.stopPropagation()}>
+              <div className="flex items-center justify-between gap-4 px-5 pt-5 pb-2">
                 <div className="flex items-center gap-2">
                   <Sparkles size={18} className="text-[#F05D28]" />
-                  <h2 className="text-[15px] font-black text-[#1F2937] dark:text-[#F1F5F9]">Novidades</h2>
+                  <h2 className="text-[15px] font-black text-[#1F2937]">Novidades</h2>
                 </div>
                 <button
                   type="button"
                   onClick={() => setPatchNotesOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#2D2D2D] dark:hover:bg-[#1F2937] dark:hover:text-[#F1F5F9]"
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#2D2D2D]"
                 >
                   <X size={16} />
                 </button>
@@ -3200,13 +3332,13 @@ export default function App() {
                 {PATCH_NOTES.map((entry) => (
                   <div key={entry.version} className="mb-6 last:mb-0">
                     <div className="mb-2 flex items-center gap-2">
-                      <span className="rounded-full bg-[#FFF3EE] px-2.5 py-1 text-[11px] font-bold text-[#F05D28] dark:bg-[#3A2318]">v{entry.version}</span>
+                      <span className="rounded-full bg-[#FFF3EE] px-2.5 py-1 text-[11px] font-bold text-[#F05D28]">v{entry.version}</span>
                       <span className="text-[11px] font-medium text-[#94A3B8]">{entry.date}</span>
                     </div>
-                    <h3 className="mb-2 text-[13px] font-bold text-[#2D2D2D] dark:text-[#F1F5F9]">{entry.title}</h3>
+                    <h3 className="mb-2 text-[13px] font-bold text-[#2D2D2D]">{entry.title}</h3>
                     <ul className="list-disc space-y-1.5 pl-5">
                       {entry.items.map((item, index) => (
-                        <li key={index} className="text-[13px] leading-relaxed text-[#374151] dark:text-[#CBD5E1]">{item}</li>
+                        <li key={index} className="text-[13px] leading-relaxed text-[#374151]">{item}</li>
                       ))}
                     </ul>
                   </div>
@@ -3216,138 +3348,19 @@ export default function App() {
           </div>
         )}
 
-        {userPanelOpen && currentUser && (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setUserPanelOpen(false)}>
-            <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-[#0F172A]" onClick={(event) => event.stopPropagation()}>
-              <div className="flex items-center justify-between gap-4 border-b border-[#E5E7EB] px-5 py-4 dark:border-[#1F2937]">
-                <h2 className="text-[15px] font-black text-[#1F2937] dark:text-[#F1F5F9]">Área do usuário</h2>
-                <button
-                  type="button"
-                  onClick={() => setUserPanelOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#2D2D2D] dark:hover:bg-[#1F2937] dark:hover:text-[#F1F5F9]"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-              <div className="flex flex-col gap-4 p-5">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#F05D28]/10 text-sm font-bold text-[#F05D28]">
-                    {getUserInitials(currentUser.nome)}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="truncate text-[14px] font-bold text-[#2D2D2D] dark:text-[#F1F5F9]">{currentUser.nome}</p>
-                    <p className="truncate text-[12px] text-[#757575] dark:text-[#94A3B8]">{currentUser.email}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between rounded-xl border border-[#E5E7EB] p-3 dark:border-[#27303F]">
-                  <div>
-                    <p className="text-[13px] font-bold text-[#2D2D2D] dark:text-[#F1F5F9]">Tema</p>
-                    <p className="text-[11px] text-[#757575] dark:text-[#94A3B8]">{theme === 'dark' ? 'Modo escuro' : 'Modo claro'}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-                    className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#9CA3AF] transition-colors hover:bg-[#F8FAFC] hover:text-[#6B7280] dark:border-[#27303F] dark:bg-[#111827] dark:text-[#94A3B8] dark:hover:bg-[#1F2937]"
-                    aria-label={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
-                    title={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
-                  >
-                    {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => { setUserPanelOpen(false); setPatchNotesOpen(true); }}
-                  className="flex items-center justify-between rounded-xl border border-[#E5E7EB] p-3 text-left transition-colors hover:border-[#F7C7B7] dark:border-[#27303F] dark:hover:border-[#F05D28]"
-                >
-                  <div className="flex items-center gap-2">
-                    <Sparkles size={16} className="text-[#F05D28]" />
-                    <span className="text-[13px] font-bold text-[#2D2D2D] dark:text-[#F1F5F9]">Ver novidades ({APP_VERSION_LABEL})</span>
-                  </div>
-                  <ChevronRight size={16} className="text-[#94A3B8]" />
-                </button>
-
-                {(() => {
-                  const minhasDisciplinas = getUserDisciplineList(currentUser);
-                  const outrasDisciplinas = disciplinas.filter((item) => !minhasDisciplinas.includes(item));
-                  const pedidoPendente = disciplinaRequests.find((item) => item.userEmail === currentUser.email);
-                  return (
-                    <div className="rounded-xl border border-[#E5E7EB] p-3 dark:border-[#27303F]">
-                      <p className="mb-1 text-[13px] font-bold text-[#2D2D2D] dark:text-[#F1F5F9]">Disciplinas</p>
-                      <p className="mb-2 text-[11px] text-[#757575] dark:text-[#94A3B8]">
-                        Suas: {minhasDisciplinas.length > 0 ? minhasDisciplinas.join(', ') : 'nenhuma'}
-                      </p>
-                      {pedidoPendente ? (
-                        <p className="rounded-lg bg-[#FFF7ED] px-2.5 py-2 text-[11px] font-medium text-[#B45309] dark:bg-[#3A2318]">
-                          Pedido pendente: {pedidoPendente.disciplinas.join(', ')} — aguardando aprovação do admin.
-                        </p>
-                      ) : outrasDisciplinas.length > 0 ? (
-                        <>
-                          <p className="mb-1.5 text-[11px] font-medium text-[#757575] dark:text-[#94A3B8]">Pedir para entrar em outras disciplinas:</p>
-                          <SearchableSelect
-                            value=""
-                            onChange={(event) => {
-                              if (event.target.value) setRequestedDisciplinas((prev) => [...prev, event.target.value]);
-                            }}
-                            searchPlaceholder="Buscar disciplina..."
-                            className="mb-2 h-10 w-full rounded-lg border border-[#E5E7EB] bg-white px-3 text-[12px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28] dark:border-[#27303F] dark:bg-[#111827] dark:text-[#F1F5F9]"
-                          >
-                            <option value="">Selecione uma disciplina...</option>
-                            {outrasDisciplinas.filter((item) => !requestedDisciplinas.includes(item)).map((item) => (
-                              <option key={item} value={item}>{item}</option>
-                            ))}
-                          </SearchableSelect>
-                          {requestedDisciplinas.length > 0 && (
-                            <div className="mb-2 flex flex-wrap gap-1.5">
-                              {requestedDisciplinas.map((item) => (
-                                <span key={item} className="inline-flex items-center gap-1 rounded-full border border-[#F05D28] bg-[#FFF3EE] py-1 pl-2.5 pr-1.5 text-[11px] font-medium text-[#F05D28]">
-                                  {item}
-                                  <button
-                                    type="button"
-                                    onClick={() => setRequestedDisciplinas((prev) => prev.filter((d) => d !== item))}
-                                    className="flex h-4 w-4 items-center justify-center rounded-full hover:bg-[#FEE2E2] hover:text-[#DC2626]"
-                                  >
-                                    <X size={10} />
-                                  </button>
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            disabled={requestedDisciplinas.length === 0}
-                            onClick={() => { void submitDisciplinaRequest(requestedDisciplinas); setRequestedDisciplinas([]); }}
-                            className="h-9 w-full rounded-lg bg-[#F05D28] text-[12px] font-bold text-white hover:bg-[#D94E1F] disabled:opacity-50"
-                          >
-                            Enviar pedido
-                          </button>
-                        </>
-                      ) : (
-                        <p className="text-[11px] text-[#94A3B8]">Você já está em todas as disciplinas cadastradas.</p>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                <button onClick={handleLogout} className="flex items-center gap-3 px-1 py-2 text-[#757575] hover:text-[#EF4444] transition-colors w-full text-sm font-medium">
-                  <LogOut size={18} /> Sair
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <main className={`flex-1 overflow-y-auto ${ (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ? 'p-3' : 'p-8' } bg-[#F8F9FA] dark:bg-[#0B1120]`}>
+        <main className="relative z-10 flex-1 overflow-y-auto px-8 pb-8 pt-2">
           <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}:${cronogramaSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
-            {/* So animacao de entrada: com AnimatePresence + mode="wait" a tela nova precisava
-                esperar a antiga sair, e a troca ficava lenta. A chave remonta e a nova entra na hora. */}
+            {/* Troca de pagina = fade out + fade in (~0.5s no total) pra suavizar e cobrir o load.
+                mode="wait": a tela antiga some antes da nova entrar; sem deslize (y), so opacidade. */}
+            <AnimatePresence mode="wait">
             <motion.div
+              className="relative"
               key={`${activeTab}:${subAbaAtual}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25, ease: 'easeInOut' }}
             >
               {activeTab === 'principal' && currentUser && (
                 <Principal
@@ -3356,6 +3369,16 @@ export default function App() {
                   citadasVoce={notificacoesDiretas.length}
                   onVerDisciplina={irParaNotas}
                   onVerCitado={irParaNotas}
+                  acessibilidade={acessibilidade}
+                  onAlternarAcessibilidade={() => setAcessibilidade((prev) => (prev === 'daltonico' ? 'padrao' : 'daltonico'))}
+                  versaoLabel={APP_VERSION_LABEL}
+                  onVerNovidades={() => setPatchNotesOpen(true)}
+                  permissaoNotificacao={permissaoNotificacao}
+                  onPedirNotificacao={() => { void pedirPermissaoNotificacaoDesktop(); }}
+                  disciplinasDisponiveis={disciplinas}
+                  minhasDisciplinas={getUserDisciplineList(currentUser)}
+                  pedidoPendente={disciplinaRequests.find((item) => item.userEmail === currentUser.email)?.disciplinas || null}
+                  onDefinirDisciplinas={(lista) => { void definirDisciplinasDoUsuario(lista); }}
                 />
               )}
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
@@ -3370,16 +3393,9 @@ export default function App() {
               )}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
                 planejamentoSubTab === 'atividades'
-                  ? (
-                    <div className="w-full flex flex-col font-['Montserrat']">
-                      <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#757575]">
-                        <span>Planejamento</span>
-                        <ChevronRight size={12} />
-                        <span className="text-[#F05D28]">Atividades</span>
-                      </div>
-                      <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled />
-                    </div>
-                  )
+                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled />
+                  : planejamentoSubTab === 'importar'
+                    ? <ImportarEAP />
                   : planejamentoSubTab === 'curva-s'
                     ? <CurvaS preloadedData={effectiveGlobalData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                     : planejamentoSubTab === 'disciplinas'
@@ -3397,9 +3413,7 @@ export default function App() {
                   : <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />
               )}
               {activeTab === 'cronograma' && currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && (
-                cronogramaSubTab === 'disciplinas'
-                  ? notesPage
-                  : userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)
+                userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)
                     ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
                     : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
               )}
@@ -3447,6 +3461,7 @@ export default function App() {
                 />
               )}
             </motion.div>
+            </AnimatePresence>
             </React.Suspense>
           </TabErrorBoundary>
         </main>
@@ -3456,11 +3471,90 @@ export default function App() {
   );
 }
 
+// Item do rail: so o icone quando recolhido, nome aparece quando a barra expande no hover.
 function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active?: boolean; onClick?: () => void; }) {
   return (
-    <div onClick={onClick} className={`flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer transition-all ${active ? 'bg-[#F05D28]/10 text-[#F05D28] text-[14px] font-bold' : 'text-[#757575] text-[14px] font-medium hover:bg-[#F4F5F7] hover:text-[#2D2D2D] dark:text-[#94A3B8] dark:hover:bg-[#1F2937] dark:hover:text-[#F1F5F9]'}`}>
-      {icon} <span>{label}</span>
+    <div
+      onClick={onClick}
+      title={label}
+      className={`flex cursor-pointer items-center gap-3 rounded-2xl px-3.5 py-3 transition-all ${active ? 'bg-[#F05D28]/10 text-[#F05D28] text-[14px] font-bold' : 'text-[#757575] text-[14px] font-medium hover:bg-[#F4F5F7] hover:text-[#2D2D2D]'}`}
+    >
+      <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center">{icon}</span>
+      {/* O rotulo nao so aparece: desliza um tico da esquerda, como folha se abrindo. */}
+      <span className="-translate-x-1 whitespace-nowrap opacity-0 transition-[opacity,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/rail:translate-x-0 group-hover/rail:opacity-100">{label}</span>
     </div>
+  );
+}
+
+// Nervuras: ramificacao fina no pe do rail. Decorativa, nao muda o layout.
+function NervurasRail() {
+  return (
+    <svg
+      viewBox="0 0 120 260"
+      aria-hidden
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-[260px] w-full select-none text-[#F05D28] opacity-[0.18]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.1"
+      strokeLinecap="round"
+    >
+      <path d="M28 260 C28 210 34 190 46 168 C58 146 62 126 60 96" />
+      <path d="M60 96 C58 74 66 58 82 44" />
+      <path d="M60 120 C46 108 38 96 34 78" />
+      <path d="M52 150 C70 140 82 128 88 110" />
+      <path d="M46 168 C34 162 26 152 22 138" />
+      <path d="M64 206 C82 196 92 182 96 162" />
+      <path d="M34 226 C22 218 16 206 14 190" />
+    </svg>
+  );
+}
+
+// Folha de fundo, comum a todas as abas: a assinatura organica do EcoQuanta (eco + Quanta).
+// Nao e uma ilustracao literal — e o contorno e as nervuras, desenhados como um projeto
+// arquitetonico. Fica so no fundo da pagina; painel com informacao nunca recebe folha.
+function NervurasFundo() {
+  return (
+    <>
+      <Folha className="absolute -right-24 -top-16 h-[860px] w-[980px] opacity-[0.50]" />
+      {/* Segunda folha, menor e espelhada, no rodape a esquerda: da profundidade sem poluir. */}
+      <Folha className="absolute -bottom-40 -left-16 h-[520px] w-[600px] -scale-x-100 opacity-[0.50]" />
+    </>
+  );
+}
+
+function Folha({ className }: { className: string }) {
+  return (
+    <svg
+      viewBox="0 0 800 700"
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden
+      className={`pointer-events-none max-w-none select-none text-[#F05D28] ${className}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {/* contorno */}
+      <path d="M120 660 C200 420 360 190 700 60" />
+      <path d="M120 660 C420 540 600 330 700 60" />
+      {/* nervura central */}
+      <path d="M120 660 C300 470 500 270 700 60" strokeWidth="2.1" />
+      {/* nervuras laterais, abrindo em direcao a ponta */}
+      <path d="M250 540 C250 490 235 455 205 425" />
+      <path d="M250 540 C300 530 340 505 372 470" />
+      <path d="M350 450 C352 400 340 365 312 335" />
+      <path d="M350 450 C400 438 440 412 470 378" />
+      <path d="M450 360 C455 312 445 278 418 248" />
+      <path d="M450 360 C498 346 536 320 565 288" />
+      <path d="M550 265 C556 222 548 192 524 166" />
+      <path d="M550 265 C594 250 628 226 654 196" />
+      <path d="M630 170 C636 140 630 118 612 98" />
+      {/* haste e ramificacao solta, pra folha nascer de algum lugar */}
+      <path d="M120 660 C86 690 60 716 40 752" strokeWidth="2.1" />
+      <path d="M96 686 C60 672 34 646 18 608" />
+      <path d="M74 712 C40 716 12 706 -14 682" />
+    </svg>
   );
 }
 
@@ -3473,7 +3567,7 @@ function SubNavItem({ icon, label, active, onClick }: { key?: string; icon: Reac
       className={`flex w-full items-center gap-2.5 rounded-lg py-2 pl-9 pr-3 text-left text-[13px] transition-colors ${
         active
           ? 'bg-[#F05D28]/10 font-bold text-[#F05D28]'
-          : 'font-medium text-[#8A8A8A] hover:bg-[#F4F5F7] hover:text-[#2D2D2D] dark:text-[#94A3B8] dark:hover:bg-[#1F2937] dark:hover:text-[#F1F5F9]'
+          : 'font-medium text-[#8A8A8A] hover:bg-[#F4F5F7] hover:text-[#2D2D2D]'
       }`}
     >
       {icon}

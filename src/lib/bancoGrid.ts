@@ -11,6 +11,7 @@ export interface CellStyle {
   color?: string;
   fontFamily?: string;
   fontSize?: number;
+  align?: 'left' | 'center' | 'right';
 }
 
 // Celula mesclada: a ancora (r,c) ocupa rowSpan x colSpan; as cobertas nao sao renderizadas.
@@ -146,5 +147,6 @@ export function cellCss(style?: CellStyle) {
     color: style.color || undefined,
     fontFamily: style.fontFamily || undefined,
     fontSize: style.fontSize ? `${style.fontSize}px` : undefined,
+    textAlign: style.align || undefined,
   };
 }

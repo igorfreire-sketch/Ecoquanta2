@@ -1,6 +1,6 @@
 import React from 'react';
 import { ChevronDown, ChevronRight, Database, FileJson, Loader2, RefreshCw } from 'lucide-react';
-import { fetchFirebaseCollection, isFirebaseConfigured } from '../lib/firebaseDb';
+import { fetchFirebaseAppData, fetchFirebaseCollection, isFirebaseConfigured } from '../lib/firebaseDb';
 
 // O SDK web do Firestore nao lista colecoes (isso e do admin SDK), entao a lista vem
 // do firestore.rules - que e a fonte de verdade do que o app usa.
@@ -103,9 +103,32 @@ export default function FirebaseExplorer() {
 
   const doc = docs.find((item) => String((item as any).id) === docSelecionado);
 
+  // Em appData os campos crus sao so um invólucro: React grava {data:...} e o Apps Script grava
+  // {chunked:true, chunkCount:N} com o conteudo real numa subcolecao /chunks. O mesmo leitor do
+  // app (fetchFirebaseAppData) desembrulha e remonta os chunks, entao aqui mostramos o conteudo
+  // completo — antes esses documentos (eap, registro, cronograma, menu, notes...) apareciam vazios.
+  const [payload, setPayload] = React.useState<unknown>(undefined);
+  const [carregandoDoc, setCarregandoDoc] = React.useState(false);
+  const ehChunked = Boolean(doc && (doc as any).chunked);
+  const chunkCount = Number((doc as any)?.chunkCount || 0);
+
+  React.useEffect(() => {
+    if (colecao !== 'appData' || !docSelecionado) { setPayload(undefined); return; }
+    let ativo = true;
+    setCarregandoDoc(true);
+    fetchFirebaseAppData(docSelecionado)
+      .then((data) => { if (ativo) setPayload(data); })
+      .finally(() => { if (ativo) setCarregandoDoc(false); });
+    return () => { ativo = false; };
+  }, [colecao, docSelecionado]);
+
+  const entradasPayload = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? Object.entries(payload as Record<string, unknown>)
+    : null;
+
   return (
     <div className="font-['Montserrat']">
-      <div className="mb-4 flex items-center gap-2 rounded-xl border border-[#FED7AA] bg-[#FFF7ED] px-4 py-2.5">
+      <div className="mb-4 flex items-center gap-2 rounded-xl bg-[#FFF7ED] px-4 py-2.5">
         <Database size={15} className="shrink-0 text-[#B45309]" />
         <p className="text-[12px] font-semibold text-[#B45309]">
           Somente leitura — esta tela apenas exibe o que está gravado no Firebase. Nada aqui altera dados.
@@ -113,7 +136,7 @@ export default function FirebaseExplorer() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_240px_1fr]">
-        <div className="rounded-2xl border border-[#E5E7EB] bg-white p-3">
+        <div className="rounded-2xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-3">
           <p className="mb-2 px-1 text-[11px] font-extrabold uppercase tracking-wide text-[#94A3B8]">Coleções</p>
           <div className="flex flex-col gap-0.5">
             {COLECOES.map((item) => (
@@ -132,7 +155,7 @@ export default function FirebaseExplorer() {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-[#E5E7EB] bg-white p-3">
+        <div className="rounded-2xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-3">
           <div className="mb-2 flex items-center justify-between px-1">
             <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#94A3B8]">Documentos</p>
             {colecao && (
@@ -177,7 +200,7 @@ export default function FirebaseExplorer() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-[#E5E7EB] bg-white p-4">
+        <div className="rounded-2xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-4">
           <div className="mb-2 flex items-center gap-2">
             <FileJson size={14} className="text-[#F05D28]" />
             <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#94A3B8]">
@@ -186,6 +209,24 @@ export default function FirebaseExplorer() {
           </div>
           {!doc ? (
             <p className="text-[12px] text-[#94A3B8]">Escolha um documento para ver os campos.</p>
+          ) : colecao === 'appData' ? (
+            <div className="max-h-[60vh] overflow-auto">
+              {ehChunked && (
+                <p className="mb-2 inline-flex items-center gap-1.5 rounded-lg bg-[#FFF7ED] px-2.5 py-1 font-mono text-[11px] font-bold text-[#B45309]">
+                  chunked · {chunkCount} parte{chunkCount === 1 ? '' : 's'} · conteúdo remontado
+                </p>
+              )}
+              {carregandoDoc ? (
+                <p className="flex items-center gap-2 text-[12px] text-[#94A3B8]"><Loader2 size={12} className="animate-spin" /> Lendo conteúdo...</p>
+              ) : payload === null || payload === undefined ? (
+                // Sem conteudo legivel pelo leitor do app: cai pro cru pra nunca esconder nada.
+                Object.entries(doc).map(([chave, valor]) => <No key={chave} nome={chave} valor={valor} nivel={0} />)
+              ) : entradasPayload ? (
+                entradasPayload.map(([chave, valor]) => <No key={chave} nome={chave} valor={valor} nivel={0} />)
+              ) : (
+                <No nome={docSelecionado} valor={payload} nivel={0} />
+              )}
+            </div>
           ) : (
             <div className="max-h-[60vh] overflow-auto">
               {Object.entries(doc).map(([chave, valor]) => (

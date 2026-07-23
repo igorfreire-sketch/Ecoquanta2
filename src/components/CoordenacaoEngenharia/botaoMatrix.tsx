@@ -34,16 +34,17 @@ const Matrix: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="bg-white p-8 rounded-2xl border border-[#E5E7EB] shadow-sm">
+      <div className="bg-white p-8 rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
         <div className="mb-8">
-          <h3 className="text-[16px] font-bold text-[#2D2D2D]">Matriz RACI de Engenharia</h3>
-          <p className="text-[13px] text-[#757575]">Definição de responsabilidades por processo</p>
+          <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">Engenharia</p>
+          <h2 className="text-[18px] font-black text-[#2D2D2D] mt-0.5">Matriz RACI de Engenharia</h2>
+          <p className="text-[13px] text-[#757575] mt-1">Definição de responsabilidades por processo</p>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="border-b border-[#E5E7EB]">
+              <tr>
                 <th className="py-4 px-6 text-left text-[11px] font-bold text-[#757575] uppercase tracking-widest">Atividade / Processo</th>
                 <th className="py-4 px-4 text-center text-[11px] font-bold text-[#757575] uppercase tracking-widest">Coordenação</th>
                 <th className="py-4 px-4 text-center text-[11px] font-bold text-[#757575] uppercase tracking-widest">Engenharia</th>
@@ -53,7 +54,7 @@ const Matrix: React.FC = () => {
             </thead>
             <tbody>
               {raciData.map((row, idx) => (
-                <tr key={idx} className="border-b border-[#F3F4F6] last:border-0 hover:bg-[#F9FAFB] transition-colors">
+                <tr key={idx} className="even:bg-[#F8F9FA] hover:bg-[#F4F5F7] transition-colors">
                   <td className="py-4 px-6 text-[14px] font-medium text-[#2D2D2D]">{row.tarefa}</td>
                   <td className="py-4 px-4"><div className="flex justify-center">{getBadge(row.coordenacao)}</div></td>
                   <td className="py-4 px-4"><div className="flex justify-center">{getBadge(row.engenharia)}</div></td>
@@ -65,7 +66,7 @@ const Matrix: React.FC = () => {
           </table>
         </div>
 
-        <div className="mt-10 pt-8 border-t border-[#E5E7EB] flex flex-wrap gap-6">
+        <div className="mt-10 pt-2 flex flex-wrap gap-6">
           <div className="flex items-center gap-3">
             <div className="w-6 h-6 rounded bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">R</div>
             <span className="text-xs text-[#757575]"><strong>Responsible:</strong> Quem executa a tarefa</span>

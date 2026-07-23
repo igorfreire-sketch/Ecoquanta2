@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import { getDisciplineDisplayName } from '../components/Atividades';
 import { getSheetBancos, getSheetDisciplinas, getSheetTextos, type AnnotationBanco, type AnnotationSheet } from '../components/CoordenacaoEngenharia/Anotacoes';
+import { cellKey, quebrarTexto } from './bancoGrid';
 
 function safeFileName(titulo: string) {
   return (titulo || 'anotacao')
@@ -83,21 +84,34 @@ export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] =
     }
 
     const colWidth = (pageWidth - marginX * 2) / banco.colCount;
-    const rowHeight = 8;
+    const padX = 2;
+    const padY = 1.8;
+    // mm por linha de texto a 9pt (1pt = 0.3528mm), com folga de 1.15x — mesma ideia de
+    // alturaParaLinhas (linhas x altura da fonte), mas em mm (o grid on-screen usa px).
+    const lineHeight = 9 * 0.3528 * 1.15;
 
     banco.rows.forEach((row, r) => {
-      ensureSpace(rowHeight);
       const isHeader = r === 0;
+      doc.setFont('helvetica', isHeader ? 'bold' : 'normal');
+      doc.setFontSize(9);
+      // Quebra o texto de cada celula na largura da coluna antes de desenhar, pra saber
+      // quantas linhas ela ocupa - e a linha da tabela cresce pra maior celula, ninguem vaza.
+      const linhasPorCelula = row.map((cell) => quebrarTexto(String(cell ?? ''), colWidth - padX * 2, (t) => doc.getTextWidth(t)));
+      const maxLinhas = Math.max(1, ...linhasPorCelula.map((linhas) => linhas.length));
+      const rowHeight = Math.max(8, maxLinhas * lineHeight + padY * 2);
+      ensureSpace(rowHeight);
       if (isHeader) {
         doc.setFillColor(243, 244, 246);
         doc.rect(marginX, y, colWidth * banco.colCount, rowHeight, 'F');
       }
-      doc.setFont('helvetica', isHeader ? 'bold' : 'normal');
-      doc.setFontSize(9);
       row.forEach((cell, c) => {
         const x = marginX + c * colWidth;
         doc.rect(x, y, colWidth, rowHeight);
-        doc.text(String(cell ?? ''), x + 2, y + 5.5, { maxWidth: colWidth - 3 });
+        const align = banco.styles?.[cellKey(r, c)]?.align || 'left';
+        const textX = align === 'center' ? x + colWidth / 2 : align === 'right' ? x + colWidth - padX : x + padX;
+        linhasPorCelula[c].forEach((linha, li) => {
+          doc.text(linha, textX, y + padY + lineHeight * (li + 0.75), { align, maxWidth: colWidth - padX * 2 });
+        });
       });
       y += rowHeight;
     });

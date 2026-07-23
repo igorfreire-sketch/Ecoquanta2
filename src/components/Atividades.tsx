@@ -1693,9 +1693,9 @@ function FilterMultiSelectDropdown({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.14 }}
           style={{ left: coords.left, width: coords.width, top: coords.top }}
-          className="fixed z-[500] overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_20px_48px_rgba(15,23,42,0.18)]"
+          className="fixed z-[500] overflow-hidden rounded-2xl bg-white shadow-[0_20px_48px_rgba(15,23,42,0.18)]"
         >
-          <div className="border-b border-[#F1F5F9] p-2">
+          <div className="p-2">
             <input
               type="text"
               autoFocus
@@ -1731,7 +1731,7 @@ function FilterMultiSelectDropdown({
               })
             )}
           </div>
-          <div className="border-t border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-[10px] font-medium text-[#64748B]">
+          <div className="mt-1 bg-[#F8FAFC] px-3 py-2 text-[10px] font-medium text-[#64748B]">
             Sem seleção, todas as disciplinas aparecem.
           </div>
         </motion.div>,
@@ -1835,9 +1835,9 @@ function MultiCheckboxDropdown({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.14 }}
           style={{ left: coords.left, width: coords.width, top: coords.top }}
-          className="fixed z-[500] overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_20px_48px_rgba(15,23,42,0.18)]"
+          className="fixed z-[500] overflow-hidden rounded-2xl bg-white shadow-[0_20px_48px_rgba(15,23,42,0.18)]"
         >
-          <div className="border-b border-[#F1F5F9] p-2">
+          <div className="p-2">
             <input
               type="text"
               autoFocus
@@ -1874,7 +1874,7 @@ function MultiCheckboxDropdown({
               })
             )}
           </div>
-          <div className="border-t border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-[10px] font-medium text-[#64748B]">
+          <div className="mt-1 bg-[#F8FAFC] px-3 py-2 text-[10px] font-medium text-[#64748B]">
             {helperText}
           </div>
         </motion.div>,
@@ -1898,7 +1898,7 @@ function CompactStat({
   valueClassName?: string;
 }) {
   return (
-    <div className={`inline-flex min-w-0 items-center gap-2 rounded-[20px] border bg-white px-2 py-1.5 shadow-sm ${tone}`}>
+    <div className="inline-flex min-w-0 items-center gap-2 rounded-[20px] bg-white px-2 py-1.5 shadow-sm">
       <div className="text-[#F05D28]">{icon}</div>
       <div className="min-w-0">
         <p className="text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">{label}</p>
@@ -1914,15 +1914,15 @@ function ProgressComparison({ activity }: { activity: EngineeringActivity }) {
   const delta = leaderPercentual - activity.percentualPrevisto;
   const tone =
     !hasProgress
-      ? 'border-[#E5E7EB] bg-[#F8FAFC]'
+      ? 'bg-[#F8FAFC]'
       : getEffectiveStatus(activity) === 'Bloqueado' || getEffectiveStatus(activity) === 'Atrasado'
-      ? 'border-[#F7C7B7] bg-[#FFF8F5]'
+      ? 'bg-[#FFF8F5]'
       : delta < 0
-        ? 'border-[#FDE68A] bg-[#FFFBEB]'
-        : 'border-[#D1FAE5] bg-[#F0FDF4]';
+        ? 'bg-[#FFFBEB]'
+        : 'bg-[#F0FDF4]';
 
   return (
-    <div className={`rounded-2xl border p-3 ${tone}`}>
+    <div className={`rounded-2xl p-3 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] ${tone}`}>
       <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.5px] text-[#64748B]">
         <span>Previsto x Realizado</span>
         <span className={delta < 0 ? 'text-[#B45309]' : 'text-[#0F766E]'}>
@@ -1957,7 +1957,7 @@ function ProgressComparison({ activity }: { activity: EngineeringActivity }) {
 
 function DetailField({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-[#E5E7EB] bg-[#FCFCFD] p-3">
+    <div className="rounded-2xl bg-[#FCFCFD] p-3 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
       <p className="text-[10px] font-extrabold uppercase tracking-[0.8px] text-[#94A3B8]">{label}</p>
       <div className="mt-1 text-[13px] font-semibold text-[#2D2D2D]">{value}</div>
     </div>
@@ -2486,7 +2486,7 @@ function ProductionCard({
       <button
         type="button"
         onClick={onClick}
-        className="absolute left-0 top-0 block overflow-hidden rounded-[28px] border border-[#E7EDF4] bg-white px-4 py-3.5 text-left shadow-[0_9px_20px_rgba(45,45,45,0.22)] transition-[border-color,box-shadow] hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.14)] cursor-pointer"
+        className="absolute left-0 top-0 block overflow-hidden rounded-[28px] border border-transparent bg-white px-4 py-3.5 text-left shadow-[0_9px_20px_rgba(45,45,45,0.22)] transition-[border-color,box-shadow] hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.14)] cursor-pointer"
         style={{
           width: `${CARD_DESIGN_WIDTH}px`,
           transform: scale !== null ? `scale(${scale})` : 'scale(1)',
@@ -2690,7 +2690,7 @@ function OsGroupCard({ group, tipoLicitacao, onClick }: { group: OsActivityGroup
       <button
         type="button"
         onClick={onClick}
-        className="absolute left-0 top-0 block overflow-hidden rounded-[28px] border border-[#E7EDF4] bg-white px-4 py-3.5 text-left shadow-[0_9px_20px_rgba(45,45,45,0.22)] transition-[border-color,box-shadow] hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.14)] cursor-pointer"
+        className="absolute left-0 top-0 block overflow-hidden rounded-[28px] border border-transparent bg-white px-4 py-3.5 text-left shadow-[0_9px_20px_rgba(45,45,45,0.22)] transition-[border-color,box-shadow] hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.14)] cursor-pointer"
         style={{ width: `${CARD_DESIGN_WIDTH}px`, transform: scale !== null ? `scale(${scale})` : 'scale(1)', transformOrigin: 'top left', visibility: scale !== null ? 'visible' : 'hidden' }}
       >
         <div className="absolute right-[32px] top-0 flex flex-col items-center" aria-hidden="true">
@@ -3308,26 +3308,6 @@ export default function Atividades({
     return () => window.cancelAnimationFrame(raf);
   }, [boardColumns, boardScrollMax, isCurrentWeekBoard]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      e.preventDefault();
-
-      if (selectedActivityId) {
-        const idx = boardActivities.findIndex((a) => a.id === selectedActivityId);
-        if (e.key === 'ArrowLeft' && idx > 0) setSelectedActivityId(boardActivities[idx - 1].id);
-        if (e.key === 'ArrowRight' && idx < boardActivities.length - 1) setSelectedActivityId(boardActivities[idx + 1].id);
-      } else {
-        const wIdx = weekOptions.findIndex((opt) => opt.value === filterSemana);
-        if (e.key === 'ArrowLeft' && wIdx > 0) setFilterSemana(weekOptions[wIdx - 1].value);
-        if (e.key === 'ArrowRight' && wIdx < weekOptions.length - 1) setFilterSemana(weekOptions[wIdx + 1].value);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedActivityId, boardActivities, weekOptions, filterSemana]);
-
   const scrollBoardTo = (nextScrollLeft: number) => {
     const el = boardScrollRef.current;
     if (!el) return;
@@ -3448,7 +3428,7 @@ export default function Atividades({
     <div className="flex w-full flex-col gap-3 font-['Montserrat'] animate-in fade-in duration-500">
       {/* Conteudo dos filtros: mesmo corpo servindo o painel fixo e o modal central. */}
       {filtersAlwaysVisible ? (
-        <section className="rounded-2xl border border-[#E5E7EB] bg-white px-4 py-4 shadow-sm">
+        <section className="rounded-2xl bg-white px-4 py-4 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
           {corpoFiltros}
         </section>
       ) : (
@@ -3470,7 +3450,7 @@ export default function Atividades({
                 exit={{ opacity: 0, scale: 0.97 }}
                 transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                 onClick={(event) => event.stopPropagation()}
-                className="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-2xl border border-[#E5E7EB] bg-white px-5 py-5 shadow-[0_24px_60px_rgba(15,23,42,0.22)]"
+                className="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white px-5 py-5 shadow-[0_24px_60px_rgba(15,23,42,0.22)]"
               >
                 {corpoFiltros}
               </motion.div>
@@ -3479,7 +3459,7 @@ export default function Atividades({
         </AnimatePresence>
       )}
 
-      <section className="overflow-hidden rounded-[34px] border border-[#E5E7EB] bg-[linear-gradient(180deg,#FFFFFF_0%,#F8FAFC_100%)] p-2.5 shadow-sm">
+      <section className="overflow-hidden rounded-[34px] bg-[linear-gradient(180deg,rgba(255,255,255,0.6)_0%,rgba(248,250,252,0.6)_100%)] p-2.5 shadow-sm backdrop-blur-[2px]">
         <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
           <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 md:grid-cols-3 xl:max-w-[980px] xl:grid-cols-[0.8fr_1.35fr_0.75fr_0.75fr_0.75fr_0.75fr_0.95fr]">
             {/* Mesmo formato de chip dos CompactStat ao lado, e primeiro da fila. */}
@@ -3487,7 +3467,7 @@ export default function Atividades({
               <button
                 type="button"
                 onClick={() => setShowFiltersInternal((prev) => !prev)}
-                className={`inline-flex min-w-0 items-center gap-2 rounded-[20px] border bg-white px-2 py-1.5 text-left shadow-sm transition-colors ${showFiltersInternal || isHeaderFiltersOpen ? 'border-[#F05D28]' : 'border-[#E5E7EB] hover:border-[#F7C7B7]'}`}
+                className="inline-flex min-w-0 items-center gap-2 rounded-[20px] bg-white px-2 py-1.5 text-left shadow-sm transition-colors"
               >
                 <div className={showFiltersInternal || isHeaderFiltersOpen ? 'text-[#F05D28]' : 'text-[#94A3B8]'}>
                   <Filter size={14} />
@@ -3498,7 +3478,7 @@ export default function Atividades({
                 </div>
               </button>
             )}
-            <div className="inline-flex min-w-0 items-center gap-1 rounded-[20px] border border-[#E5E7EB] bg-white px-2 py-1.5 shadow-sm">
+            <div className="inline-flex min-w-0 items-center gap-1 rounded-[20px] bg-white px-2 py-1.5 shadow-sm">
               <button
                 type="button"
                 aria-label="Semana anterior"
@@ -3526,7 +3506,7 @@ export default function Atividades({
             <CompactStat icon={<Clock size={14} />} label="Em execução" value={kpis.emExecucao} tone="border-[#DBEAFE]" />
             <CompactStat icon={<AlertTriangle size={14} />} label="Bloqueadas" value={kpis.bloqueadas} tone="border-[#F7C7B7]" />
             <CompactStat icon={<CheckCircle2 size={14} />} label="Concluídas" value={kpis.concluidas} tone="border-[#BBF7D0]" />
-            <div className="inline-flex min-w-0 items-center gap-2 rounded-[20px] border border-[#F7C7B7] bg-white px-2 py-1.5 shadow-sm">
+            <div className="inline-flex min-w-0 items-center gap-2 rounded-[20px] bg-white px-2 py-1.5 shadow-sm">
               <div className="text-[#F05D28]"><Activity size={14} /></div>
               <div className="min-w-0 flex-1">
                 <p className="text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Escala</p>
@@ -3588,17 +3568,13 @@ export default function Atividades({
                 key={column.shortLabel}
                 data-board-day-index={column.index}
                 data-board-is-today={toIsoDate(column.date) === todayIso ? 'true' : undefined}
-                className={`rounded-[28px] border p-2 transition-colors ${
+                className={`rounded-2xl bg-white p-2 transition-colors ${
                   toIsoDate(column.date) === todayIso
-                    ? 'border-[#F7C7B7] bg-[linear-gradient(180deg,#FFF7F3_0%,#FFFFFF_100%)] shadow-[0_8px_22px_rgba(240,93,40,0.06)]'
-                    : 'border-[#E5E7EB] bg-[linear-gradient(180deg,#F9FBFD_0%,#FFFFFF_100%)]'
+                    ? 'shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45),0_8px_22px_-14px_rgba(240,93,40,0.35)]'
+                    : 'shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]'
                 }`}
               >
-                <div className={`rounded-[22px] border px-3.5 py-3 shadow-sm ${
-                  toIsoDate(column.date) === todayIso
-                    ? 'border-[#F7C7B7] bg-[#FFFDFB]'
-                    : 'border-[#E7EEF6] bg-white'
-                }`}>
+                <div className="px-3.5 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h3 className={`text-[16px] font-black ${toIsoDate(column.date) === todayIso ? 'text-[#D15B2C]' : 'text-[#2D2D2D]'}`}>{column.label}</h3>
@@ -3612,7 +3588,7 @@ export default function Atividades({
 
                 <div className="mt-2 space-y-0">
                   {column.activities.length === 0 ? (
-                    <div className="flex min-h-[220px] items-center justify-center rounded-[24px] border border-dashed border-[#D5DFEA] bg-[#FCFDFE] px-4 py-8 text-center">
+                    <div className="flex min-h-[220px] items-center justify-center rounded-[24px] bg-[#FCFDFE] px-4 py-8 text-center">
                       <p className="max-w-[180px] text-[12px] font-semibold leading-relaxed text-[#94A3B8]">
                         Sem atividade posicionada para este dia na semana filtrada.
                       </p>
@@ -3683,9 +3659,9 @@ export default function Atividades({
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.98, y: 14 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
-                className="flex max-h-[88vh] w-full max-w-[980px] flex-col overflow-hidden rounded-[28px] border border-[#E5E7EB] bg-white shadow-2xl"
+                className="flex max-h-[88vh] w-full max-w-[980px] flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl"
               >
-              <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white px-6 py-4">
+              <div className="sticky top-0 z-10 bg-white px-6 py-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-start gap-3">
                     {selectedActivityDisciplineIcon ? (
@@ -3861,9 +3837,9 @@ export default function Atividades({
               initial={{ scale: 0.96, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.96, opacity: 0 }}
-              className="flex w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-[#E5E7EB] bg-white shadow-2xl"
+              className="flex w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
             >
-              <div className="flex items-start justify-between gap-3 border-b border-[#E5E7EB] bg-[#F8FAFC] px-6 py-5">
+              <div className="flex items-start justify-between gap-3 bg-[#F8FAFC] px-6 py-5">
                 <div>
                   <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-[#F05D28]">Cronograma / EAP</p>
                   <h3 className="mt-2 text-[17px] font-black text-[#2D2D2D]">Vincular atividade ao quadro semanal do projetista</h3>
@@ -3887,7 +3863,7 @@ export default function Atividades({
               <div className="grid gap-6 p-6 lg:grid-cols-[1.1fr_0.9fr]">
                 <div>
                   <label className="bentham-label">Itens pendentes do cronograma</label>
-                  <div className="max-h-[360px] space-y-2 overflow-y-auto rounded-3xl border border-[#E5E7EB] bg-[#F8FAFC] p-2 custom-scrollbar">
+                  <div className="max-h-[360px] space-y-2 overflow-y-auto rounded-3xl p-2 custom-scrollbar">
                     {EAP_UNASSIGNED_ACTIVITIES.map((item, index) => {
                       const isSelected = selectedEapIndex === index;
 
@@ -3896,10 +3872,8 @@ export default function Atividades({
                           key={item.item}
                           type="button"
                           onClick={() => setSelectedEapIndex(index)}
-                          className={`block w-full rounded-2xl border p-3 text-left transition-all cursor-pointer ${
-                            isSelected
-                              ? 'border-[#F7C7B7] bg-white shadow-sm ring-1 ring-[#FAD9C8]'
-                              : 'border-[#E5E7EB] bg-white hover:border-[#CBD5E1]'
+                          className={`block w-full rounded-2xl bg-white p-3 text-left shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition-all cursor-pointer ${
+                            isSelected ? 'ring-1 ring-[#FAD9C8]' : ''
                           }`}
                         >
                           <div className="flex items-center justify-between gap-3">
@@ -3923,7 +3897,7 @@ export default function Atividades({
                   <label className="bentham-label">Configuração operacional</label>
 
                   {selectedEapIndex !== null ? (
-                    <div className="space-y-4 rounded-3xl border border-[#FAD9C8] bg-[#FFF8F5] p-4">
+                    <div className="space-y-4 rounded-3xl bg-[#FFF8F5] p-4 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
                       <div>
                         <p className="text-[10px] font-extrabold uppercase tracking-[0.7px] text-[#F05D28]">Item selecionado</p>
                         <p className="mt-2 text-[13px] font-bold text-[#2D2D2D]">
@@ -3978,7 +3952,7 @@ export default function Atividades({
                           </SearchableSelect>
                         </div>
 
-                        <div className="rounded-2xl border border-[#D6EEEA] bg-[#F4FBFA] p-3">
+                        <div className="px-1 py-1">
                           <p className="text-[10px] font-extrabold uppercase tracking-[0.6px] text-[#0F766E]">LOD inicial sugerido</p>
                           <p className="mt-2 text-[24px] font-black text-[#0F766E]">{getPreviousLod(importLodAlvo)}</p>
                         </div>
@@ -4007,7 +3981,7 @@ export default function Atividades({
                       </div>
                     </div>
                   ) : (
-                    <div className="flex h-[320px] flex-col items-center justify-center rounded-3xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-6 text-center">
+                    <div className="flex h-[320px] flex-col items-center justify-center rounded-3xl bg-[#F8FAFC] p-6 text-center">
                       <FileText size={32} className="text-[#94A3B8]" />
                       <p className="mt-4 text-[13px] font-bold text-[#475569]">Selecione um item do cronograma</p>
                       <p className="mt-2 max-w-[240px] text-[12px] leading-relaxed text-[#94A3B8]">
@@ -4018,7 +3992,7 @@ export default function Atividades({
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 border-t border-[#E5E7EB] bg-[#F8FAFC] px-6 py-5">
+              <div className="flex items-center justify-end gap-3 bg-[#F8FAFC] px-6 py-5">
                 <button
                   type="button"
                   onClick={() => {
@@ -4059,9 +4033,9 @@ export default function Atividades({
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.98, y: 14 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
-                className="flex max-h-[88vh] w-full max-w-[680px] flex-col overflow-hidden rounded-[28px] border border-[#E5E7EB] bg-white shadow-2xl"
+                className="flex max-h-[88vh] w-full max-w-[680px] flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl"
               >
-                <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white px-6 py-5">
+                <div className="sticky top-0 z-10 bg-white px-6 py-5">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-[#F05D28]">Ordem de Serviço</p>
@@ -4107,7 +4081,7 @@ export default function Atividades({
                             key={discGroup.disciplina}
                             type="button"
                             onClick={() => { setSelectedActivitySourceGroup(selectedOsGroup); setSelectedOsGroup(null); setSelectedActivityId(repActivity.id); }}
-                            className="flex w-full items-center gap-3 rounded-[16px] border border-[#E5E7EB] bg-white px-4 py-3 text-left transition-colors hover:border-[#F7C7B7] hover:bg-[#FFF7F3] cursor-pointer"
+                            className="flex w-full items-center gap-3 rounded-[16px] bg-white px-4 py-3 text-left shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition-colors hover:bg-[#FFF7F3] cursor-pointer"
                           >
                             <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-[3px] text-[#F05D28] shadow-sm">
                               {icon.imageSrc ? <img src={icon.imageSrc} alt={name} className="h-full w-full rounded-full object-cover" /> : DIcon ? <DIcon size={28} strokeWidth={2.2} /> : null}

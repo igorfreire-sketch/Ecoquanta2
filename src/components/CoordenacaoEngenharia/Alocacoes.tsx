@@ -81,8 +81,8 @@ const DisciplineCard: React.FC<DisciplineCardProps> = ({ title, professionals, c
   };
 
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-xl overflow-hidden shadow-sm">
-      <div className="p-5 border-b border-[#E5E7EB] flex items-center justify-between">
+    <div className="rounded-2xl bg-white overflow-hidden shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+      <div className="p-5 flex items-center justify-between">
         <h3 className="text-[16px] font-bold text-[#2D2D2D]">{title}</h3>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
@@ -114,7 +114,7 @@ const DisciplineCard: React.FC<DisciplineCardProps> = ({ title, professionals, c
           <tbody>
             {professionals.length > 0 ? (
               professionals.map((prof, index) => (
-                <tr key={`${prof.name}-${index}`} className="border-b border-[#E5E7EB] last:border-0">
+                <tr key={`${prof.name}-${index}`} className="odd:bg-white even:bg-[#F9FAFB]">
                   <td className="py-3.5 px-5 text-[13px] text-[#2D2D2D] font-medium">{prof.name}</td>
                   <td className="py-3.5 px-4 text-[13px] text-center">{renderValue(prof.total)}</td>
                   {contratos.map((contrato) => (
@@ -324,7 +324,7 @@ const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode
           </button>
 
           {menuOpen && (
-            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-full rounded-2xl border border-[#E5E7EB] bg-white p-2 shadow-xl shadow-black/5">
+            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-full rounded-2xl bg-white p-2 shadow-xl shadow-black/10">
               <input
                 type="text"
                 autoFocus
@@ -365,7 +365,7 @@ const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode
                 )}
               </div>
 
-              <div className="flex items-center justify-between gap-3 border-t border-[#E5E7EB] px-3 pt-2 mt-2">
+              <div className="flex items-center justify-between gap-3 px-3 pt-3 mt-2">
                 <button
                   type="button"
                   onClick={() => setFiltroAtivo([])}

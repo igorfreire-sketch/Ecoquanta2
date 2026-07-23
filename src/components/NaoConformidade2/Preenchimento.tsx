@@ -365,16 +365,17 @@ export default function Preenchimento({
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-[980px] mx-auto animate-in fade-in duration-500 pb-10">
-      <div className="mb-2">
-        <h2 className="text-[24px] font-bold text-[#2D2D2D] mb-1">Registro de Conformidade</h2>
-        <p className="text-[15px] font-medium text-[#757575]">Preenchimento da analise documental</p>
+      <div>
+        <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">CONFORMIDADE</p>
+        <h2 className="text-[18px] font-black text-[#2D2D2D]">Registro de Conformidade</h2>
+        <p className="mt-1 text-[15px] font-medium text-[#757575]">Preenchimento da analise documental</p>
       </div>
 
-      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm">
-        <div className="px-6 py-5 border-b border-[#E5E7EB]">
+      <div className="rounded-xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+        <div className="mb-6">
           <h3 className="text-[16px] font-bold text-[#2D2D2D]">Dados Gerais da Analise</h3>
         </div>
-        <div className="p-6">
+        <div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div className="space-y-2">
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Avaliador *</label>
@@ -472,11 +473,11 @@ export default function Preenchimento({
             </div>
           </div>
 
-          <div className="mb-8 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+          <div className="mb-8">
             <div className="flex flex-col gap-3">
               <div>
                 <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Classificacao da atividade</label>
-                <p className="mt-1 text-[12px] text-[#64748B]">
+                <p className="mt-1 text-[12px] text-[#757575]">
                   A classificacao fica automatica quando a atividade ja existe na Area Tecnica. Se ainda nao existir, escolha manualmente.
                 </p>
               </div>
@@ -518,14 +519,14 @@ export default function Preenchimento({
               </div>
 
               {origemAutomatica && (
-                <div className="text-[12px] font-medium text-[#64748B]">
+                <div className="text-[12px] font-medium text-[#757575]">
                   Classificacao automatica pela Area Tecnica: <span className="font-bold text-[#2D2D2D]">{origemAutomatica === 'terceirizado' ? 'Terceirizado' : 'Interno'}</span>
                 </div>
               )}
             </div>
           </div>
 
-          <div className="pt-4 border-t border-[#E5E7EB] flex items-center gap-6">
+          <div className="mt-2 flex items-center gap-6">
             <span className="text-[12px] font-bold text-[#757575]">
               Data: <span className="font-medium ml-1">{currentDateTime.data}</span>
             </span>
@@ -536,8 +537,8 @@ export default function Preenchimento({
         </div>
       </div>
 
-      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm p-6">
-        <div className="mb-6 border-b border-[#E5E7EB] pb-4">
+      <div className="rounded-xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6">
+        <div className="mb-6">
           <h3 className="text-[16px] font-bold text-[#2D2D2D] mb-1">Itens verificados no documento</h3>
           <p className="text-[13px] text-[#757575]">Marque carimbo, desenho, relatorio, falta de arquivo e os quantitativos encontrados.</p>
         </div>
@@ -550,7 +551,7 @@ export default function Preenchimento({
             <span className="text-[12px] font-bold text-[#2D2D2D] text-center">T</span>
           </div>
 
-          <div className="flex flex-col divide-y divide-[#F3F4F6]">
+          <div className="flex flex-col gap-1">
             {ITEM_KEYS.map((key) => {
               const item = itens[key];
               return (
@@ -596,7 +597,7 @@ export default function Preenchimento({
         </div>
       </div>
 
-      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm p-6">
+      <div className="rounded-xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6">
         <div className="flex flex-col gap-4">
           <div>
             <h3 className="text-[16px] font-bold text-[#2D2D2D] mb-1">Resultado da analise</h3>
@@ -607,32 +608,32 @@ export default function Preenchimento({
             <div className="space-y-3">
               <div className="flex flex-col gap-2">
                 {resultado.detalhes.map((detalhe) => (
-                  <div key={detalhe.label} className="px-4 py-3 rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] font-medium text-[#2D2D2D]">
+                  <div key={detalhe.label} className="px-4 py-3 rounded-xl bg-[#F8F9FA] text-[13px] font-medium text-[#2D2D2D]">
                     {detalhe.label}
                   </div>
                 ))}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
-                  <span className="text-[12px] font-bold text-[#64748B] uppercase tracking-wide">Sem nao conformidade</span>
+                <div className="rounded-xl bg-[#F8F9FA] p-4">
+                  <span className="text-[12px] font-bold text-[#757575] uppercase tracking-wide">Sem nao conformidade</span>
                   <p className="text-[24px] font-bold text-[#2D2D2D] mt-2">{resultado.totalC}</p>
                 </div>
-                <div className="rounded-xl border border-[#FED7AA] bg-[#FFF7ED] p-4">
+                <div className="rounded-xl bg-[#FFF3EC] p-4">
                   <span className="text-[12px] font-bold text-[#F05D28] uppercase tracking-wide">Com nao conformidade</span>
                   <p className="text-[24px] font-bold text-[#F05D28] mt-2">{resultado.totalT}</p>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-dashed border-[#D1D5DB] bg-[#FCFCFD] p-6 text-[14px] text-[#9CA3AF] text-center">
+            <div className="rounded-xl bg-[#F8F9FA] p-6 text-[14px] text-[#94A3B8] text-center">
               Selecione os itens avaliados para gerar o resumo.
             </div>
           )}
         </div>
       </div>
 
-      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm p-6">
+      <div className="rounded-xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6">
         <label className="block text-[11px] font-bold text-[#757575] uppercase tracking-wider mb-3">Observacoes</label>
         <textarea
           value={formData.observacoes}
@@ -683,23 +684,23 @@ export default function Preenchimento({
       )}
 
       {draftRecords.length > 0 && (
-        <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm p-6">
+        <div className="rounded-xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6">
           <div className="flex items-center justify-between gap-4 mb-4">
             <div>
               <h3 className="text-[16px] font-bold text-[#2D2D2D]">Atividades registradas nessa janela</h3>
               <p className="text-[13px] text-[#757575]">Essas atividades serao enviadas para Revisoes.</p>
             </div>
-            <span className="rounded-full bg-[#FFF7ED] px-3 py-1 text-[11px] font-bold text-[#C2410C]">
+            <span className="rounded-full bg-[#FFF3EC] px-3 py-1 text-[11px] font-bold text-[#F05D28]">
               {draftRecords.length} pendente(s)
             </span>
           </div>
 
           <div className="space-y-3">
             {draftRecords.map((record) => (
-              <div key={record.id} className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+              <div key={record.id} className="rounded-xl bg-[#F8F9FA] p-4">
                 <div className="text-[13px] font-bold text-[#2D2D2D]">{record.os}</div>
-                <div className="mt-1 text-[12px] font-medium text-[#64748B]">{record.objetoOs} - {record.disciplina}</div>
-                <div className="mt-2 text-[12px] text-[#4B5563]">{record.observacoes || 'Sem observacoes'}</div>
+                <div className="mt-1 text-[12px] font-medium text-[#757575]">{record.objetoOs} - {record.disciplina}</div>
+                <div className="mt-2 text-[12px] text-[#757575]">{record.observacoes || 'Sem observacoes'}</div>
               </div>
             ))}
           </div>

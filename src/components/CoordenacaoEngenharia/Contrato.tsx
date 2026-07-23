@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   ChevronRight,
   ClipboardList,
-  FileText,
   FileWarning,
   GitBranch,
   PencilLine,
@@ -381,7 +380,7 @@ function getPeopleLabel(activity: ActivityRow) {
 
 function ActivityJourney({ activity }: { activity: ActivityRow }) {
   return (
-    <div className="border border-[#E5E7EB] bg-white rounded-[12px] p-6 shadow-sm">
+    <div className="bg-white rounded-[12px] p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         {FLOW_STEPS.map((step, index) => {
           const Icon = step.icon;
@@ -390,7 +389,7 @@ function ActivityJourney({ activity }: { activity: ActivityRow }) {
           return (
             <div key={step.key} className="relative flex flex-col items-center text-center gap-3">
               {index < FLOW_STEPS.length - 1 && (
-                <span className="hidden md:block absolute top-9 left-[calc(50%+36px)] right-[calc(-50%+36px)] border-t border-dashed border-[#CBD5E1]" />
+                <span className="hidden md:block absolute top-9 left-[calc(50%+36px)] right-[calc(-50%+36px)] h-px bg-[#E2E8F0]" />
               )}
               <div className="relative z-10 w-[76px] h-[76px] rounded-full border border-[#BFE8F1] bg-[#F8FDFF] flex items-center justify-center">
                 <div className="w-[58px] h-[58px] rounded-full bg-white border border-[#D7F2F7] flex items-center justify-center shadow-sm">
@@ -430,16 +429,16 @@ function ActivitiesList({
   monthlyCycle: string;
 }) {
   return (
-    <div className="xl:sticky xl:top-6 xl:self-start bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden xl:max-h-[calc(100vh-9rem)] flex flex-col">
-      <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <ClipboardList size={18} className="text-[#F05D28]" />
-          <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Atividades sendo executadas</h3>
+    <div className="xl:sticky xl:top-6 xl:self-start bg-white rounded-[12px] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden xl:max-h-[calc(100vh-9rem)] flex flex-col">
+      <div className="px-6 pt-5 pb-4 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">Execução</p>
+          <h3 className="text-[18px] font-black text-[#2D2D2D] mt-0.5">Atividades sendo executadas</h3>
         </div>
         <span className="text-[11px] font-bold text-[#757575]">{activities.length} em execucao</span>
       </div>
 
-      <div className="divide-y divide-[#E5E7EB] xl:overflow-y-auto">
+      <div className="xl:overflow-y-auto">
         {activities.length === 0 && (
           <div className="py-12 px-6 text-center text-[13px] font-medium text-[#757575]">
             Nenhuma atividade em execucao para este contrato.
@@ -514,81 +513,81 @@ function PriorityDesk({
   onToggleLicitatoria: () => void;
 }) {
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden min-h-[360px]">
-      <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
+    <div className="bg-white rounded-[12px] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden min-h-[360px]">
+      <div className="px-6 pt-5 pb-4 flex items-center justify-between gap-4">
         <div>
-          <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">Balcao unido</p>
-          <h3 className="text-[16px] font-bold text-[#2D2D2D] mt-1">Prioridades do contrato</h3>
+          <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">Balcao unido</p>
+          <h3 className="text-[18px] font-black text-[#2D2D2D] mt-0.5">Prioridades do contrato</h3>
         </div>
-        <span className="rounded-full border border-[#FED7AA] bg-[#FFF7ED] px-3 py-1 text-[11px] font-bold text-[#C2410C]">
+        <span className="rounded-full bg-[#FFF7ED] px-3 py-1 text-[11px] font-bold text-[#C2410C]">
           {pendingCount} pendentes
         </span>
       </div>
 
-      <div className="p-6 space-y-5">
+      <div className="px-6 pb-6 space-y-5">
         {activity ? (
           <>
-            <div className="space-y-3">
-              <div className={`rounded-2xl border p-4 ${monthlyActive ? 'border-[#BBF7D0] bg-[#F0FDF4]' : 'border-[#FDE68A] bg-[#FFFBEB]'}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-black uppercase tracking-widest text-[#166534]">Prioridade do mes</p>
-                    <p className="mt-2 text-[13px] font-semibold text-[#1F2937]">Fica ativa no ciclo atual e reseta automaticamente no dia 05.</p>
-                    <p className="mt-2 text-[12px] text-[#4B5563]">Ciclo atual: {currentCycleLabel}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={onToggleMonthly}
-                    className={`min-w-[92px] rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-wide transition ${
-                      monthlyActive
-                        ? 'bg-[#10B981] text-white hover:bg-[#059669]'
-                        : 'border border-[#86EFAC] bg-white text-[#166534] hover:bg-[#ECFDF5]'
-                    }`}
-                  >
-                    {monthlyActive ? 'Ativa' : 'Marcar'}
-                  </button>
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-widest text-[#166534]">
+                    Prioridade do mes {monthlyActive ? '· Ativa' : '· Pendente'}
+                  </p>
+                  <p className="mt-2 text-[13px] font-semibold text-[#1F2937]">Fica ativa no ciclo atual e reseta automaticamente no dia 05.</p>
+                  <p className="mt-2 text-[12px] text-[#4B5563]">Ciclo atual: {currentCycleLabel}</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={onToggleMonthly}
+                  className={`min-w-[92px] rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-wide transition ${
+                    monthlyActive
+                      ? 'bg-[#10B981] text-white hover:bg-[#059669]'
+                      : 'bg-[#FFFBEB] text-[#166534] hover:bg-[#ECFDF5]'
+                  }`}
+                >
+                  {monthlyActive ? 'Ativa' : 'Marcar'}
+                </button>
               </div>
 
-              <div className={`rounded-2xl border p-4 ${licitatoriaActive ? 'border-[#C7D2FE] bg-[#EEF2FF]' : 'border-[#DBEAFE] bg-[#F8FAFC]'}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-black uppercase tracking-widest text-[#3730A3]">Prioridade licitatoria</p>
-                    <p className="mt-2 text-[13px] font-semibold text-[#1F2937]">Nao reseta. Permanece marcada ate o contrato remover manualmente.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={onToggleLicitatoria}
-                    className={`min-w-[92px] rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-wide transition ${
-                      licitatoriaActive
-                        ? 'bg-[#4F46E5] text-white hover:bg-[#4338CA]'
-                        : 'border border-[#A5B4FC] bg-white text-[#3730A3] hover:bg-[#EEF2FF]'
-                    }`}
-                  >
-                    {licitatoriaActive ? 'Ativa' : 'Marcar'}
-                  </button>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-widest text-[#3730A3]">
+                    Prioridade licitatoria {licitatoriaActive ? '· Ativa' : '· Pendente'}
+                  </p>
+                  <p className="mt-2 text-[13px] font-semibold text-[#1F2937]">Nao reseta. Permanece marcada ate o contrato remover manualmente.</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={onToggleLicitatoria}
+                  className={`min-w-[92px] rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-wide transition ${
+                    licitatoriaActive
+                      ? 'bg-[#4F46E5] text-white hover:bg-[#4338CA]'
+                      : 'bg-[#F8FAFC] text-[#3730A3] hover:bg-[#EEF2FF]'
+                  }`}
+                >
+                  {licitatoriaActive ? 'Ativa' : 'Marcar'}
+                </button>
               </div>
             </div>
 
-            <div className="rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-4">
+            <div className="pt-1">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0">
                   <p className="text-[11px] font-bold text-[#757575] uppercase tracking-widest">{getOsDisplayName(activity)}</p>
                   <p className="mt-1 text-[15px] font-bold text-[#2D2D2D] leading-snug break-words">{getActivityDisplayName(activity)}</p>
                   <p className="mt-2 text-[12px] font-semibold text-[#4B5563]">{getPeopleLabel(activity)}</p>
                 </div>
-                <div className="shrink-0 rounded-full border border-[#FECACA] bg-[#FEF2F2] px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-[#B91C1C]">
+                <div className="shrink-0 rounded-full bg-[#FEF2F2] px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-[#B91C1C]">
                   Nao Operante
                 </div>
               </div>
-              <div className="mt-4 border-t border-dashed border-[#D5DCE5] pt-3 text-[12px] font-semibold text-[#64748B]">
+              <p className="mt-4 text-[12px] font-semibold text-[#64748B]">
                 Uma atividade deixa de ficar pendente quando recebe pelo menos uma prioridade do contrato.
-              </div>
+              </p>
             </div>
           </>
         ) : (
-          <div className="min-h-[260px] rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] flex items-center justify-center text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">
+          <div className="min-h-[260px] flex items-center justify-center text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">
             Selecione uma atividade
           </div>
         )}
@@ -788,7 +787,7 @@ export default function Contrato({
   return (
     <div className="space-y-6 font-['Montserrat']">
       {activeView !== 'cronograma' && activeView !== 'atividades' && activeView !== 'os' && (
-        <section className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm p-5">
+        <section className="bg-white rounded-[12px] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-5">
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(220px,280px)_minmax(220px,280px)_minmax(0,1fr)] gap-4">
             <div>
               <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Contrato</label>
@@ -861,11 +860,11 @@ export default function Contrato({
       {activeView === 'os' && (
         <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(420px,420px)] gap-6">
           {/* OS List */}
-          <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
-            <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <FileText size={18} className="text-[#F05D28]" />
-                <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Ordens de Serviço</h3>
+          <div className="bg-white rounded-[12px] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden">
+            <div className="px-6 pt-5 pb-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">Contrato</p>
+                <h3 className="text-[18px] font-black text-[#2D2D2D] mt-0.5">Ordens de Serviço</h3>
               </div>
               {!locked && (
                 <SearchableSelect
@@ -880,7 +879,7 @@ export default function Contrato({
                 </SearchableSelect>
               )}
             </div>
-            <div className="divide-y divide-[#E5E7EB] xl:overflow-y-auto xl:max-h-[calc(100vh-14rem)]">
+            <div className="xl:overflow-y-auto xl:max-h-[calc(100vh-14rem)]">
               {osOptions.length === 0 && (
                 <div className="py-12 px-6 text-center text-[13px] font-medium text-[#757575]">
                   Nenhuma OS encontrada.
@@ -920,7 +919,7 @@ export default function Contrato({
                       </div>
                       <div className="flex items-center gap-2">
                         {!isOperante && (
-                          <span className="shrink-0 rounded-full border border-[#FECACA] bg-[#FEF2F2] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#B91C1C]">
+                          <span className="shrink-0 rounded-full bg-[#FEF2F2] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#B91C1C]">
                             Não Operante
                           </span>
                         )}
@@ -935,10 +934,10 @@ export default function Contrato({
 
           {/* OS Detail Panel */}
           {selectedOsCodigo && osDraft ? (
-            <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden xl:sticky xl:top-6 xl:self-start">
-              <div className="px-6 py-5 border-b border-[#E5E7EB]">
-                <p className="text-[11px] font-bold text-[#F05D28] uppercase tracking-widest">{selectedOsCodigo}</p>
-                <h3 className="mt-1 text-[16px] font-bold text-[#2D2D2D] leading-snug">
+            <div className="bg-white rounded-[12px] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden xl:sticky xl:top-6 xl:self-start">
+              <div className="px-6 pt-5 pb-4">
+                <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">{selectedOsCodigo}</p>
+                <h3 className="mt-0.5 text-[18px] font-black text-[#2D2D2D] leading-snug">
                   {osOptions.find((o) => o.codigo === selectedOsCodigo)?.nome || selectedOsCodigo}
                 </h3>
               </div>
@@ -979,34 +978,33 @@ export default function Contrato({
                   </div>
                 </div>
 
-                <div className="space-y-3">
-                  <div className={`rounded-2xl border p-4 ${osDraft.prioridadeMensal === monthlyPriorityCycle ? 'border-[#BBF7D0] bg-[#F0FDF4]' : 'border-[#FDE68A] bg-[#FFFBEB]'}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-[11px] font-black uppercase tracking-widest text-[#166534]">Prioridade do mês</p>
-                        <p className="mt-2 text-[13px] font-semibold text-[#1F2937]">Fica ativa no ciclo atual e reseta automaticamente no dia 05.</p>
-                        <p className="mt-1 text-[11px] text-[#4B5563]">Ciclo: {monthlyPriorityCycleLabel}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setOsDraft((prev) => prev ? {
-                          ...prev,
-                          prioridadeMensal: prev.prioridadeMensal === monthlyPriorityCycle ? '' : monthlyPriorityCycle,
-                        } : prev)}
-                        className={`min-w-[84px] rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-wide transition ${
-                          osDraft.prioridadeMensal === monthlyPriorityCycle
-                            ? 'bg-[#10B981] text-white hover:bg-[#059669]'
-                            : 'border border-[#86EFAC] bg-white text-[#166534] hover:bg-[#ECFDF5]'
-                        }`}
-                      >
-                        {osDraft.prioridadeMensal === monthlyPriorityCycle ? 'Ativa' : 'Marcar'}
-                      </button>
+                <div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-widest text-[#166534]">
+                        Prioridade do mês {osDraft.prioridadeMensal === monthlyPriorityCycle ? '· Ativa' : '· Pendente'}
+                      </p>
+                      <p className="mt-2 text-[13px] font-semibold text-[#1F2937]">Fica ativa no ciclo atual e reseta automaticamente no dia 05.</p>
+                      <p className="mt-1 text-[11px] text-[#4B5563]">Ciclo: {monthlyPriorityCycleLabel}</p>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setOsDraft((prev) => prev ? {
+                        ...prev,
+                        prioridadeMensal: prev.prioridadeMensal === monthlyPriorityCycle ? '' : monthlyPriorityCycle,
+                      } : prev)}
+                      className={`min-w-[84px] rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-wide transition ${
+                        osDraft.prioridadeMensal === monthlyPriorityCycle
+                          ? 'bg-[#10B981] text-white hover:bg-[#059669]'
+                          : 'bg-[#FFFBEB] text-[#166534] hover:bg-[#ECFDF5]'
+                      }`}
+                    >
+                      {osDraft.prioridadeMensal === monthlyPriorityCycle ? 'Ativa' : 'Marcar'}
+                    </button>
                   </div>
-
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-[#E5E7EB]">
+                <div className="flex items-center justify-between pt-4">
                   <button
                     type="button"
                     onClick={() => { setSelectedOsCodigo(null); setOsDraft(null); }}
@@ -1028,7 +1026,7 @@ export default function Contrato({
               </div>
             </div>
           ) : (
-            <div className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm flex items-center justify-center min-h-[360px]">
+            <div className="bg-white rounded-[12px] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] flex items-center justify-center min-h-[360px]">
               <p className="text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">Selecione uma OS</p>
             </div>
           )}
@@ -1048,7 +1046,7 @@ export default function Contrato({
 
           <div className="space-y-6">
             {selectedOsJourney ? <ActivityJourney activity={selectedOsJourney} /> : (
-              <div className="border border-[#E5E7EB] bg-white rounded-[12px] p-6 shadow-sm min-h-[240px] flex items-center justify-center text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">
+              <div className="bg-white rounded-[12px] p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] min-h-[240px] flex items-center justify-center text-[13px] font-bold text-[#94A3B8] uppercase tracking-widest">
                 Selecione uma OS
               </div>
             )}
@@ -1123,11 +1121,11 @@ export default function Contrato({
       )}
 
       {activeView === 'interferencias' && (
-        <section className="bg-white border border-[#E5E7EB] rounded-[12px] shadow-sm overflow-hidden">
-          <div className="px-6 py-5 border-b border-[#E5E7EB] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <FileWarning size={18} className="text-[#F05D28]" />
-              <h3 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Interferências</h3>
+        <section className="bg-white rounded-[12px] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden">
+          <div className="px-6 pt-5 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">Contrato</p>
+              <h3 className="text-[18px] font-black text-[#2D2D2D] mt-0.5">Interferências</h3>
             </div>
             <button
               type="button"
@@ -1139,7 +1137,7 @@ export default function Contrato({
             </button>
           </div>
 
-          <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="px-5 pb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
             {interferencias.length === 0 && (
               <div className="lg:col-span-2 py-8 text-center text-[13px] font-medium text-[#757575]">
                 Nenhuma interferência registrada nesta sessão.
@@ -1147,7 +1145,7 @@ export default function Contrato({
             )}
 
             {interferencias.map((item) => (
-              <div key={item.id} className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+              <div key={item.id} className="rounded-xl bg-[#F9FAFB] p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[14px] font-bold text-[#2D2D2D]">{item.nome}</p>
@@ -1171,8 +1169,8 @@ export default function Contrato({
 
       {showInterferenciaForm && (
         <div className="fixed inset-0 bg-black/30 z-[80] flex items-center justify-center p-4">
-          <div className="w-full max-w-[620px] bg-white rounded-[12px] shadow-2xl border border-[#E5E7EB] overflow-hidden">
-            <div className="px-6 py-5 border-b border-[#E5E7EB] flex items-center justify-between">
+          <div className="w-full max-w-[620px] bg-white rounded-[12px] shadow-2xl overflow-hidden">
+            <div className="px-6 pt-5 pb-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <PencilLine size={18} className="text-[#F05D28]" />
                 <h3 className="text-[15px] font-bold text-[#2D2D2D] uppercase tracking-widest">Interferência</h3>
@@ -1255,7 +1253,7 @@ export default function Contrato({
       )}
 
       {osToastVisible && (
-        <div className="fixed bottom-6 right-6 z-[100] flex items-start gap-3 rounded-2xl border border-[#FED7AA] bg-[#FFF7ED] px-5 py-4 shadow-xl max-w-[340px]">
+        <div className="fixed bottom-6 right-6 z-[100] flex items-start gap-3 rounded-2xl bg-[#FFF7ED] px-5 py-4 shadow-xl max-w-[340px]">
           <Save size={18} className="text-[#F05D28] mt-0.5 shrink-0" />
           <div>
             <p className="text-[13px] font-bold text-[#2D2D2D]">Informações enviadas</p>

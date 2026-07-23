@@ -90,6 +90,14 @@ function getCorCelula(peso: number, quantidade: number, imp: number, dif: number
   return peso >= 3 ? 'bg-[#60A5FA]' : 'bg-[#10B981]';
 }
 
+const CRITICIDADE_LABEL: Record<string, string> = {
+  critica: 'Critica',
+  alta: 'Alta',
+  prioritaria: 'Prioritaria',
+  atencao: 'Atencao',
+  rotina: 'Rotina',
+};
+
 const ChipResumo = ({ label, valor, color }: { label: string; valor: any; color: string }) => (
   <div className="px-3 py-1.5 rounded-full bg-[#F8F9FA] border border-[#E5E7EB] flex items-center gap-2 shrink-0">
     <span className="text-[10px] font-bold text-[#2D2D2D] uppercase">{label}:</span>
@@ -121,7 +129,7 @@ export default function MatrizDePriorizacao({ tableFiltrada, filtros, contractOp
         </div>
       </div>
 
-      <div className="relative flex-1 flex flex-col items-center justify-center px-3 py-4 bg-gray-50/30 rounded-xl border border-gray-50 min-h-[420px]">
+      <div className="relative flex-1 flex flex-col items-center justify-center px-3 py-4 bg-gray-50/30 rounded-xl min-h-[420px]">
         <div className="flex items-stretch">
           <div className="flex items-center pr-3">
             <div className="text-[10px] font-black text-[#2D2D2D] uppercase tracking-[2px] -rotate-90 whitespace-nowrap">
@@ -136,13 +144,20 @@ export default function MatrizDePriorizacao({ tableFiltrada, filtros, contractOp
             {EIXO_Y.map((imp) => EIXO_X.map((dif) => {
               const cell = matriz.get(`${imp}-${dif}`);
               const isAtiva = (cell?.quantidade || 0) > 0;
+              const criticidade = getCriticidade(imp, dif);
               return (
                 <button
                   key={`${imp}-${dif}`}
                   onClick={() => isAtiva && setSelectedKey(selectedKey === cell?.key ? null : cell!.key)}
-                  className={`relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl flex items-center justify-center transition-all outline-none ${getCorCelula(cell?.pesoMaximo || 0, cell?.quantidade || 0, imp, dif)} ${isAtiva ? 'hover:scale-105 shadow-md active:scale-95' : 'cursor-default'} ${selectedKey === cell?.key ? 'ring-2 ring-black ring-offset-2' : ''}`}
+                  title={isAtiva ? `${CRITICIDADE_LABEL[criticidade]}: ${cell!.quantidade} atividade(s)` : undefined}
+                  className={`relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all outline-none ${getCorCelula(cell?.pesoMaximo || 0, cell?.quantidade || 0, imp, dif)} ${isAtiva ? 'hover:scale-105 shadow-md active:scale-95' : 'cursor-default'} ${selectedKey === cell?.key ? 'ring-2 ring-black ring-offset-2' : ''}`}
                 >
-                  {isAtiva && <span className="text-white text-[22px] font-black drop-shadow-md">{cell!.quantidade}</span>}
+                  {isAtiva && (
+                    <>
+                      <span className="text-white text-[22px] font-black drop-shadow-md leading-none">{cell!.quantidade}</span>
+                      <span className="text-white/90 text-[8px] font-bold uppercase tracking-wide">{CRITICIDADE_LABEL[criticidade]}</span>
+                    </>
+                  )}
                 </button>
               );
             }))}
@@ -159,14 +174,14 @@ export default function MatrizDePriorizacao({ tableFiltrada, filtros, contractOp
         </div>
 
         {selectedKey && (
-          <div className="absolute inset-0 bg-white/98 z-30 p-4 overflow-y-auto animate-in fade-in zoom-in duration-200 border rounded-xl shadow-2xl">
-            <div className="flex justify-between items-center mb-4 border-b pb-2">
+          <div className="absolute inset-0 bg-white/98 z-30 p-4 overflow-y-auto animate-in fade-in zoom-in duration-200 rounded-xl shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
               <h4 className="text-[12px] font-black uppercase text-brand">Atividades na Celula ({matriz.get(selectedKey)?.quantidade})</h4>
               <button onClick={() => setSelectedKey(null)} className="p-1 hover:bg-gray-100 rounded-full transition-colors"><X size={20} /></button>
             </div>
             <div className="space-y-3">
               {matriz.get(selectedKey)?.atividades.map((atividade) => (
-                <div key={atividade.id} className="bg-gray-50 p-3 rounded-lg border-l-4 border-brand shadow-sm">
+                <div key={atividade.id} className="bg-gray-50 p-3 rounded-lg shadow-sm">
                   <p className="text-[11px] font-black text-[#2D2D2D] leading-snug">{atividade.descricao}</p>
                   <p className="text-[9px] font-bold text-gray-500 uppercase mt-1.5">{atividade.disciplina} - importancia {atividade.importancia} - dificuldade {atividade.dificuldade} - peso {atividade.peso}</p>
                 </div>

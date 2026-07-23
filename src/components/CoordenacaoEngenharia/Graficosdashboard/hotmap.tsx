@@ -91,7 +91,7 @@ export default function HeatmapAlocacao({ dados = [] }: HeatmapAlocacaoProps) {
   if (!disciplinas.length || !osLabels.length) {
     return (
       <div className="flex flex-col w-full font-['Montserrat'] min-h-[280px]">
-        <div className="rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] py-12 px-6 text-center text-[13px] font-medium text-[#64748B]">
+        <div className="rounded-xl bg-[#F8FAFC] py-12 px-6 text-center text-[13px] font-medium text-[#64748B]">
           Nenhuma atividade encontrada para montar o mapa de alocacao.
         </div>
       </div>

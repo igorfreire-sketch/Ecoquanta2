@@ -700,7 +700,7 @@ function MultiProfessionalSelector({ value, options, onChange }: { value: string
         <ChevronDown size={18} className="text-bentham-gray" />
       </button>
       {open && (
-        <div className="absolute z-20 mt-2 w-full bg-white border border-bentham-border rounded-xl shadow-lg max-h-64 overflow-y-auto">
+        <div className="absolute z-20 mt-2 w-full bg-white rounded-xl shadow-[0_10px_30px_-12px_rgba(15,23,42,0.45)] max-h-64 overflow-y-auto">
           <div className="p-2 space-y-1">
             {options.map((option) => (
               <label key={option.email} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg hover:bg-[#F9FAFB] cursor-pointer">
@@ -1173,7 +1173,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
           <button
             type="button"
             onClick={() => setShowRegistroAccordion((prev) => !prev)}
-            className="flex w-full items-center justify-between rounded-2xl border border-[#E5E7EB] bg-white px-5 py-4 text-left transition hover:border-[#F05D28] hover:bg-[#FFF7ED]"
+            className="flex w-full items-center justify-between rounded-2xl bg-white px-5 py-4 text-left shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition hover:bg-[#FFF3EC]"
           >
             <span className="flex items-center gap-3 text-[14px] font-black text-[#2D2D2D]">
               <span>Registro de atividades</span>
@@ -1245,18 +1245,18 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
           </div>
 
           {draftQueue.length > 0 && (
-            <div className="bg-white border border-bentham-border rounded-2xl p-5 space-y-4">
+            <div className="bg-white rounded-2xl p-5 space-y-4 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
               <div className="flex items-center justify-between gap-4">
                 <div><h3 className="text-[15px] font-bold text-bentham-dark">Fila de envio</h3><p className="text-[12px] text-bentham-gray mt-1">Estas atividades serão enviadas em lote.</p></div>
                 <div className="text-[13px] font-semibold text-bentham-gray">{draftQueue.length} atividade(s) pendente(s)</div>
               </div>
               <div className="space-y-3">
                 {draftQueue.map((item, index) => (
-                  <div key={item.localId} className="rounded-xl border border-bentham-border bg-[#F9FAFB] px-4 py-3">
+                  <div key={item.localId} className="rounded-xl bg-[#F8F9FA] px-4 py-3">
                     <div className="text-[13px] font-bold text-bentham-dark">{index + 1}. {item.osNome} - {item.itemNome}</div>
                     {item.todoTitulo && <div className="text-[12px] text-[#F05D28] font-semibold mt-1">Item a fazer: {item.todoTitulo}</div>}
                     <div className="text-[12px] text-bentham-gray mt-1">{splitPipeList(item.profissionaisNomes).join(', ')}</div>
-                    <div className="text-[12px] text-bentham-gray mt-1">AvanÃ§o inicial: {item.avancoInicial}%</div>
+                    <div className="text-[12px] text-bentham-gray mt-1">Avanço inicial: {item.avancoInicial}%</div>
                   </div>
                 ))}
               </div>
@@ -1271,7 +1271,8 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
         <div className="mt-10 space-y-6">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h3 className="text-[16px] font-bold text-bentham-dark">{viewMode === 'atividades' ? 'Atividades da disciplina' : 'Atividades em andamento'}</h3>
+              <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">ANDAMENTO</p>
+              <h2 className="text-[18px] font-black text-[#2D2D2D]">{viewMode === 'atividades' ? 'Atividades da disciplina' : 'Atividades em andamento'}</h2>
               <p className="text-[12px] text-bentham-gray mt-1">
                 {viewMode === 'atividades'
                   ? 'Aqui aparecem todas as atividades registradas da sua disciplina.'
@@ -1285,14 +1286,14 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
           </div>
 
           <div className="space-y-5">
-            {filteredActivities.length === 0 && <div className="bg-white border border-bentham-border rounded-2xl p-6 text-[13px] text-bentham-gray">{viewMode === 'atividades' ? 'Nenhuma atividade registrada encontrada para sua disciplina.' : 'Nenhuma atividade em andamento encontrada.'}</div>}
+            {filteredActivities.length === 0 && <div className="bg-white rounded-2xl p-6 text-[13px] text-bentham-gray shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">{viewMode === 'atividades' ? 'Nenhuma atividade registrada encontrada para sua disciplina.' : 'Nenhuma atividade em andamento encontrada.'}</div>}
             
             {filteredActivities.map((activity) => {
               const draft = getDraftForActivity(activity);
               const expanded = Boolean(expandedActivities[activity.id]);
 
               return (
-                <div key={activity.id} className="bg-bentham-bg border border-bentham-border rounded-xl p-5 hover:border-[#CBD5E1] transition-all">
+                <div key={activity.id} className="bg-white rounded-xl p-5 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition-all">
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0 flex-1">
                       <div className="text-[15px] font-bold text-[#F05D28] mb-1 truncate">
@@ -1336,7 +1337,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
                   </div>
 
                   {expanded && (
-                    <div className="mt-5 space-y-4 border-t border-[#E5E7EB] pt-5">
+                    <div className="mt-5 space-y-4 pt-1">
                       {/* O input de % de avanço foi removido do interior para evitar repetição */}
                       <div className="grid grid-cols-1 xl:grid-cols-[1fr_220px] gap-4">
                         <div>
@@ -1378,15 +1379,18 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
 
         {showCompletedSection && (
         <div className="mt-12 space-y-5">
-          <div className="flex items-center gap-3">
-            <CheckCircle2 size={18} className="text-[#10B981]" />
-            <h3 className="text-[16px] font-bold text-bentham-dark">Itens concluídos</h3>
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">STATUS</p>
+            <h2 className="flex items-center gap-2 text-[18px] font-black text-[#2D2D2D]">
+              <CheckCircle2 size={18} className="text-[#10B981]" />
+              Itens concluídos
+            </h2>
           </div>
           <div className="space-y-4">
-            {visibleCompletedActivities.length === 0 && completedActivities.length > 0 && <div className="bg-white border border-bentham-border rounded-2xl p-6 text-[13px] text-bentham-gray">Nenhuma atividade concluida da sua disciplina ainda.</div>}
-            {completedActivities.length === 0 && <div className="bg-white border border-bentham-border rounded-2xl p-6 text-[13px] text-bentham-gray">Nenhuma atividade concluída ainda.</div>}
+            {visibleCompletedActivities.length === 0 && completedActivities.length > 0 && <div className="bg-white rounded-2xl p-6 text-[13px] text-bentham-gray shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">Nenhuma atividade concluida da sua disciplina ainda.</div>}
+            {completedActivities.length === 0 && <div className="bg-white rounded-2xl p-6 text-[13px] text-bentham-gray shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">Nenhuma atividade concluída ainda.</div>}
             {visibleCompletedActivities.map((activity) => (
-              <div key={activity.id} className="bg-white border border-[#D1FAE5] rounded-2xl p-5">
+              <div key={activity.id} className="bg-white rounded-2xl p-5 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
                 <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr_180px] gap-4">
                   <div>
                     <label className="bentham-label">ATIVIDADE</label>

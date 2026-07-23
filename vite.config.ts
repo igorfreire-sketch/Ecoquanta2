@@ -19,6 +19,9 @@ export default defineConfig(({mode}) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    // typo-js e CommonJS e roda dentro do worker do corretor: sem o pre-bundle o worker nao sobe.
+    optimizeDeps: { include: ['typo-js'] },
+    worker: { format: 'es' },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.

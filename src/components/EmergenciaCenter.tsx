@@ -396,11 +396,12 @@ export default function EmergenciaCenter({
   return (
     <div className="space-y-6 font-['Montserrat']">
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_340px]">
-        <section className="rounded-[28px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
+        <section className="rounded-[28px] bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
           <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
-              <h3 className="text-[22px] font-black leading-tight text-[#111827]">Atividades em execucao</h3>
-              <p className="text-[13px] text-[#6B7280]">Filtre contrato, OS e disciplina para localizar rapidamente o que precisa virar chamado.</p>
+              <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">OPERAÇÃO</p>
+              <h2 className="text-[18px] font-black text-[#2D2D2D]">Atividades em execução</h2>
+              <p className="text-[13px] text-[#757575]">Filtre contrato, OS e disciplina para localizar rapidamente o que precisa virar chamado.</p>
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-[minmax(0,1.2fr)_minmax(180px,0.7fr)_minmax(180px,0.7fr)_minmax(210px,0.8fr)]">
@@ -453,8 +454,8 @@ export default function EmergenciaCenter({
             </div>
           </div>
 
-          <div className="mt-6 overflow-hidden rounded-[24px] border border-[#E8EEF5]">
-            <div className="hidden grid-cols-[minmax(180px,1fr)_130px_150px_minmax(260px,1.2fr)_120px] gap-4 bg-[#F8FAFC] px-5 py-4 text-[11px] font-black uppercase tracking-[1.3px] text-[#64748B] lg:grid">
+          <div className="mt-6 space-y-4">
+            <div className="hidden grid-cols-[minmax(180px,1fr)_130px_150px_minmax(260px,1.2fr)_120px] gap-4 px-2 text-[11px] font-black uppercase tracking-[1.3px] text-[#94A3B8] lg:grid">
               <span>Contrato / OS</span>
               <span>Codigo</span>
               <span>Disciplina</span>
@@ -462,27 +463,27 @@ export default function EmergenciaCenter({
               <span className="text-right">Acao</span>
             </div>
 
-            <div className="bg-white">
-              {loading && <div className="px-5 py-10 text-[13px] text-[#6B7280]">Carregando atividades...</div>}
-              {!loading && filteredActivities.length === 0 && <div className="px-5 py-10 text-[13px] text-[#6B7280]">Nenhuma atividade em execucao encontrada.</div>}
+            <div className="space-y-3">
+              {loading && <div className="px-2 py-10 text-[13px] text-[#757575]">Carregando atividades...</div>}
+              {!loading && filteredActivities.length === 0 && <div className="px-2 py-10 text-[13px] text-[#757575]">Nenhuma atividade em execucao encontrada.</div>}
               {filteredActivities.map((activity) => (
-                <div key={activity.id} className="border-t border-[#F1F5F9] px-5 py-4 first:border-t-0">
+                <div key={activity.id} className="rounded-2xl bg-[#F8F9FA] px-5 py-4">
                   <div className="hidden grid-cols-[minmax(180px,1fr)_130px_150px_minmax(260px,1.2fr)_120px] items-center gap-4 lg:grid">
                     <div>
-                      <div className="font-bold text-[#0F172A]">{activity.contratoCodigo}</div>
-                      <div className="mt-1 text-[12px] text-[#64748B]">{activity.osCodigo} - {activity.osNome}</div>
+                      <div className="font-bold text-[#2D2D2D]">{activity.contratoCodigo}</div>
+                      <div className="mt-1 text-[12px] text-[#757575]">{activity.osCodigo} - {activity.osNome}</div>
                     </div>
-                    <div className="font-semibold text-[#334155]">{activity.itemCodigo || '-'}</div>
-                    <div className="font-semibold text-[#334155]">{activity.disciplina || activity.setor || '-'}</div>
+                    <div className="font-semibold text-[#2D2D2D]">{activity.itemCodigo || '-'}</div>
+                    <div className="font-semibold text-[#2D2D2D]">{activity.disciplina || activity.setor || '-'}</div>
                     <div>
-                      <div className="font-semibold text-[#0F172A]">{activity.itemNome || 'Atividade sem nome'}</div>
-                      <div className="mt-1 text-[12px] text-[#64748B] line-clamp-2">{activity.descricao || 'Sem descricao complementar.'}</div>
+                      <div className="font-semibold text-[#2D2D2D]">{activity.itemNome || 'Atividade sem nome'}</div>
+                      <div className="mt-1 text-[12px] text-[#757575] line-clamp-2">{activity.descricao || 'Sem descricao complementar.'}</div>
                     </div>
                     <div className="flex justify-end">
                       <button
                         type="button"
                         onClick={() => openModal(activity)}
-                        className="inline-flex h-10 items-center gap-2 rounded-2xl bg-[#DC2626] px-4 text-[12px] font-black text-white transition hover:bg-[#B91C1C]"
+                        className="inline-flex h-10 items-center gap-2 rounded-2xl bg-[#EF4444] px-4 text-[12px] font-black text-white transition hover:opacity-90"
                       >
                         <AlertTriangle size={14} />
                         Abrir
@@ -493,23 +494,23 @@ export default function EmergenciaCenter({
                   <div className="space-y-3 lg:hidden">
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <div className="font-bold text-[#0F172A]">{activity.itemNome || 'Atividade sem nome'}</div>
-                        <div className="mt-1 text-[12px] text-[#64748B]">{activity.contratoCodigo} • {activity.osCodigo}</div>
+                        <div className="font-bold text-[#2D2D2D]">{activity.itemNome || 'Atividade sem nome'}</div>
+                        <div className="mt-1 text-[12px] text-[#757575]">{activity.contratoCodigo} • {activity.osCodigo}</div>
                       </div>
                       <button
                         type="button"
                         onClick={() => openModal(activity)}
-                        className="inline-flex h-9 shrink-0 items-center gap-2 rounded-2xl bg-[#DC2626] px-3 text-[12px] font-black text-white"
+                        className="inline-flex h-9 shrink-0 items-center gap-2 rounded-2xl bg-[#EF4444] px-3 text-[12px] font-black text-white"
                       >
                         <AlertTriangle size={13} />
                         Abrir
                       </button>
                     </div>
-                    <div className="grid grid-cols-2 gap-3 text-[12px] text-[#475569]">
-                      <div><span className="font-black text-[#111827]">Codigo:</span> {activity.itemCodigo || '-'}</div>
-                      <div><span className="font-black text-[#111827]">Disciplina:</span> {activity.disciplina || activity.setor || '-'}</div>
+                    <div className="grid grid-cols-2 gap-3 text-[12px] text-[#757575]">
+                      <div><span className="font-black text-[#2D2D2D]">Codigo:</span> {activity.itemCodigo || '-'}</div>
+                      <div><span className="font-black text-[#2D2D2D]">Disciplina:</span> {activity.disciplina || activity.setor || '-'}</div>
                     </div>
-                    <div className="text-[12px] leading-relaxed text-[#64748B]">{activity.descricao || 'Sem descricao complementar.'}</div>
+                    <div className="text-[12px] leading-relaxed text-[#757575]">{activity.descricao || 'Sem descricao complementar.'}</div>
                   </div>
                 </div>
               ))}
@@ -517,21 +518,22 @@ export default function EmergenciaCenter({
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-3">
+        <section className="rounded-[28px] bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+          <div className="flex flex-col gap-5">
             <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-[22px] font-black leading-tight text-[#111827]">Chamados abertos</h3>
-                <p className="mt-1 text-[13px] text-[#6B7280]">Conversa compartilhada entre todos os setores envolvidos.</p>
+              <div className="flex flex-col gap-2">
+                <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">COMUNICAÇÃO</p>
+                <h2 className="text-[18px] font-black text-[#2D2D2D]">Chamados abertos</h2>
+                <p className="text-[13px] text-[#757575]">Conversa compartilhada entre todos os setores envolvidos.</p>
               </div>
-              <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] font-black ${unreadCount > 0 ? 'border-[#FECACA] bg-[#FFF1F2] text-[#DC2626]' : 'border-[#E5E7EB] bg-[#F8FAFC] text-[#6B7280]'}`}>
+              <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-black ${unreadCount > 0 ? 'bg-[#FFF3EC] text-[#EF4444]' : 'bg-[#F8F9FA] text-[#757575]'}`}>
                 <Siren size={13} className={unreadCount > 0 ? 'animate-pulse' : ''} />
                 {unreadCount}
               </div>
             </div>
 
             <div className="max-h-[260px] space-y-3 overflow-y-auto pr-1">
-              {emergencies.length === 0 && <div className="rounded-2xl border border-dashed border-[#D1D5DB] px-4 py-6 text-[13px] text-[#6B7280]">Nenhum chamado aberto.</div>}
+              {emergencies.length === 0 && <div className="rounded-2xl bg-[#F8F9FA] px-4 py-6 text-[13px] text-[#757575]">Nenhum chamado aberto.</div>}
               {emergencies.map((emergency) => {
                 const unread = unreadIds.has(emergency.id);
                 return (
@@ -539,50 +541,55 @@ export default function EmergenciaCenter({
                     key={emergency.id}
                     type="button"
                     onClick={() => setSelectedEmergencyId(emergency.id)}
-                    className={`w-full rounded-2xl border p-4 text-left transition ${selectedEmergency?.id === emergency.id ? 'border-[#F05D28] bg-[#FFF7ED]' : 'border-[#E5E7EB] bg-white hover:border-[#FDBA74]'}`}
+                    className={`w-full rounded-2xl p-4 text-left transition ${selectedEmergency?.id === emergency.id ? 'bg-[#FFF3EC] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]' : 'bg-[#F8F9FA] hover:bg-[#FFF3EC]'}`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="text-[13px] font-black text-[#111827]">{emergency.itemNome || emergency.itemCodigo}</span>
-                          {unread && <span className="inline-flex h-2.5 w-2.5 animate-pulse rounded-full bg-[#DC2626]" />}
+                          <span className="text-[13px] font-black text-[#2D2D2D]">{emergency.itemNome || emergency.itemCodigo}</span>
+                          {unread && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-[#FFF3EC] px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.5px] text-[#EF4444]" title="Mensagem não lida">
+                              <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[#EF4444]" />
+                              Nova
+                            </span>
+                          )}
                         </div>
-                        <p className="mt-1 text-[12px] text-[#64748B]">{emergency.contratoCodigo} - {emergency.osCodigo}</p>
+                        <p className="mt-1 text-[12px] text-[#757575]">{emergency.contratoCodigo} - {emergency.osCodigo}</p>
                       </div>
-                      <span className="rounded-full bg-[#FEF2F2] px-2 py-1 text-[10px] font-black uppercase tracking-[1px] text-[#B91C1C]">
+                      <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase tracking-[1px] text-[#EF4444]">
                         {emergency.notifiedSectors.length} setor(es)
                       </span>
                     </div>
-                    <p className="mt-3 line-clamp-2 text-[12px] text-[#475569]">{emergency.initialObservation}</p>
+                    <p className="mt-3 line-clamp-2 text-[12px] text-[#757575]">{emergency.initialObservation}</p>
                   </button>
                 );
               })}
             </div>
 
-            <div className="rounded-3xl border border-[#EEF2F7] bg-[#F8FAFC] p-4">
-              {!selectedEmergency && <div className="text-[13px] text-[#6B7280]">Selecione um chamado para visualizar o chat.</div>}
+            <div className="pt-2">
+              {!selectedEmergency && <div className="text-[13px] text-[#757575]">Selecione um chamado para visualizar o chat.</div>}
 
               {selectedEmergency && (
                 <>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-[15px] font-black text-[#111827]">{selectedEmergency.itemNome || selectedEmergency.itemCodigo}</div>
-                      <div className="mt-1 text-[12px] text-[#64748B]">{selectedEmergency.contratoCodigo} - {selectedEmergency.osCodigo}</div>
+                      <div className="text-[15px] font-black text-[#2D2D2D]">{selectedEmergency.itemNome || selectedEmergency.itemCodigo}</div>
+                      <div className="mt-1 text-[12px] text-[#757575]">{selectedEmergency.contratoCodigo} - {selectedEmergency.osCodigo}</div>
                     </div>
-                    <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-[1px] text-[#B91C1C] shadow-sm">
+                    <span className="rounded-full bg-[#F8F9FA] px-3 py-1 text-[10px] font-black uppercase tracking-[1px] text-[#EF4444]">
                       {selectedEmergency.notifiedSectors.join(', ')}
                     </span>
                   </div>
 
                   <div className="mt-4 max-h-[260px] space-y-3 overflow-y-auto pr-1">
                     {selectedMessages.map((message) => (
-                      <div key={message.id} className="rounded-2xl bg-white p-3 shadow-sm">
+                      <div key={message.id} className="rounded-2xl bg-[#F8F9FA] p-3">
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-[12px] font-black text-[#111827]">{message.authorName}</div>
-                          <div className="text-[11px] text-[#64748B]">{formatDateTime(message.createdAt)}</div>
+                          <div className="text-[12px] font-black text-[#2D2D2D]">{message.authorName}</div>
+                          <div className="text-[11px] text-[#757575]">{formatDateTime(message.createdAt)}</div>
                         </div>
                         <div className="mt-1 text-[11px] font-bold uppercase tracking-[1px] text-[#F05D28]">{message.authorSector || 'Sem setor'}</div>
-                        <p className="mt-2 text-[13px] leading-relaxed text-[#334155]">{message.message}</p>
+                        <p className="mt-2 text-[13px] leading-relaxed text-[#2D2D2D]">{message.message}</p>
                       </div>
                     ))}
                   </div>
@@ -621,17 +628,17 @@ export default function EmergenciaCenter({
           <div className="w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="text-[11px] font-black uppercase tracking-[1.4px] text-[#DC2626]">Abrir atividade</div>
-                <h3 className="mt-2 text-[20px] font-black text-[#111827]">{selectedActivity.itemNome || selectedActivity.itemCodigo}</h3>
-                <p className="mt-1 text-[13px] text-[#64748B]">{selectedActivity.contratoCodigo} - {selectedActivity.osCodigo}</p>
+                <div className="text-[11px] font-black uppercase tracking-[1.4px] text-[#EF4444]">Abrir atividade</div>
+                <h3 className="mt-2 text-[20px] font-black text-[#2D2D2D]">{selectedActivity.itemNome || selectedActivity.itemCodigo}</h3>
+                <p className="mt-1 text-[13px] text-[#757575]">{selectedActivity.contratoCodigo} - {selectedActivity.osCodigo}</p>
               </div>
-              <button type="button" onClick={() => setModalOpen(false)} className="rounded-full p-2 text-[#6B7280] transition hover:bg-[#F3F4F6]">
+              <button type="button" onClick={() => setModalOpen(false)} className="rounded-full p-2 text-[#757575] transition hover:bg-[#F8F9FA]">
                 <X size={18} />
               </button>
             </div>
 
             <div className="mt-5">
-              <label className="text-[12px] font-black uppercase tracking-[1px] text-[#475569]">Observacao</label>
+              <label className="text-[12px] font-black uppercase tracking-[1px] text-[#757575]">Observacao</label>
               <textarea
                 value={observationDraft}
                 onChange={(event) => setObservationDraft(event.target.value)}
@@ -641,7 +648,7 @@ export default function EmergenciaCenter({
             </div>
 
             <div className="mt-5">
-              <label className="text-[12px] font-black uppercase tracking-[1px] text-[#475569]">Setores notificados</label>
+              <label className="text-[12px] font-black uppercase tracking-[1px] text-[#757575]">Setores notificados</label>
               <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
                 {sectorOptions.map((sector) => {
                   const active = selectedSectors.includes(sector);
@@ -650,7 +657,7 @@ export default function EmergenciaCenter({
                       key={sector}
                       type="button"
                       onClick={() => setSelectedSectors((prev) => active ? prev.filter((item) => item !== sector) : [...prev, sector])}
-                      className={`rounded-2xl border px-4 py-3 text-left text-[13px] font-bold transition ${active ? 'border-[#DC2626] bg-[#FEF2F2] text-[#B91C1C]' : 'border-[#E5E7EB] bg-white text-[#475569] hover:border-[#FCA5A5]'}`}
+                      className={`rounded-2xl border px-4 py-3 text-left text-[13px] font-bold transition ${active ? 'border-[#EF4444] bg-[#FFF3EC] text-[#EF4444]' : 'border-[#E5E7EB] bg-white text-[#757575] hover:border-[#F05D28]'}`}
                     >
                       {sector}
                     </button>
@@ -660,14 +667,14 @@ export default function EmergenciaCenter({
             </div>
 
             <div className="mt-6 flex justify-end gap-3">
-              <button type="button" onClick={() => setModalOpen(false)} className="rounded-2xl border border-[#E5E7EB] px-5 py-3 text-[13px] font-bold text-[#475569]">
+              <button type="button" onClick={() => setModalOpen(false)} className="rounded-2xl border border-[#E5E7EB] px-5 py-3 text-[13px] font-bold text-[#757575]">
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={() => void handleCreateEmergency()}
                 disabled={saving}
-                className="inline-flex items-center gap-2 rounded-2xl bg-[#DC2626] px-5 py-3 text-[13px] font-black text-white transition hover:bg-[#B91C1C] disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-2xl bg-[#EF4444] px-5 py-3 text-[13px] font-black text-white transition hover:opacity-90 disabled:opacity-60"
               >
                 <MessageSquareText size={16} />
                 {saving ? 'Enviando...' : 'Criar atividade'}

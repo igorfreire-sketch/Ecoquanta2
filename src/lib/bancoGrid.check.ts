@@ -1,7 +1,7 @@
 // Check da geometria do banco. Rodar: npx tsx src/lib/bancoGrid.check.ts
 import assert from 'node:assert/strict';
 import {
-  alturaParaLinhas, BANCO_ROW_HEIGHT, cellKey, isCovered, mergeAt, mergeIntersects,
+  alturaParaLinhas, BANCO_ROW_HEIGHT, cellCss, cellKey, isCovered, mergeAt, mergeIntersects,
   quebrarTexto, remapMerges, remapStyles, spliceSizes,
   type BancoMerge, type CellStyle,
 } from './bancoGrid';
@@ -101,6 +101,14 @@ const azul: CellStyle = { bg: '#DBEAFE' };
   assert.equal(alturaParaLinhas(1, 13), BANCO_ROW_HEIGHT, 'uma linha pequena mantem a altura padrao');
   assert.ok(alturaParaLinhas(4, 13) > BANCO_ROW_HEIGHT, 'varias linhas crescem');
   assert.ok(alturaParaLinhas(3, 24) > alturaParaLinhas(3, 13), 'fonte maior pede mais altura');
+}
+
+// --- cellCss: alinhamento vira text-align, default sem estilo e' sem align (esquerda do navegador) ---
+{
+  assert.equal(cellCss({ align: 'center' }).textAlign, 'center');
+  assert.equal(cellCss({ align: 'right' }).textAlign, 'right');
+  assert.equal(cellCss({ bold: true }).textAlign, undefined, 'sem align definido nao forca text-align');
+  assert.deepEqual(cellCss(undefined), {}, 'sem estilo nenhum, sem CSS nenhum');
 }
 
 console.log('bancoGrid: OK');

@@ -160,8 +160,8 @@ export default function ComposicaoDeProfissionaisPorOS({ dados, disciplinas, fil
 
   if (!chartData.length || !disciplinaMetas.length) {
     return (
-      <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8 flex flex-col min-h-[460px] h-full">
-        <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-6 text-center text-[13px] font-medium text-[#64748B]">
+      <div className="flex flex-col min-h-[460px] h-full">
+        <div className="flex flex-1 items-center justify-center rounded-xl bg-[#F8FAFC] p-6 text-center text-[13px] font-medium text-[#64748B]">
           Nenhuma composicao encontrada para os filtros selecionados.
         </div>
       </div>

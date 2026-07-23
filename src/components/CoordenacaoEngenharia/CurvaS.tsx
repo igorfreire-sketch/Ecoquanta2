@@ -237,13 +237,12 @@ function buildFallbackSeries(row: any[]) {
 }
 
 function InfoCard({ label, value, highlight, extraClass = "", textColorClass = "" }: { label: string; value: string; highlight?: boolean; extraClass?: string; textColorClass?: string }) {
-  const isLongText = value.length > 12;
   let finalTextColor = 'text-[#2D2D2D]';
   if (textColorClass) finalTextColor = textColorClass; else if (highlight) finalTextColor = 'text-[#F97316]';
   return (
-    <div className={`bg-white border border-[#E5E7EB] rounded-2xl p-4 shadow-sm flex flex-col justify-center ${extraClass}`}>
-      <p className="text-[10px] font-bold text-[#757575] uppercase tracking-wider mb-1">{label}</p>
-      <p className={`${isLongText ? 'text-[15px]' : 'text-[18px]'} font-bold ${finalTextColor}`}>{value}</p>
+    <div className={`flex flex-col items-center text-center justify-center min-w-[110px] rounded-2xl border border-[#F7C7B7] bg-white px-4 py-3 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] ${extraClass}`}>
+      <p className="text-[10px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">{label}</p>
+      <p className={`mt-1 text-[15px] font-black ${finalTextColor}`}>{value}</p>
     </div>
   );
 }
@@ -303,8 +302,8 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
   };
 
   return (
-    <div ref={fullPanelRef} className="pt-8 border-b-2 border-dashed border-gray-200 pb-12 mb-8 relative bg-white px-2">
-      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
+    <div ref={fullPanelRef} className="relative rounded-2xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+      <div className="flex items-center justify-between gap-4 mb-6">
         <h3 className="text-xl font-bold text-gray-800 flex items-center gap-3 border-l-4 border-[#3B82F6] pl-4">
           <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-md text-sm">OS {data.osCode}</span> {data.osName}
         </h3>
@@ -316,12 +315,10 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
           <button onClick={() => downloadJPG(fullPanelRef, 'Completo')} className="h-9 bg-[#3B82F6] text-white px-4 rounded-xl flex items-center gap-2 text-[11px] font-bold hover:bg-blue-600 transition-colors"><Download size={14} /> BAIXAR PAINEL</button>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-4 mb-4">
+      <div className="flex flex-wrap gap-3 mb-6">
         <InfoCard label="% Ideal (Col. J)" value={`${data.summary.idealPct}%`} />
         <InfoCard label="% Real (Col. C)" value={`${data.summary.realPct}%`} highlight={true} />
         <InfoCard label="Gap Atual" value={`${gap > 0 ? '+' : ''}${gap}%`} textColorClass={gap < 0 ? 'text-red-500' : 'text-green-500'} extraClass={gap < 0 ? "!border-red-200" : "!border-green-200"} />
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6 bg-gray-50 p-4 rounded-2xl border border-gray-100">
         <InfoCard label="Início Plan. (G)" value={data.summary.plannedStart} />
         <InfoCard label="Fim Plan. (H)" value={data.summary.plannedEnd} />
         <InfoCard label="Início Replan. (L)" value={data.summary.lDateString} />
@@ -330,7 +327,7 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
         <InfoCard label="Fim Real" value={data.summary.fimReal} textColorClass={data.summary.fimReal === 'Não Finalizado' ? 'text-[#F97316]' : 'text-[#2D2D2D]'} />
       </div>
       <div className="flex flex-col xl:flex-row gap-6">
-        <div ref={chartOnlyRef} className={`bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex-1 transition-all ${editMode ? 'xl:w-2/3' : 'w-full'}`}>
+        <div ref={chartOnlyRef} className={`rounded-2xl bg-white border border-[#F3E7E0] shadow-[0_8px_28px_-18px_rgba(15,23,42,0.35)] p-4 flex-1 transition-all ${editMode ? 'xl:w-2/3' : 'w-full'}`}>
           <div className="h-[450px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartDataFinal} margin={{ top: 30, right: 20, left: -20, bottom: 20 }}>
@@ -367,11 +364,11 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
           </div>
         </div>
         {editMode && (
-          <div className="xl:w-1/3 bg-gray-50 border border-gray-200 rounded-2xl p-5 flex flex-col h-[482px] shadow-inner">
+          <div className="xl:w-1/3 bg-[#F8FAFC] rounded-2xl p-5 flex flex-col h-[482px]">
             <h4 className="font-bold text-gray-800 mb-1 flex items-center gap-2"><Edit3 size={18} className="text-[#3B82F6]"/> Ajuste em Tempo Real</h4>
             <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
               {liveSeries.map((pt: any, idx: number) => (
-                <div key={idx} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                <div key={idx} className="p-3">
                   <p className="text-[13px] font-bold text-gray-700 mb-2 flex items-center gap-2"><CalendarIcon size={14} className="text-gray-400"/> {pt.dataBase}</p>
                   <div className="flex gap-3">
                     <div className="flex-1">
@@ -672,7 +669,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
     <div className="w-full space-y-6 animate-in fade-in duration-500 max-w-[1600px] mx-auto pb-20">
       {error && <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl text-sm font-medium">{error}</div>}
 
-      <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
+      <div className="rounded-2xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-gray-500 uppercase">Contrato</label>
@@ -710,7 +707,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
               </button>
             </div>
             {osExpanded && (
-              <div id="curva-s-os-options" className="absolute top-full left-0 right-0 z-30 mt-1 border rounded-xl p-2 bg-white shadow-lg custom-scrollbar max-h-[360px] overflow-y-auto">
+              <div id="curva-s-os-options" className="absolute top-full left-0 right-0 z-30 mt-1 rounded-xl p-2 bg-white shadow-xl custom-scrollbar max-h-[360px] overflow-y-auto">
                 {activeOsOptions.length === 0 ? <p className="text-[12px] text-gray-400 p-2 text-center">Aguardando contrato...</p> : filteredOsOptions.length === 0 ? (
                   <p className="text-[12px] text-gray-400 p-2 text-center">Nenhuma OS encontrada.</p>
                 ) : (
@@ -746,7 +743,7 @@ export default function Curvas({ preloadedData, onForceRefresh, isSyncing, locke
       </div>
 
       {chartsData.length === 0 ? (
-        <div className="border-2 border-dashed border-gray-200 rounded-3xl p-16 text-center bg-gray-50">
+        <div className="rounded-2xl p-16 text-center bg-[#F8FAFC]">
           <p className="text-[16px] font-semibold text-gray-600">Nenhuma OS selecionada.</p>
         </div>
       ) : (

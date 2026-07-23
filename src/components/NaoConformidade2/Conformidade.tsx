@@ -239,7 +239,7 @@ function Dashboard({
   return (
     <div className="flex flex-col md:flex-row gap-6 w-full animate-in fade-in duration-500">
       <aside className="w-full md:w-64 flex flex-col gap-6 shrink-0">
-        <div className="bg-white border border-[#E5E7EB] rounded-xl py-2 shadow-sm">
+        <div className="rounded-xl bg-white py-2 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
           {['SETEMBRO', 'OUTUBRO'].map((month) => (
             <button
               key={month}
@@ -255,7 +255,7 @@ function Dashboard({
           ))}
         </div>
 
-        <div className="bg-white border border-[#E5E7EB] rounded-xl p-5 shadow-sm">
+        <div className="rounded-xl bg-white p-5 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
           <label className="block text-[11px] font-bold text-[#757575] uppercase tracking-[1px] mb-3">FILTRAR POR CONTRATO</label>
           <div className="relative mb-4">
             <SearchableSelect
@@ -309,8 +309,11 @@ function Dashboard({
           </div>
         )}
 
-        <div className="bg-white border border-[#E5E7EB] rounded-xl p-6 shadow-sm">
-          <h3 className="text-[16px] font-bold text-[#2D2D2D] text-center mb-8">Nao Conformidades por disciplinas</h3>
+        <div className="rounded-xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+          <div className="mb-8">
+            <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">ANÁLISE</p>
+            <h2 className="text-[18px] font-black text-[#2D2D2D]">Não conformidades por disciplina</h2>
+          </div>
           <div className="h-[350px] w-full">
             {loading ? (
               <div className="h-full flex items-center justify-center text-[13px] text-[#757575]">Carregando registros...</div>
@@ -333,8 +336,11 @@ function Dashboard({
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white border border-[#E5E7EB] rounded-xl p-6 shadow-sm">
-            <h3 className="text-[16px] font-bold text-[#2D2D2D] text-center mb-8">Grupos de Nao Conformidades</h3>
+          <div className="rounded-xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+            <div className="mb-8">
+              <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">ANÁLISE</p>
+              <h2 className="text-[18px] font-black text-[#2D2D2D]">Grupos de não conformidades</h2>
+            </div>
             <div className="h-[300px] w-full">
               {loading ? (
                 <div className="h-full flex items-center justify-center text-[13px] text-[#757575]">Carregando registros...</div>
@@ -354,8 +360,11 @@ function Dashboard({
             </div>
           </div>
 
-          <div className="bg-white border border-[#E5E7EB] rounded-xl p-6 shadow-sm flex flex-col items-center">
-            <h3 className="text-[16px] font-bold text-[#2D2D2D] text-center mb-4">Arquivos Totais Analisados</h3>
+          <div className="rounded-xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] flex flex-col items-center">
+            <div className="mb-4 w-full">
+              <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">ANÁLISE</p>
+              <h2 className="text-[18px] font-black text-[#2D2D2D]">Arquivos totais analisados</h2>
+            </div>
             <div className="flex flex-wrap justify-center gap-4 mb-4">
               {totalAnalyzedData.map((entry) => (
                 <div key={entry.name} className="flex items-center gap-2">

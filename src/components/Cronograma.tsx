@@ -1,5 +1,6 @@
 import SearchableSelect from './SearchableSelect';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CalendarDays, ChevronDown, ChevronRight, Filter, Maximize2, X, AlertTriangle, Clock3, ListChecks } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
@@ -1081,7 +1082,7 @@ function TreeRow({
   if (node.synthetic) {
     return (
       <>
-        <div className="border-b border-[#F3F4F6] last:border-b-0 bg-[#FAFAFA]">
+        <div>
           <div className="px-5 py-2.5">
             <button
               type="button"
@@ -1109,7 +1110,7 @@ function TreeRow({
 
   return (
     <>
-      <div className="border-b border-[#F3F4F6] last:border-b-0">
+      <div>
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.3fr)_minmax(260px,0.7fr)] gap-4 px-5 py-4">
           <div className="min-w-0">
             <button
@@ -1429,19 +1430,21 @@ export default function Cronograma({
     const chartHeight = ganttChartHeight;
     const todayLineX = ganttTodayLineX;
 
-    return (
+    // Portal pro body: fora do stacking context do <main> (relative z-10), senao o rail (z-40)
+    // apareceria por cima do modo Gantt. No body o z-[200] vale de verdade.
+    return createPortal(
       <>
       <div
         className="fixed inset-0 z-[200] bg-slate-950/70 backdrop-blur-sm"
         style={showGantt ? undefined : { visibility: 'hidden', pointerEvents: 'none' }}
       >
         <div className="flex h-full w-full flex-col overflow-hidden bg-white">
-          <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-2.5">
+          <div className="flex items-center justify-between gap-4 px-5 py-2.5">
             <div className="flex items-center gap-3">
               <Maximize2 size={16} className="text-[#F05D28]" />
               <h2 className="text-[15px] font-black text-[#1F2937]">Modo Gantt</h2>
               <span className="text-[11px] text-slate-400">{ganttVisibleTasks.length} tarefa(s)</span>
-              <label className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.8px] text-slate-600">
+              <label className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.8px] text-slate-600 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
                 <span>Escala</span>
                 <SearchableSelect
                   value={ganttScaleMode}
@@ -1454,6 +1457,37 @@ export default function Cronograma({
                   <option value="year">Anos</option>
                 </SearchableSelect>
               </label>
+              <label className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.8px] text-slate-600 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+                <span>Contrato</span>
+                <SearchableSelect
+                  value={contractFilter}
+                  disabled={Boolean(normalizeText(lockedContractCode))}
+                  onChange={(event) => { setContractFilter(event.target.value); setOsFilter('Todas'); }}
+                  searchPlaceholder="Pesquisar contrato..."
+                  className="h-7 min-w-[140px] rounded-md bg-transparent px-2 text-[11px] font-black uppercase tracking-[0.8px] text-[#334155] outline-none hover:bg-slate-100"
+                >
+                  {!normalizeText(lockedContractCode) && <option value="Todos">Todos</option>}
+                  {contracts.map((contract) => (
+                    <option key={contract.code} value={contract.code}>{contract.name || contract.code}</option>
+                  ))}
+                </SearchableSelect>
+              </label>
+              <label className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.8px] text-slate-600 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+                <span>OS</span>
+                <SearchableSelect
+                  value={osFilter}
+                  onChange={(event) => setOsFilter(event.target.value)}
+                  searchPlaceholder="Pesquisar OS..."
+                  className="h-7 min-w-[140px] rounded-md bg-transparent px-2 text-[11px] font-black uppercase tracking-[0.8px] text-[#334155] outline-none hover:bg-slate-100"
+                >
+                  <option value="Todas">Todas</option>
+                  {osOptions
+                    .filter((os) => contractFilter === 'Todos' || os.contractCode === contractFilter)
+                    .map((os) => (
+                      <option key={os.code} value={os.code}>{os.name || os.code}</option>
+                    ))}
+                </SearchableSelect>
+              </label>
             </div>
             <button
               type="button"
@@ -1461,7 +1495,7 @@ export default function Cronograma({
                 setSelectedGanttTaskCode(null);
                 setShowGantt(false);
               }}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-[12px] font-bold text-slate-600 transition-all hover:border-slate-300 hover:bg-slate-50"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-white px-3 text-[12px] font-bold text-slate-600 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition-all hover:text-[#F05D28]"
             >
               <X size={14} />
               Fechar
@@ -1470,11 +1504,11 @@ export default function Cronograma({
 
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <div
-              className="w-full min-w-0 border-slate-200 md:border-r"
+              className="w-full min-w-0"
               style={{ width: `${leftWidth}px`, minWidth: `${leftWidth}px` }}
             >
               <div className="flex h-full flex-col">
-                <div className="grid grid-cols-[1.2fr_0.8fr] gap-2 border-b border-slate-200 bg-slate-50 px-4 text-[10px] font-black uppercase tracking-[1.1px] text-slate-500" style={{ height: `${headerHeight}px`, display: 'flex', alignItems: 'center' }}>
+                <div className="grid grid-cols-[1.2fr_0.8fr] gap-2 px-4 text-[10px] font-black uppercase tracking-[1.1px] text-slate-500" style={{ height: `${headerHeight}px`, display: 'flex', alignItems: 'center' }}>
                   <span className="flex-1">Atividade</span>
                   <span className="text-right" style={{ width: '120px' }}>Datas / Progresso</span>
                 </div>
@@ -1498,7 +1532,7 @@ export default function Cronograma({
                       return (
                         <div
                           key={task.code}
-                          className="grid grid-cols-[1.2fr_0.8fr] items-center gap-2 border-b border-slate-100 px-4 overflow-hidden"
+                          className="grid grid-cols-[1.2fr_0.8fr] items-center gap-2 px-4 overflow-hidden"
                           style={{ height: `${rowHeight}px` }}
                           onClick={() => setSelectedGanttTaskCode(task.code)}
                         >
@@ -1608,14 +1642,14 @@ export default function Cronograma({
                   </div>
                 </div>
 
-                <div className="sticky top-0 z-20 h-[72px] border-b border-slate-200 bg-white/95 backdrop-blur-sm">
+                <div className="sticky top-0 z-20 h-[72px] bg-white/95 backdrop-blur-sm">
                   {ganttModel.scaleMode === 'day' ? (
                     <div className="h-full">
-                      <div className="flex h-8 border-b border-slate-200 bg-slate-50">
+                      <div className="flex h-8 bg-slate-50">
                         {ganttDayMonthGroups.map((group) => (
                           <div
                             key={group.key}
-                            className="flex shrink-0 items-center border-r border-slate-300 px-2 text-[10px] font-black uppercase tracking-[1px] text-slate-600"
+                            className="flex shrink-0 items-center border-r border-[#F1F5F9] px-2 text-[10px] font-black uppercase tracking-[1px] text-slate-600"
                             style={{ width: `${group.count * ganttModel.unitPx}px` }}
                           >
                             {group.label}
@@ -1626,7 +1660,7 @@ export default function Cronograma({
                         {ganttDayCells.map((cell) => (
                           <div
                             key={`${cell.index}-${ganttModel.scaleMode}`}
-                            className={`flex shrink-0 flex-col items-center justify-center border-r border-slate-200 text-center ${
+                            className={`flex shrink-0 flex-col items-center justify-center border-r border-[#F1F5F9] text-center ${
                               cell.isToday
                                 ? 'bg-rose-50 text-rose-600'
                                 : cell.isWeekend
@@ -1647,7 +1681,7 @@ export default function Cronograma({
                       {Array.from({ length: ganttModel.unitCount }).map((_, index) => (
                         <div
                           key={`${index}-${ganttModel.scaleMode}`}
-                          className="flex h-full shrink-0 items-center justify-center border-r border-slate-200 px-2 text-center text-[10px] font-black uppercase tracking-[1px] text-slate-500"
+                          className="flex h-full shrink-0 items-center justify-center border-r border-[#F1F5F9] px-2 text-center text-[10px] font-black uppercase tracking-[1px] text-slate-500"
                           style={{ width: `${ganttModel.unitPx}px` }}
                         >
                           {index % ganttModel.labelStep === 0 ? getGanttUnitLabel(ganttModel, index) : ''}
@@ -1762,7 +1796,7 @@ export default function Cronograma({
             </div>
           </div>
 
-          <div className="border-t border-slate-200 bg-slate-50 px-5 py-3">
+          <div className="px-5 py-3">
             <div className="flex flex-wrap items-center gap-3 text-[12px] font-medium text-slate-600">
               <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-500" /> Concluida</span>
               <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-sky-500" /> Em andamento</span>
@@ -1786,10 +1820,10 @@ export default function Cronograma({
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
-              className="relative w-full max-w-[760px] overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_30px_100px_rgba(15,23,42,0.35)]"
+              className="relative w-full max-w-[760px] overflow-hidden rounded-[28px] bg-white shadow-[0_30px_100px_rgba(15,23,42,0.35)]"
               onClick={(event) => event.stopPropagation()}
             >
-              <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-gradient-to-r from-[#F8FAFC] to-white px-6 py-5">
+              <div className="flex items-start justify-between gap-4 px-6 py-5">
                 <div className="min-w-0">
                   <p className="text-[11px] font-black uppercase tracking-[1.2px] text-[#F05D28]">Detalhes do Gantt</p>
                   <h3 className="mt-2 truncate text-[20px] font-black text-[#1F2937]">
@@ -1802,48 +1836,48 @@ export default function Cronograma({
                 <button
                   type="button"
                   onClick={() => setSelectedGanttTaskCode(null)}
-                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-colors hover:border-[#F05D28]/25 hover:text-[#F05D28]"
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-slate-500 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition-colors hover:text-[#F05D28]"
                   aria-label="Fechar detalhes"
                 >
                   <X size={18} />
                 </button>
               </div>
 
-              <div className="grid gap-4 p-6 md:grid-cols-2">
-                <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[1px] text-slate-500">
+              <div className="grid gap-6 px-6 pb-6 md:grid-cols-2">
+                <div>
+                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[1px] text-[#94A3B8]">
                     <ListChecks size={14} />
                     Resumo
                   </div>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Código</p>
-                      <p className="mt-1 text-[13px] font-bold text-slate-800">{selectedGanttTask.code}</p>
+                  <div className="mt-4 grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-[#94A3B8]">Código</p>
+                      <p className="mt-1 text-[13px] font-bold text-[#2D2D2D]">{selectedGanttTask.code}</p>
                     </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Progresso</p>
-                      <p className="mt-1 text-[13px] font-bold text-slate-800">{toPercent(selectedGanttTask.progress)}%</p>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-[#94A3B8]">Progresso</p>
+                      <p className="mt-1 text-[13px] font-bold text-[#2D2D2D]">{toPercent(selectedGanttTask.progress)}%</p>
                     </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Início</p>
-                      <p className="mt-1 text-[13px] font-bold text-slate-800">{formatDateBR(selectedGanttTask.row.plannedStart)}</p>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-[#94A3B8]">Início</p>
+                      <p className="mt-1 text-[13px] font-bold text-[#2D2D2D]">{formatDateBR(selectedGanttTask.row.plannedStart)}</p>
                     </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Término</p>
-                      <p className="mt-1 text-[13px] font-bold text-slate-800">{formatDateBR(selectedGanttTask.row.plannedEnd)}</p>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-[#94A3B8]">Término</p>
+                      <p className="mt-1 text-[13px] font-bold text-[#2D2D2D]">{formatDateBR(selectedGanttTask.row.plannedEnd)}</p>
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-white p-4">
-                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[1px] text-slate-500">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[1px] text-[#94A3B8]">
                     <Clock3 size={14} />
                     Dependências e alertas
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Predecessoras</p>
-                    <p className="mt-1 text-[13px] font-semibold text-slate-800">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-[#94A3B8]">Predecessoras</p>
+                    <p className="mt-1 text-[13px] font-semibold text-[#2D2D2D]">
                       {selectedGanttTask.dependencyCodes.length > 0
                         ? selectedGanttTask.dependencyCodes.join(', ')
                         : selectedGanttTask.predecessors.length > 0
@@ -1852,17 +1886,17 @@ export default function Cronograma({
                     </p>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Tipo</p>
-                    <p className="mt-1 text-[13px] font-semibold text-slate-800">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-[#94A3B8]">Tipo</p>
+                    <p className="mt-1 text-[13px] font-semibold text-[#2D2D2D]">
                       {selectedGanttTask.milestone ? 'Marco' : `${selectedGanttTask.durationDays} dia(s)`}
                       {selectedGanttTask.critical ? ' · Crítica' : ''}
                     </p>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Alertas</p>
-                    <p className="mt-1 text-[13px] font-semibold text-slate-800">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-[#94A3B8]">Alertas</p>
+                    <p className="mt-1 text-[13px] font-semibold text-[#2D2D2D]">
                       {selectedGanttTask.issues.length > 0
                         ? selectedGanttTask.issues.join(' ')
                         : 'Nenhuma inconsistência encontrada'}
@@ -1870,9 +1904,9 @@ export default function Cronograma({
                   </div>
                 </div>
 
-                <div className="md:col-span-2 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-slate-400">Descrição</p>
-                  <p className="mt-2 text-[14px] leading-relaxed text-slate-700">
+                <div className="md:col-span-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.9px] text-[#94A3B8]">Descrição</p>
+                  <p className="mt-2 text-[14px] leading-relaxed text-[#2D2D2D]">
                     {selectedGanttTask.row.name}
                   </p>
                 </div>
@@ -1881,7 +1915,8 @@ export default function Cronograma({
           </div>
         )}
       </AnimatePresence>
-      </>
+      </>,
+      document.body,
     );
   };
 
@@ -1897,7 +1932,7 @@ export default function Cronograma({
           <button
             type="button"
             onClick={() => setShowGantt(true)}
-            className="inline-flex h-11 items-center gap-2 rounded-2xl border border-[#E5E7EB] bg-white px-4 text-[13px] font-bold text-[#2D2D2D] shadow-sm transition-all hover:border-[#F05D28]/30 hover:text-[#F05D28]"
+            className="inline-flex h-11 items-center gap-2 rounded-2xl bg-white px-4 text-[13px] font-bold text-[#2D2D2D] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition-all hover:text-[#F05D28]"
           >
             <Maximize2 size={16} />
             Modo Gantt
@@ -1906,74 +1941,73 @@ export default function Cronograma({
         <p className="text-[13px] text-[#757575]">{description}</p>
       </div>
 
-      <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-5">
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-4 items-end">
-          <div>
-            <label className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">Contrato</label>
-            <div className="relative mt-1.5">
+      {/* Mesmo chip de filtro das outras abas (ver Atividades): rotulo pequeno em cima, valor em negrito. */}
+      <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
+          <label className="inline-flex min-w-0 items-center gap-2 rounded-[20px] bg-white px-2 py-1.5 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+            <Filter size={14} className="flex-shrink-0 text-[#94A3B8]" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Contrato</span>
               <SearchableSelect
                 value={contractFilter}
                 disabled={Boolean(normalizeText(lockedContractCode))}
-                onChange={(event) => {
-                  setContractFilter(event.target.value);
-                  setOsFilter('Todas');
-                }}
-                className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-[14px] font-medium text-[#2D2D2D] appearance-none focus:border-[#F05D28] focus:ring-2 focus:ring-[#F05D28]/20 outline-none"
+                onChange={(event) => { setContractFilter(event.target.value); setOsFilter('Todas'); }}
+                searchPlaceholder="Pesquisar contrato..."
+                className="w-full bg-transparent text-[13px] font-black text-[#2D2D2D] outline-none"
               >
                 {!normalizeText(lockedContractCode) && <option value="Todos">Todos</option>}
                 {contracts.map((contract) => (
-                  <option key={contract.code} value={contract.code}>
-                    {contract.name || contract.code}
-                  </option>
+                  <option key={contract.code} value={contract.code}>{contract.name || contract.code}</option>
                 ))}
               </SearchableSelect>
-              <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#757575] pointer-events-none" />
-            </div>
-          </div>
+            </span>
+          </label>
 
-          <div>
-            <label className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">OS</label>
-            <div className="relative mt-1.5">
+          <label className="inline-flex min-w-0 items-center gap-2 rounded-[20px] bg-white px-2 py-1.5 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+            <Filter size={14} className="flex-shrink-0 text-[#94A3B8]" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">OS</span>
               <SearchableSelect
                 value={osFilter}
                 onChange={(event) => setOsFilter(event.target.value)}
-                className="w-full h-11 px-4 bg-white border border-[#E5E7EB] rounded-xl text-[14px] font-medium text-[#2D2D2D] appearance-none focus:border-[#F05D28] focus:ring-2 focus:ring-[#F05D28]/20 outline-none"
+                searchPlaceholder="Pesquisar OS..."
+                className="w-full bg-transparent text-[13px] font-black text-[#2D2D2D] outline-none"
               >
                 <option value="Todas">Todas</option>
                 {osOptions
                   .filter((os) => contractFilter === 'Todos' || os.contractCode === contractFilter)
                   .map((os) => (
-                    <option key={os.code} value={os.code}>
-                      {os.name || os.code}
-                    </option>
+                    <option key={os.code} value={os.code}>{os.name || os.code}</option>
                   ))}
               </SearchableSelect>
-              <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#757575] pointer-events-none" />
-            </div>
-          </div>
+            </span>
+          </label>
 
-          <div className="flex flex-col gap-2">
-            {includePlanningToggle ? (
-              <label className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[1px] text-[#757575]">
-                <input
-                  type="checkbox"
-                  checked={showInProgressActivities}
-                  onChange={(event) => setShowInProgressActivities(event.target.checked)}
-                  className="h-4 w-4 rounded border-[#CBD5E1] text-[#F05D28] accent-[#F05D28]"
-                />
-                Modo atividades em andamento
-              </label>
-            ) : null}
-            <div className="h-11 px-4 rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] flex items-center gap-2 text-[13px] font-bold text-[#2D2D2D]">
-              <Filter size={16} className="text-[#F05D28]" />
-              {rows.length} item(ns)
-            </div>
-          </div>
-        </div>
-      </section>
+          {includePlanningToggle ? (
+            <label className={`inline-flex min-w-0 cursor-pointer items-center gap-2 rounded-[20px] bg-white px-2 py-1.5 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition-colors ${showInProgressActivities ? 'ring-2 ring-[#F05D28]' : ''}`}>
+              <input
+                type="checkbox"
+                checked={showInProgressActivities}
+                onChange={(event) => setShowInProgressActivities(event.target.checked)}
+                className="h-4 w-4 flex-shrink-0 rounded border-[#CBD5E1] accent-[#F05D28]"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Modo</span>
+                <span className="block truncate text-[13px] font-black text-[#2D2D2D]">Atividades em andamento</span>
+              </span>
+            </label>
+          ) : null}
 
-      <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between gap-4 border-b border-[#E5E7EB] bg-[#F9FAFB] px-5 py-3">
+          <div className="inline-flex min-w-0 items-center gap-2 rounded-[20px] bg-white px-2 py-1.5 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+            <Filter size={14} className="flex-shrink-0 text-[#F05D28]" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Itens</span>
+              <span className="block text-[13px] font-black text-[#2D2D2D]">{rows.length}</span>
+            </span>
+          </div>
+      </div>
+
+      <section className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden">
+        <div className="flex items-center justify-between gap-4 px-5 py-3">
           <p className="text-[11px] font-bold uppercase tracking-[1px] text-[#757575]">Cronograma</p>
           <p className="text-[11px] font-bold uppercase tracking-[1px] text-[#757575]">{dateSummary}</p>
         </div>
@@ -2023,7 +2057,7 @@ export default function Cronograma({
             <button
               type="button"
               onClick={() => setShowGantt(true)}
-              className="inline-flex h-11 items-center gap-2 rounded-2xl border border-[#E5E7EB] bg-white px-4 text-[13px] font-bold text-[#2D2D2D] shadow-sm transition-all hover:border-[#F05D28]/30 hover:text-[#F05D28]"
+              className="inline-flex h-11 items-center gap-2 rounded-2xl bg-white px-4 text-[13px] font-bold text-[#2D2D2D] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition-all hover:text-[#F05D28]"
             >
               <Maximize2 size={16} />
               Modo Gantt
@@ -2034,7 +2068,7 @@ export default function Cronograma({
           </p>
         </div>
 
-        <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm p-5">
+        <section className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-5">
           <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-4 items-end">
             <div>
               <label className="text-[11px] font-medium text-[#757575] uppercase tracking-[1px]">Contrato</label>
@@ -2090,7 +2124,7 @@ export default function Cronograma({
                 />
                 Modo atividades em andamento
               </label>
-              <div className="h-11 px-4 rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] flex items-center gap-2 text-[13px] font-bold text-[#2D2D2D]">
+              <div className="h-11 px-4 rounded-xl bg-[#F9FAFB] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] flex items-center gap-2 text-[13px] font-bold text-[#2D2D2D]">
                 <Filter size={16} className="text-[#F05D28]" />
                 {progressRowsCount} item(ns)
               </div>
@@ -2098,13 +2132,13 @@ export default function Cronograma({
           </div>
         </section>
 
-        <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between gap-4 border-b border-[#E5E7EB] bg-[#F9FAFB] px-5 py-3">
+        <section className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden">
+          <div className="flex items-center justify-between gap-4 px-5 py-3">
             <p className="text-[11px] font-bold uppercase tracking-[1px] text-[#757575]">Atividades em andamento</p>
             <p className="text-[11px] font-bold uppercase tracking-[1px] text-[#757575]">{planningDateSummary}</p>
           </div>
 
-          <div className="max-h-[680px] overflow-auto divide-y divide-[#F3F4F6]">
+          <div className="max-h-[680px] overflow-auto">
             {planningVisibleRows.length === 0 ? (
               <div className="p-8 text-[13px] text-[#757575]">Nenhuma atividade em andamento no recorte atual.</div>
             ) : (
@@ -2127,7 +2161,7 @@ export default function Cronograma({
                       </p>
                     </div>
 
-                    <div className="rounded-2xl border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
+                    <div className="px-4 py-3">
                       <p className="text-[10px] font-black uppercase tracking-[0.8px] text-[#94A3B8]">Detalhes</p>
                       <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] font-bold text-[#2D2D2D]">
                         <span>OS</span>
@@ -2158,13 +2192,13 @@ export default function Cronograma({
         </section>
 
         {savingMessage && (
-          <div className="rounded-2xl border border-[#E5E7EB] bg-white px-4 py-3 text-[13px] font-medium text-[#64748B] shadow-sm">
+          <div className="rounded-2xl bg-white px-4 py-3 text-[13px] font-medium text-[#64748B] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
             {savingMessage}
           </div>
         )}
 
         {(Object.keys(approvalDrafts).length > 0 || pendingCount > 0) && (
-          <div className="fixed bottom-6 right-6 z-[90] flex items-center gap-3 rounded-2xl border border-[#FED7AA] bg-white px-4 py-3 shadow-[0_18px_50px_rgba(240,93,40,0.18)]">
+          <div className="fixed bottom-6 right-6 z-[90] flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-[0_18px_50px_rgba(240,93,40,0.18)]">
             <div>
               <div className="text-[11px] font-black uppercase tracking-[1px] text-[#C2410C]">Cronograma</div>
               <div className="text-[13px] font-semibold text-[#9A3412]">

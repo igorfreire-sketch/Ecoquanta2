@@ -51,12 +51,13 @@ function ExpandableSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-[#E5E7EB] bg-white shadow-sm">
-      <div className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left">
-        <span className="text-[14px] font-black uppercase tracking-wide text-[#2D2D2D]">{title}</span>
+    <section className="rounded-2xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+      <div className="px-5 pt-4">
+        <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">Dashboard</p>
+        <h2 className="text-[18px] font-black text-[#2D2D2D] mt-0.5">{title}</h2>
       </div>
 
-      <div className="border-t border-[#E5E7EB] p-4 sm:p-5">
+      <div className="p-4 sm:p-5">
         {children}
       </div>
     </section>
@@ -987,7 +988,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
 
   return (
     <div className="w-full space-y-6 sm:space-y-8 font-['Montserrat'] relative">
-      <section className="rounded-2xl border border-[#E5E7EB] bg-white px-4 py-4 shadow-sm sm:px-5">
+      <section className="rounded-2xl bg-white px-4 py-4 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] sm:px-5">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <FilterField label="Contrato" value={filtrosGlobais.contrato} onChange={(value) => updateFiltroGlobal('contrato', value)}>
             <option value="Todos">Todos os contratos</option>
@@ -1014,10 +1015,10 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
           </FilterField>
         </div>
         <div className="mt-3 flex items-center">
-          <label className={`inline-flex items-center gap-3 rounded-xl border px-4 py-2.5 text-[12px] font-semibold transition-colors ${
+          <label className={`inline-flex items-center gap-3 rounded-xl px-4 py-2.5 text-[12px] font-semibold transition-colors shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] ${
             filtrosGlobais.terceirizada
-              ? 'border-[#F05D28] bg-[#FFF7ED] text-[#C2410C]'
-              : 'border-[#E5E7EB] bg-white text-[#2D2D2D]'
+              ? 'bg-[#FFF3EC] text-[#C2410C]'
+              : 'bg-white text-[#2D2D2D]'
           }`}>
             <input
               type="checkbox"
@@ -1090,12 +1091,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
 
       {mode === 'dashboard' && (
       <ExpandableSection title="Consulta de Atividades">
-      <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-6 sm:p-8">
-        <div className="flex items-center gap-3 border-b border-[#E5E7EB] pb-4 mb-6">
-          <span className="material-symbols-outlined text-[#F05D28] text-xl">list_alt</span>
-          <h2 className="text-[14px] font-bold text-[#2D2D2D] uppercase tracking-widest">Consulta de Atividades</h2>
-        </div>
-
+      <div>
         <div className="flex flex-col md:flex-row gap-4 mb-8">
           <div className="flex-1 relative">
               <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#757575]" />
@@ -1117,10 +1113,10 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
           </button>
         </div>
 
-        <div className="overflow-x-auto rounded-xl border border-[#E5E7EB]">
+        <div className="overflow-x-auto rounded-xl">
           <table className="w-full text-left border-collapse min-w-[1000px]">
             <thead>
-              <tr className="bg-[#F8F9FA] border-b border-[#E5E7EB]">
+              <tr className="bg-[#F8F9FA]">
                 <th className="py-4 px-5 text-[10px] font-bold text-[#757575] uppercase tracking-widest">Ação</th>
                 <th className="py-4 px-5 text-[10px] font-bold text-[#757575] uppercase tracking-widest">Profissional</th>
                 <th className="py-4 px-5 text-[10px] font-bold text-[#757575] uppercase tracking-widest">Contrato / OS</th>
@@ -1129,10 +1125,10 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
                 <th className="py-4 px-5 text-[10px] font-bold text-[#757575] uppercase tracking-widest">Avaliação</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#E5E7EB]">
+            <tbody>
               {tableConsultaFiltrada.length > 0 ? (
                 tableConsultaFiltrada.map((item) => (
-                  <tr key={item.id} className="hover:bg-[#F4F5F7] transition-colors">
+                  <tr key={item.id} className="even:bg-[#FAFAFB] hover:bg-[#F4F5F7] transition-colors">
                     <td className="py-4 px-5">
                       <button className="text-[#F05D28] hover:text-[#2D2D2D] flex items-center justify-center p-2 rounded-lg hover:bg-[#E5E7EB] transition-colors">
                         <ExternalLink size={16} />

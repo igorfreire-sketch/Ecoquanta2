@@ -46,18 +46,16 @@ export default function TerceirizadasCadastro({
   };
 
   return (
-    <section className="bg-white border border-[#E5E7EB] rounded-2xl shadow-sm overflow-hidden">
-      <div className="px-8 py-6 border-b border-[#E5E7EB]">
-        <div className="flex items-center gap-3">
-          <Users size={18} className="text-[#F05D28]" />
-          <h2 className="text-[18px] font-bold text-[#2D2D2D]">Terceirizadas por Disciplina</h2>
-        </div>
-        <p className="text-[13px] text-[#757575] mt-1">
+    <div className="space-y-6">
+      <div>
+        <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">Cadastro</p>
+        <h2 className="text-[18px] font-black text-[#2D2D2D]">Terceirizadas por Disciplina</h2>
+        <p className="text-[13px] text-[#757575] mt-2 max-w-[640px] leading-relaxed">
           Empresas cadastradas aparecem junto dos profissionais no registro de atividades, respeitando o filtro de disciplina.
         </p>
       </div>
 
-      <div className="p-6 space-y-5">
+      <div className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6 space-y-5">
         <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-[minmax(220px,1fr)_minmax(180px,260px)_auto] gap-4 items-end">
           <div>
             <label className="bentham-label">Nome da terceirizada</label>
@@ -100,9 +98,9 @@ export default function TerceirizadasCadastro({
             <p className="text-[13px] text-[#757575]">Nenhuma terceirizada cadastrada.</p>
           )}
 
-          {terceirizadas.map((item) => (
-            <details key={item.id} className="group border border-[#E5E7EB] rounded-2xl bg-[#F9FAFB] overflow-hidden">
-              <summary className="min-h-[64px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-white transition-colors [&::-webkit-details-marker]:hidden">
+          {terceirizadas.map((item, index) => (
+            <details key={item.id} className={`group rounded-2xl overflow-hidden ${index % 2 === 1 ? 'bg-[#FAFBFC]' : 'bg-white'}`}>
+              <summary className="min-h-[64px] px-5 py-3 flex items-center gap-3 cursor-pointer list-none hover:bg-[#F9FAFB] transition-colors [&::-webkit-details-marker]:hidden">
                 <div className="w-10 h-10 rounded-full bg-[#F05D28]/10 flex items-center justify-center text-[#F05D28] font-bold text-sm shrink-0">
                   {getInitials(item.nome)}
                 </div>
@@ -112,12 +110,12 @@ export default function TerceirizadasCadastro({
                   <p className="text-[12px] text-[#757575] truncate">{item.disciplina}</p>
                 </div>
 
-                <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#E5E7EB] bg-white text-[#757575] text-[11px] font-bold shrink-0">
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#F9FAFB] text-[#757575] text-[11px] font-bold shrink-0">
                   TERCEIRIZADA
                 </span>
 
                 {pendingIds.includes(item.id) && (
-                  <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-[#FED7AA] bg-[#FFF7ED] text-[#C2410C] text-[11px] font-bold shrink-0">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#FFF7ED] text-[#C2410C] text-[11px] font-bold shrink-0">
                     Alteracoes pendentes
                   </span>
                 )}
@@ -125,13 +123,11 @@ export default function TerceirizadasCadastro({
                 <ChevronRight size={20} className="shrink-0 text-[#757575] transition-transform group-open:rotate-90" />
               </summary>
 
-              <div className="border-t border-[#E5E7EB] p-5">
+              <div className="p-5 pt-0">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                   <div className="flex flex-col gap-1.5">
                     <label className="bentham-label">Disciplina</label>
-                    <div className="h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white flex items-center text-[13px] font-medium text-[#2D2D2D]">
-                      {item.disciplina}
-                    </div>
+                    <p className="text-[13px] font-medium text-[#2D2D2D]">{item.disciplina}</p>
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -151,6 +147,6 @@ export default function TerceirizadasCadastro({
           ))}
         </div>
       </div>
-    </section>
+    </div>
   );
 }

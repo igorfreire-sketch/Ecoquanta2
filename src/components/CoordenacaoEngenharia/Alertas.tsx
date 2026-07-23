@@ -169,11 +169,11 @@ function AccordionSection({
   const [open, setOpen] = React.useState(false);
 
   return (
-    <section className="rounded-2xl border border-[#E5E7EB] bg-white shadow-sm">
+    <section>
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-[#F8F9FA]"
+        className="flex w-full items-center justify-between gap-4 rounded-xl px-5 py-4 text-left transition hover:bg-white"
       >
         <span className="flex items-center gap-3">
           <span className="text-[#F05D28]">{icon}</span>
@@ -184,14 +184,14 @@ function AccordionSection({
         </span>
         {open ? <ChevronUp size={18} className="text-[#F05D28]" /> : <ChevronDown size={18} className="text-[#757575]" />}
       </button>
-      {open && <div className="border-t border-[#E5E7EB] p-4 sm:p-5">{children}</div>}
+      {open && <div className="px-5 pb-4 pt-1 sm:px-5">{children}</div>}
     </section>
   );
 }
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-6 text-[13px] font-medium text-[#64748B]">
+    <div className="rounded-2xl bg-[#F8FAFC] p-6 text-[13px] font-medium text-[#64748B]">
       {text}
     </div>
   );
@@ -325,7 +325,7 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
         <div className="space-y-3">
           {criticalActivities.length === 0 && <EmptyState text="Nenhuma atividade marcada como Pior que o esperado ou Problema/Bloqueio." />}
           {criticalActivities.map((item) => (
-            <div key={item.id} className="rounded-2xl border border-[#FECACA] bg-[#FEF2F2] p-4">
+            <div key={item.id} className="rounded-2xl bg-[#FEF2F2] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="text-[12px] font-black uppercase tracking-[1px] text-[#B91C1C]">{item.avaliacao}</div>
                 <button
@@ -349,7 +349,7 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
         <div className="space-y-3">
           {priorityActivities.length === 0 && <EmptyState text="Nenhuma atividade foi marcada como prioridade pelo contrato ainda." />}
           {priorityActivities.map((item) => (
-            <div key={item.id} className="rounded-2xl border border-[#FED7AA] bg-[#FFF7ED] p-4">
+            <div key={item.id} className="rounded-2xl bg-[#FFF7ED] p-4">
               <div className="text-[12px] font-black uppercase tracking-[1px] text-[#C2410C]">Prioridade {storedPriorities.values[item.id] || '1'}</div>
               <div className="mt-1 text-[15px] font-black text-[#111827]">{item.itemNome}</div>
               <div className="mt-1 text-[12px] font-semibold text-[#64748B]">{item.contratoCodigo} · {item.osNome || item.osCodigo} · {item.disciplina || 'Sem disciplina'}</div>
@@ -362,7 +362,7 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
         <div className="space-y-3">
           {interferencias.length === 0 && <EmptyState text="Nenhuma interferencia registrada para este recorte de contrato." />}
           {interferencias.map((item) => (
-            <div key={item.id} className="rounded-2xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+            <div key={item.id} className="rounded-2xl bg-[#F8FAFC] p-4">
               <div className="text-[14px] font-black text-[#111827]">{item.nome}</div>
               <div className="mt-1 text-[12px] font-semibold text-[#64748B]">{item.contratoCodigo || item.contratoNome || 'Sem contrato'} · OS {item.osImpactada} · {item.data || 'Sem data'}</div>
               <p className="mt-2 text-[13px] text-[#4B5563]">{item.observacao}</p>
@@ -375,7 +375,7 @@ export default function Alertas({ currentUser: _currentUser, preloadedData, acti
         <div className="space-y-3">
           {pendingPlanningItems.length === 0 && <EmptyState text="Todos os itens do Planejamento Tecnico desse recorte ja foram iniciados pelas disciplinas." />}
           {pendingPlanningItems.map((item) => (
-            <div key={item.id} className="rounded-2xl border border-[#BFDBFE] bg-[#EFF6FF] p-4">
+            <div key={item.id} className="rounded-2xl bg-[#EFF6FF] p-4">
               <div className="text-[12px] font-black uppercase tracking-[1px] text-[#1D4ED8]">{item.disciplina}</div>
               <div className="mt-1 text-[15px] font-black text-[#111827]">{item.titulo}</div>
               <div className="mt-1 text-[12px] font-semibold text-[#64748B]">{item.contratoCodigo} · {item.osNome || item.osCodigo}</div>

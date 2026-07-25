@@ -41,7 +41,7 @@ import type {
 } from './components/Administracao';
 import { ProjectVbaConfigCard } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
-import { getSheetDisciplinas, type AnnotationBanco, type AnnotationSheet } from './components/CoordenacaoEngenharia/Anotacoes';
+import { encontrarRascunhoRecente, getSheetDisciplinas, removerRascunho, type AnnotationBanco, type AnnotationSheet, type NotaRascunho } from './components/CoordenacaoEngenharia/Anotacoes';
 import Notificacoes from './components/Notificacoes';
 import FirebaseExplorer from './components/FirebaseExplorer';
 import Principal from './components/Principal';
@@ -2494,6 +2494,24 @@ export default function App() {
     setNotaParaAbrir(nota);
   };
 
+  // Rascunho anti-F5 (ver Anotacoes.tsx): indicador "Continuar nota" na Principal quando
+  // sobrou algum rascunho nao salvo do usuario. Reconferido ao trocar de aba (localStorage
+  // nao dispara re-render sozinho) - suficiente pra esse uso, sem listener de storage.
+  const [rascunhoPendente, setRascunhoPendente] = useState<NotaRascunho | null>(null);
+  useEffect(() => {
+    setRascunhoPendente(currentUser ? encontrarRascunhoRecente(currentUser.email) : null);
+  }, [currentUser, activeTab]);
+  const continuarRascunhoPendente = () => {
+    if (!rascunhoPendente) return;
+    irParaNotas();
+    setNotaParaAbrir(rascunhoPendente.sheet);
+  };
+  const abandonarRascunhoPendente = () => {
+    if (!rascunhoPendente) return;
+    removerRascunho(rascunhoPendente.sheet.id || 'nova');
+    setRascunhoPendente(null);
+  };
+
   useEffect(() => {
     // As notas alimentam a pagina de Notas, os dois sinos e os contadores da Principal,
     // entao carregam uma vez por sessao e nao so ao abrir a aba de Notas.
@@ -3369,10 +3387,12 @@ export default function App() {
               {activeTab === 'principal' && currentUser && (
                 <Principal
                   currentUser={currentUser}
-                  citadasDisciplina={notificacoesSetor.length}
-                  citadasVoce={notificacoesDiretas.length}
-                  onVerDisciplina={irParaNotas}
-                  onVerCitado={irParaNotas}
+                  citadasDisciplina={naoLidosSetor}
+                  citadasVoce={naoLidosDiretas}
+                  notificacoesSetor={notificacoesSetor}
+                  notificacoesDiretas={notificacoesDiretas}
+                  onAbrirNota={abrirNotaNotificada}
+                  onLimpar={marcarNotificacoesVistas}
                   acessibilidade={acessibilidade}
                   onAlternarAcessibilidade={() => setAcessibilidade((prev) => (prev === 'daltonico' ? 'padrao' : 'daltonico'))}
                   versaoLabel={APP_VERSION_LABEL}
@@ -3383,12 +3403,15 @@ export default function App() {
                   minhasDisciplinas={getUserDisciplineList(currentUser)}
                   pedidoPendente={disciplinaRequests.find((item) => item.userEmail === currentUser.email)?.disciplinas || null}
                   onDefinirDisciplinas={(lista) => { void definirDisciplinasDoUsuario(lista); }}
+                  rascunhoPendente={Boolean(rascunhoPendente)}
+                  onContinuarRascunho={continuarRascunhoPendente}
+                  onAbandonarRascunho={abandonarRascunhoPendente}
                 />
               )}
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'disciplinas'
                   ? notesPage
-                  : <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines autoSelectUserDisciplineFilter disciplineFilterEnabled splitOsCardsByDiscipline />
+                  : <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} autoSelectUserDisciplineFilter disciplineFilterEnabled notes={notes} />
               )}
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && (
                 subTab === 'disciplinas'
@@ -3397,7 +3420,7 @@ export default function App() {
               )}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
                 planejamentoSubTab === 'atividades'
-                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled />
+                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled notes={notes} />
                   : planejamentoSubTab === 'importar'
                     ? <ImportarEAP />
                   : planejamentoSubTab === 'curva-s'

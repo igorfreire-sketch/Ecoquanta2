@@ -111,9 +111,19 @@ export function normalizeDisciplineEntry(value: string) {
   return String(value || '').trim();
 }
 
+// Grupos oficiais NAO sao reescritos para o label "COD - Nome" de uma disciplina fina homonima
+// (ex.: "Desenvolvimento" nao vira "DEV - Desenvolvimento"). Sem isso, marcar um grupo no cadastro
+// gravava um valor diferente da opcao exibida e o seletor "marcava e nao desmarcava".
+let _gruposNormalizados: Set<string> | null = null;
+function isGrupoOficial(value: string) {
+  if (!_gruposNormalizados) _gruposNormalizados = new Set(getDisciplineGroups().map((g) => normalizeText(g)));
+  return _gruposNormalizados.has(normalizeText(value));
+}
+
 export function resolveDisciplineEntry(value?: string) {
   const cleaned = normalizeDisciplineEntry(value);
   if (!cleaned) return '';
+  if (isGrupoOficial(cleaned)) return cleaned;
   const match = DISCIPLINE_LOOKUP.get(normalizeText(cleaned));
   return match?.label || cleaned;
 }
@@ -227,4 +237,35 @@ export function disciplineMatchesSector(disciplina: string, setor: string) {
 export function buildDisciplineRecordsFromValues(values: any) {
   const list = splitDisciplineValues(values);
   return list.length > 0 ? list : [];
+}
+
+// Lista fixa de GRUPOS oficiais (setores agrupados + disciplinas "sem grupo", que viram
+// seu proprio grupo), na ordem de primeira aparicao em DEFAULT_DISCIPLINES. E o que os
+// seletores de cadastro vao usar quando os grupos virarem a disciplina oficial.
+export function getDisciplineGroups(): string[] {
+  const groups: string[] = [];
+  const seen = new Set<string>();
+  DEFAULT_DISCIPLINES.forEach((item) => {
+    if (isDisciplineHidden(item.code)) return;
+    const grupo = getDisciplineSector(item.code);
+    if (grupo && !seen.has(grupo)) {
+      seen.add(grupo);
+      groups.push(grupo);
+    }
+  });
+  return groups;
+}
+
+// Auto-teste leve (sem framework): chame manualmente se mexer neste arquivo.
+export function _selfTestDisciplineGroups() {
+  console.assert(getDisciplineSector('ELET') === 'Elétrico', 'ELET deveria mapear pra Elétrico');
+  console.assert(getDisciplineSector('Elétrico') === 'Elétrico', 'nome de grupo deveria ser seu proprio setor');
+  console.assert(getDisciplineSector('VIAR') === 'Terraplanagem/Pavimentação', 'VIAR deveria mapear pra Terraplanagem/Pavimentação');
+  console.assert(getDisciplineSector('MEC') === 'Mecânica / Caldeiraria', 'MEC sem grupo deveria retornar o proprio nome');
+  console.assert(disciplineMatchesSector('ELET', 'Elétrico') === true, 'ELET deveria bater com o setor Elétrico');
+  const groups = getDisciplineGroups();
+  console.assert(groups[0] === 'Arquitetura', 'primeiro grupo deveria ser Arquitetura');
+  console.assert(groups.includes('Desenvolvimento'), 'deveria conter Desenvolvimento');
+  console.assert(!groups.includes('Gerenciamento'), 'Gerenciamento e oculto, nao deveria aparecer');
+  return true;
 }

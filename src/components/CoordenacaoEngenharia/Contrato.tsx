@@ -853,6 +853,7 @@ export default function Contrato({
             preloadedData={preloadedData}
             showAllDisciplines
             disciplineFilterEnabled
+            notes={[]}
           />
         </div>
       )}

@@ -9,7 +9,7 @@ import {
   X,
 } from 'lucide-react';
 import type { AuthUser } from './LoginScreen';
-import { getUserDisciplineList } from '../lib/disciplineCatalog';
+import { disciplineMatchesSector, getSectorOptions, getUserDisciplineList } from '../lib/disciplineCatalog';
 import {
   addEmergencyMessage,
   createEmergency,
@@ -274,7 +274,7 @@ export default function EmergenciaCenter({
     return activities.filter((item) => {
       const matchesContract = !selectedContract || item.contratoCodigo === selectedContract;
       const matchesOs = !selectedOs || item.osCodigo === selectedOs;
-      const matchesDisciplina = !selectedDisciplina || item.disciplina === selectedDisciplina;
+      const matchesDisciplina = !selectedDisciplina || disciplineMatchesSector(item.disciplina, selectedDisciplina);
       if (!matchesContract) return false;
       if (!matchesOs) return false;
       if (!matchesDisciplina) return false;
@@ -289,8 +289,9 @@ export default function EmergenciaCenter({
     [activities, preloadedData, selectedContract]
   );
 
+  // Filtro exibe setores, nao disciplinas soltas; a disciplina fina continua no dado.
   const disciplinaOptions = useMemo(() => {
-    return Array.from<string>(new Set(activities.map((item) => String(item.disciplina || '')).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return getSectorOptions(activities.map((item) => String(item.disciplina || '')));
   }, [activities]);
 
   const emergencies = useMemo(() => {

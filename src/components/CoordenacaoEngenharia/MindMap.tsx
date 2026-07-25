@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d';
 import { X } from 'lucide-react';
 import { getDisciplineDisplayName } from '../Atividades';
-import { getSheetDisciplinas, type AnnotationSheet } from './Anotacoes';
+import { getSheetDisciplinas, getSheetOsCodigos, type AnnotationSheet } from './Anotacoes';
 
 interface MindMapProps {
   sheets: AnnotationSheet[];
@@ -89,14 +89,14 @@ export default function MindMap({ sheets, currentUserEmail, osOptions = [], onOp
 
   const osOptionsPresentes = React.useMemo(() => {
     const codes = new Set<string>();
-    visibleSheets.forEach((sheet) => { if (sheet.osCodigo) codes.add(sheet.osCodigo); });
+    visibleSheets.forEach((sheet) => getSheetOsCodigos(sheet).forEach((codigo) => codes.add(codigo)));
     const byCode = new Map(osOptions.map((os) => [os.codigo, os.nome]));
     return Array.from(codes).map((codigo) => ({ codigo, nome: byCode.get(codigo) || codigo })).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
   }, [visibleSheets, osOptions]);
 
   const filteredSheets = React.useMemo(() => visibleSheets.filter((sheet) => {
     const matchesDisciplina = filtroDisciplina === 'Todas' || getSheetDisciplinas(sheet).includes(filtroDisciplina);
-    const matchesOs = filtroOs === 'Todas' || sheet.osCodigo === filtroOs;
+    const matchesOs = filtroOs === 'Todas' || getSheetOsCodigos(sheet).includes(filtroOs);
     return matchesDisciplina && matchesOs;
   }), [visibleSheets, filtroDisciplina, filtroOs]);
 
@@ -125,16 +125,20 @@ export default function MindMap({ sheets, currentUserEmail, osOptions = [], onOp
       const hubByCodigo = new Map<string, GraphNode>();
       const links: Array<{ source: string; target: string }> = [];
       filteredSheets.forEach((sheet) => {
-        // Nota sem OS cai no hub "Geral": antes ela era pulada e ficava solta no grafo,
-        // sem nenhum pai pra se ligar.
-        const hubId = sheet.osCodigo ? `os:${sheet.osCodigo}` : HUB_GERAL;
-        if (!hubByCodigo.has(hubId)) {
-          const nome = sheet.osCodigo
-            ? (osOptions.find((os) => os.codigo === sheet.osCodigo)?.nome || sheet.osCodigo)
-            : 'Geral';
-          hubByCodigo.set(hubId, { id: hubId, name: nome, kind: 'hub' });
-        }
-        links.push({ source: hubId, target: sheet.id });
+        // Nota pode estar vinculada a varias OS: liga a nota a cada hub de OS (igual ao modo
+        // disciplina). Sem nenhuma OS, cai no hub "Geral" pra nao ficar solta no grafo.
+        const codigos = getSheetOsCodigos(sheet);
+        const alvos = codigos.length > 0 ? codigos.map((codigo) => `os:${codigo}`) : [HUB_GERAL];
+        alvos.forEach((hubId, index) => {
+          if (!hubByCodigo.has(hubId)) {
+            const codigo = codigos[index];
+            const nome = codigo
+              ? (osOptions.find((os) => os.codigo === codigo)?.nome || codigo)
+              : 'Geral';
+            hubByCodigo.set(hubId, { id: hubId, name: nome, kind: 'hub' });
+          }
+          links.push({ source: hubId, target: sheet.id });
+        });
       });
       return { nodes: [...hubByCodigo.values(), ...notaNodes], links };
     }

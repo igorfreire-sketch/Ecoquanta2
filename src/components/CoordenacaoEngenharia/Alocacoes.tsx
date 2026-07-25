@@ -7,7 +7,7 @@ import {
   isAllContract,
   normalizeText,
 } from './utils/registroAtividades';
-import { resolveDisciplineEntry } from '../../lib/disciplineCatalog';
+import { disciplineMatchesSector, getSectorOptions, resolveDisciplineEntry } from '../../lib/disciplineCatalog';
 
 interface Professional {
   name: string;
@@ -290,9 +290,8 @@ const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode
   const dadosAlocacoes = useMemo(() => buildAlocacoes(preloadedData, contratos, activeContractCode), [preloadedData, contratos, activeContractCode]);
   const disciplinasLista = useMemo(() => getDisciplinas(preloadedData, assignments), [assignments, preloadedData]);
 
-  const visibleLabels = useMemo(() => {
-    return disciplinasLista;
-  }, [disciplinasLista]);
+  // O filtro exibe setores, nao disciplinas soltas; a disciplina fina continua no card/dado.
+  const visibleLabels = useMemo(() => getSectorOptions(disciplinasLista), [disciplinasLista]);
 
   const filteredLabels = useMemo(() => {
     const query = normalizeText(search);
@@ -301,7 +300,7 @@ const Alocacoes: React.FC<AlocacoesProps> = ({ preloadedData, activeContractCode
   }, [visibleLabels, search]);
 
   const cardsFiltrados = filtroAtivo.length > 0
-    ? dadosAlocacoes.filter((d) => filtroAtivo.includes(d.disciplina))
+    ? dadosAlocacoes.filter((d) => filtroAtivo.some((setor) => disciplineMatchesSector(d.disciplina, setor)))
     : dadosAlocacoes;
 
   const selectedPreview = filtroAtivo.length === 0

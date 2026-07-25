@@ -11,6 +11,7 @@ import ComposicaoDeProfissionaisPorOS from './Graficosdashboard/ComposicaodeProf
 import MatrizDePriorizacao from './Graficosdashboard/MatrizDePriorizacao';
 import SituacaoPorDisciplina from './Graficosdashboard/ImpactoXesforco';
 import NovoGrafico from './Graficosdashboard/hotmap';
+import { disciplineMatchesSector, getSectorOptions } from '../../lib/disciplineCatalog';
 
 type FiltrosEngenharia = {
   contrato: string;
@@ -523,7 +524,7 @@ function filterByContractOsAndDiscipline(
   return tableData.filter((item) => {
     const matchContrato = matchesContractFilter(item, filtros.contrato);
     const matchOS = matchesOsFilter(item, filtros.os);
-    const matchDisciplina = isAllValue(filtroDisciplina) || normalizeText(item.disciplina) === normalizeText(filtroDisciplina);
+    const matchDisciplina = isAllValue(filtroDisciplina) || disciplineMatchesSector(item.disciplina, filtroDisciplina);
     return matchContrato && matchOS && matchDisciplina;
   });
 }
@@ -590,7 +591,7 @@ function getProfessionalOptions(registro: any, tableData: ConsultaAtividade[], d
     : {};
 
   Object.entries(professionalsByDisciplina).forEach(([disciplinaAtual, profissionais]) => {
-    const sameDisciplina = isAllValue(disciplina) || normalizeText(disciplinaAtual) === normalizeText(disciplina);
+    const sameDisciplina = isAllValue(disciplina) || disciplineMatchesSector(disciplinaAtual, disciplina);
     if (!sameDisciplina || !Array.isArray(profissionais)) return;
 
     profissionais.forEach((item: any) => {
@@ -603,7 +604,7 @@ function getProfessionalOptions(registro: any, tableData: ConsultaAtividade[], d
   });
 
   tableData.forEach((item) => {
-    const sameDisciplina = isAllValue(disciplina) || normalizeText(item.disciplina) === normalizeText(disciplina);
+    const sameDisciplina = isAllValue(disciplina) || disciplineMatchesSector(item.disciplina, disciplina);
     if (!sameDisciplina) return;
     const nome = String(item.profissional || '').trim();
     const email = String(item.profissionalEmail || '').trim();
@@ -781,7 +782,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
     [registro, tableData, filtrosGlobais.contrato]
   );
   const disciplineOptions = React.useMemo(
-    () => ['Todos', ...disciplinasCadastradas.filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'))],
+    () => ['Todos', ...getSectorOptions(disciplinasCadastradas)],
     [disciplinasCadastradas]
   );
   const contractOptionsMatriz = React.useMemo(

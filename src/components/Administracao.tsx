@@ -22,6 +22,7 @@ import {
   Download,
 } from 'lucide-react';
 import TerceirizadasCadastro from './TerceirizadasCadastro';
+import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups } from '../lib/disciplineCatalog';
 import { downloadSystemBackup } from '../lib/systemBackup';
 import { downloadProjectVbaConfig } from '../lib/projectVbaAssets';
 
@@ -220,10 +221,16 @@ function DisciplineMultiSelect({
   options: string[];
   onChange: (nextValue: string[]) => void;
 }) {
+  const selected = Array.isArray(value) ? value : [];
+  // Disciplinas legado: gravadas no usuario mas fora do catalogo atual. Sem isso o admin nao
+  // conseguia desvincular (nao apareciam na lista pra desmarcar). Mostra junto, rotulada.
+  const legacy = selected.filter((item) => !options.includes(item));
+  const mergedOptions = legacy.length > 0 ? [...options, ...legacy] : options;
   return (
     <SearchableMultiSelect
-      value={Array.isArray(value) ? value : []}
-      options={options}
+      value={selected}
+      options={mergedOptions}
+      getOptionLabel={(option) => (options.includes(option) ? option : `${option} (legado)`)}
       onChange={onChange}
       placeholder="Selecionar"
       emptyMessage="Nenhuma disciplina disponivel."
@@ -816,7 +823,7 @@ function TerceirizadasManager({
               className="bentham-select"
             >
               <option value="">Selecionar</option>
-              {disciplinas.map((item) => (
+              {getDisciplineGroups().map((item) => (
                 <option key={item} value={item}>
                   {item}
                 </option>
@@ -984,8 +991,8 @@ export default function Administracao({
 
       const matchesDisciplina =
         disciplinaFiltro === 'Todas' ||
-        user.disciplina === disciplinaFiltro ||
-        (Array.isArray(user.disciplinas) && user.disciplinas.includes(disciplinaFiltro));
+        disciplineMatchesSector(user.disciplina, disciplinaFiltro) ||
+        (Array.isArray(user.disciplinas) && user.disciplinas.some((item) => disciplineMatchesSector(item, disciplinaFiltro)));
 
       const matchesCargo =
         cargoFiltro === 'Todos' || user.cargo === cargoFiltro;
@@ -993,6 +1000,9 @@ export default function Administracao({
       return matchesSearch && matchesDisciplina && matchesCargo;
     });
   }, [usuarios, deferredSearch, disciplinaFiltro, cargoFiltro]);
+
+  // Filtro exibe setores, nao disciplinas soltas; a disciplina fina do usuario continua intacta.
+  const setoresFiltro = React.useMemo(() => getSectorOptions(disciplinas), [disciplinas]);
 
   React.useEffect(() => {
     if (isSavingChanges) {
@@ -1179,9 +1189,9 @@ export default function Administracao({
               className="bentham-select"
             >
               <option value="Todas">Todas</option>
-              {disciplinas.map((disciplina) => (
-                <option key={disciplina} value={disciplina}>
-                  {disciplina}
+              {setoresFiltro.map((setor) => (
+                <option key={setor} value={setor}>
+                  {setor}
                 </option>
               ))}
             </SearchableSelect>
@@ -1295,7 +1305,7 @@ export default function Administracao({
                   <label className="bentham-label">Disciplina</label>
                   <DisciplineMultiSelect
                     value={user.disciplinas || (user.disciplina ? [user.disciplina] : [])}
-                    options={disciplinas}
+                    options={getDisciplineGroups()}
                     onChange={(nextValue) => onUpdateUsuario(user.id, {
                       disciplina: nextValue[0] || '',
                       disciplinas: nextValue,
@@ -1515,7 +1525,7 @@ export default function Administracao({
                 className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
               >
                 <option value="">Selecionar disciplina</option>
-                {disciplinas.map((d) => <option key={d} value={d}>{d}</option>)}
+                {getDisciplineGroups().map((d) => <option key={d} value={d}>{d}</option>)}
               </SearchableSelect>
             </div>
 

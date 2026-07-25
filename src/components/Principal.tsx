@@ -1,7 +1,9 @@
 import React from 'react';
-import { Bell, BellOff, Clock3, Eye, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { Bell, BellOff, Clock3, Eye, FileText, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { getDisciplineDisplayName } from './Atividades';
 import SearchableSelect from './SearchableSelect';
+import { getDisciplineGroups } from '../lib/disciplineCatalog';
+import type { NotificacaoItem } from './Notificacoes';
 import type { AuthUser } from './LoginScreen';
 import type { Acessibilidade } from '../lib/theme';
 import type { PermissaoNotificacao } from '../lib/desktopNotify';
@@ -10,8 +12,10 @@ interface PrincipalProps {
   currentUser: AuthUser;
   citadasDisciplina: number;
   citadasVoce: number;
-  onVerDisciplina: () => void;
-  onVerCitado: () => void;
+  notificacoesSetor: NotificacaoItem[];
+  notificacoesDiretas: NotificacaoItem[];
+  onAbrirNota: (id: string) => void;
+  onLimpar: (tipo: 'setor' | 'direta') => void;
   // Area do usuario: vive aqui no Principal, nao ha mais painel na barra lateral.
   acessibilidade: Acessibilidade;
   onAlternarAcessibilidade: () => void;
@@ -24,6 +28,10 @@ interface PrincipalProps {
   pedidoPendente: string[] | null;
   // Primeira escolha entra direto; as trocas seguintes viram pedido pro admin.
   onDefinirDisciplinas: (disciplinas: string[]) => void;
+  // Rascunho de nota nao salvo (anti-F5, ver Anotacoes.tsx) esperando pra ser retomado.
+  rascunhoPendente?: boolean;
+  onContinuarRascunho?: () => void;
+  onAbandonarRascunho?: () => void;
 }
 
 // Superficie unica do sistema: sem borda, so a sombra. Nunca aninhar uma dentro da outra.
@@ -74,14 +82,20 @@ function Acao({ icone, titulo, descricao, onClick }: { icone: React.ReactNode; t
 }
 
 export default function Principal({
-  currentUser, citadasDisciplina, citadasVoce, onVerDisciplina, onVerCitado,
+  currentUser, citadasDisciplina, citadasVoce,
+  notificacoesSetor, notificacoesDiretas, onAbrirNota, onLimpar,
   acessibilidade, onAlternarAcessibilidade, versaoLabel, onVerNovidades,
   permissaoNotificacao, onPedirNotificacao,
   disciplinasDisponiveis, minhasDisciplinas, pedidoPendente, onDefinirDisciplinas,
+  rascunhoPendente, onContinuarRascunho, onAbandonarRascunho,
 }: PrincipalProps) {
   const [selecionadas, setSelecionadas] = React.useState<string[]>([]);
+  // Popup de notas: 'setor' = disciplina citada, 'direta' = usuario citado. null = fechado.
+  const [popupNotas, setPopupNotas] = React.useState<'setor' | 'direta' | null>(null);
+  const [confirmarAbandono, setConfirmarAbandono] = React.useState(false);
   const primeiraEscolha = minhasDisciplinas.length === 0;
-  const outrasDisciplinas = disciplinasDisponiveis.filter((item) => !minhasDisciplinas.includes(item));
+  // Cadastro agora oferece GRUPOS, nao mais disciplinas finas; valor legado do usuario continua exibido acima.
+  const outrasDisciplinas = getDisciplineGroups().filter((item) => !minhasDisciplinas.includes(item));
   const aprovado = String(currentUser.status || '').trim().toLowerCase() !== 'pending';
   const primeiroNome = (currentUser.nome || '').trim().split(/\s+/)[0] || 'Bem-vindo';
 
@@ -111,6 +125,56 @@ export default function Principal({
       <Rotulo>EcoQuanta</Rotulo>
       <h2 className="text-[26px] font-black leading-tight text-[#2D2D2D]">Olá, {primeiroNome}</h2>
 
+      {rascunhoPendente && onContinuarRascunho && (
+        <div className="mt-4 flex w-full items-center justify-between gap-3 rounded-2xl border border-[#FED7AA] bg-[#FFF7ED] px-5 py-3">
+          <span className="flex items-center gap-2 text-[13px] font-bold text-[#B45309]">
+            <FileText size={16} />
+            Você tem uma nota não salva — continuar de onde parou?
+          </span>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={onContinuarRascunho} className="text-[12px] font-bold text-[#B45309] underline">
+              Continuar nota
+            </button>
+            {onAbandonarRascunho && (
+              <button
+                type="button"
+                onClick={() => setConfirmarAbandono(true)}
+                className="text-[12px] font-bold text-[#94A3B8] underline hover:text-[#64748B]"
+              >
+                Abandonar
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {confirmarAbandono && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setConfirmarAbandono(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <h3 className="text-[15px] font-black text-[#2D2D2D]">Abandonar nota</h3>
+            <p className="mt-2 text-[13px] font-medium text-[#64748B]">
+              Tem certeza que deseja abandonar esta nota não salva?
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmarAbandono(false)}
+                className="rounded-full px-4 py-2 text-[13px] font-bold text-[#64748B] hover:bg-[#F3F4F6]"
+              >
+                Não
+              </button>
+              <button
+                type="button"
+                onClick={() => { onAbandonarRascunho?.(); setConfirmarAbandono(false); }}
+                className="rounded-full bg-[#F05D28] px-4 py-2 text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F]"
+              >
+                Sim
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Dado icone={<ShieldCheck size={12} />} rotulo="Contrato" valor={currentUser.contrato} />
         <Dado rotulo="Status" valor={currentUser.role} />
@@ -122,13 +186,13 @@ export default function Principal({
             valor={citadasDisciplina}
             titulo="Notas da sua disciplina"
             descricao={citadasDisciplina === 0 ? 'Nada novo por aqui' : 'Publicadas por quem divide a disciplina com você'}
-            onClick={onVerDisciplina}
+            onClick={() => setPopupNotas('setor')}
           />
           <Contagem
             valor={citadasVoce}
             titulo="Notas que citam você"
             descricao={citadasVoce === 0 ? 'Ninguém te marcou ainda' : 'Você foi vinculado nessas notas'}
-            onClick={onVerCitado}
+            onClick={() => setPopupNotas('direta')}
           />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Acao
@@ -207,6 +271,55 @@ export default function Principal({
           )}
         </div>
       </div>
+
+      {popupNotas && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setPopupNotas(null)}>
+          <div className="flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3 border-b border-[#F1F5F9] px-5 py-4">
+              <h3 className="text-[15px] font-black text-[#2D2D2D]">
+                {popupNotas === 'setor' ? 'Notas da sua disciplina' : 'Notas que citam você'}
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onLimpar(popupNotas)}
+                  className="rounded-full bg-[#FFF3EC] px-3 py-1.5 text-[11px] font-bold text-[#F05D28] transition-colors hover:bg-[#FDE3D5]"
+                >
+                  Limpar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPopupNotas(null)}
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#2D2D2D]"
+                  aria-label="Fechar"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto">
+              {(popupNotas === 'setor' ? notificacoesSetor : notificacoesDiretas).length === 0 ? (
+                <p className="px-5 py-5 text-[12px] font-medium text-[#94A3B8]">
+                  {popupNotas === 'setor' ? 'Nada novo por aqui.' : 'Ninguém te marcou ainda.'}
+                </p>
+              ) : (
+                (popupNotas === 'setor' ? notificacoesSetor : notificacoesDiretas).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => { onAbrirNota(item.id); setPopupNotas(null); }}
+                    className="block w-full border-b border-[#F8FAFC] px-5 py-3 text-left last:border-b-0 hover:bg-[#FFF7F3]"
+                  >
+                    <p className="truncate text-[13px] font-bold text-[#2D2D2D]">{item.titulo}</p>
+                    <p className="truncate text-[11px] text-[#94A3B8]">{item.descricao}</p>
+                    {item.data && <p className="mt-0.5 text-[10px] text-[#CBD5E1]">{item.data}</p>}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

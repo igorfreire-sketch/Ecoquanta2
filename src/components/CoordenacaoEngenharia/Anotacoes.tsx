@@ -1,9 +1,9 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { AlignCenter, AlignLeft, AlignRight, Brush, Check, FileSpreadsheet, FileText, Globe, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, Check, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
 import SearchableSelect from '../SearchableSelect';
 import { getDisciplineDisplayName, getDisciplineIconInfo, type EngineeringActivity } from '../Atividades';
-import { disciplineMatchesSector, getSectorOptions } from '../../lib/disciplineCatalog';
+import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups } from '../../lib/disciplineCatalog';
 import { exportNoteToCsv, exportNoteToPdf, exportNotesToMarkdown } from '../../lib/noteExport';
 import { canDeleteNote, canEditNote } from '../../lib/firebaseDb';
 import {
@@ -24,11 +24,21 @@ export interface AnnotationBanco {
   colWidths?: number[];
   rowHeights?: number[];
   merges?: BancoMerge[];
+  // Indices de coluna marcados como checklist: toda celula (r>=1) da coluna vira checkbox+texto.
+  checklistCols?: number[];
+  // Celulas marcadas individualmente como checklist (fora de checklistCols), por cellKey(r,c).
+  checklistCells?: string[];
+  // Estado "feito" do checkbox por cellKey(r,c) - separado do texto, que continua em rows/cell.
+  checklistChecked?: Record<string, boolean>;
+  // Nome editavel do bloco. Ausente = usa o default "Banco N".
+  nome?: string;
 }
 
 export interface AnnotationTextBlock {
   id: string;
   texto: string;
+  // Nome editavel do bloco. Ausente = usa o default "Nota N".
+  nome?: string;
 }
 
 export interface AnnotationChecklistItem {
@@ -40,6 +50,8 @@ export interface AnnotationChecklistItem {
 export interface AnnotationChecklist {
   id: string;
   itens: AnnotationChecklistItem[];
+  // Nome editavel do bloco. Ausente = usa o default "Checklist N".
+  nome?: string;
 }
 
 export interface AnnotationSheet {
@@ -47,6 +59,10 @@ export interface AnnotationSheet {
   disciplina: string;
   titulo: string;
   osCodigo?: string;
+  // Nota vinculada a varias OS (ver toggleOs). Ausente ou vazio = usa so o campo
+  // osCodigo (comportamento antigo). osCodigo e sempre mantido = primeira desta lista,
+  // pois ~20 outros arquivos (Notes, MindMap, Cronograma...) leem so o campo singular.
+  osCodigos?: string[];
   // Nota de OS marcada em varias disciplinas (ver toggleDisciplina/markAllDisciplinas).
   // Ausente ou vazio = usa so o campo disciplina (comportamento antigo).
   disciplinas?: string[];
@@ -88,6 +104,12 @@ export function getSheetTextos(sheet: AnnotationSheet): AnnotationTextBlock[] {
 export function getSheetDisciplinas(sheet: AnnotationSheet): string[] {
   if (sheet.disciplinas && sheet.disciplinas.length > 0) return sheet.disciplinas;
   return sheet.disciplina ? [sheet.disciplina] : [];
+}
+
+// OS de uma nota, considerando o campo multiplo novo com fallback pro singular antigo.
+export function getSheetOsCodigos(sheet: AnnotationSheet): string[] {
+  if (sheet.osCodigos && sheet.osCodigos.length > 0) return sheet.osCodigos;
+  return sheet.osCodigo ? [sheet.osCodigo] : [];
 }
 
 type AnotacoesFilter = { type: 'disciplina'; value: string } | { type: 'os'; value: string } | { type: 'all' };
@@ -212,6 +234,70 @@ function normalizeText(value: string) {
   return value.normalize('NFD').replace(new RegExp('[\\u0300-\\u036f]', 'g'), '').trim().toLowerCase();
 }
 
+// ---- Rascunho anti-F5: backup local do editor, sem backend. ----
+// Chave ecoquanta:nota-rascunho:<id> ("nova" quando a nota ainda nao tem id).
+export interface NotaRascunho {
+  ts: number;
+  autorEmail: string;
+  titulo: string;
+  sheet: AnnotationSheet;
+}
+
+const RASCUNHO_PREFIXO = 'ecoquanta:nota-rascunho:';
+
+function chaveRascunho(id: string) {
+  return `${RASCUNHO_PREFIXO}${id}`;
+}
+
+export function lerRascunho(id: string): NotaRascunho | null {
+  try {
+    const raw = localStorage.getItem(chaveRascunho(id));
+    return raw ? (JSON.parse(raw) as NotaRascunho) : null;
+  } catch {
+    return null;
+  }
+}
+
+function salvarRascunho(id: string, sheet: AnnotationSheet, autorEmail: string) {
+  try {
+    localStorage.setItem(chaveRascunho(id), JSON.stringify({ ts: Date.now(), autorEmail, titulo: sheet.titulo, sheet }));
+  } catch {
+    // modo privado ou quota cheia: so nao persiste, o editor continua funcionando normalmente.
+  }
+}
+
+export function removerRascunho(id: string) {
+  try { localStorage.removeItem(chaveRascunho(id)); } catch { /* ignore */ }
+}
+
+// Rascunho de nota nunca salva (id ainda nao existe em `sheets`), do mesmo autor.
+// Usado ao abrir uma nota nova: oferece continuar o que ficou pra tras num F5 anterior.
+export function encontrarRascunhoOrfao(email: string, sheets: AnnotationSheet[], excludeId?: string): NotaRascunho | null {
+  const salvos = new Set(sheets.map((sheet) => sheet.id));
+  let melhor: NotaRascunho | null = null;
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const chave = localStorage.key(i);
+    if (!chave || !chave.startsWith(RASCUNHO_PREFIXO)) continue;
+    const id = chave.slice(RASCUNHO_PREFIXO.length);
+    if (id === excludeId || salvos.has(id)) continue;
+    const rascunho = lerRascunho(id);
+    if (rascunho && rascunho.autorEmail === email && (!melhor || rascunho.ts > melhor.ts)) melhor = rascunho;
+  }
+  return melhor;
+}
+
+// Pro menu Principal (item 5): qualquer rascunho nao salvo do usuario, o mais recente primeiro.
+export function encontrarRascunhoRecente(email: string): NotaRascunho | null {
+  let melhor: NotaRascunho | null = null;
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const chave = localStorage.key(i);
+    if (!chave || !chave.startsWith(RASCUNHO_PREFIXO)) continue;
+    const rascunho = lerRascunho(chave.slice(RASCUNHO_PREFIXO.length));
+    if (rascunho && rascunho.autorEmail === email && (!melhor || rascunho.ts > melhor.ts)) melhor = rascunho;
+  }
+  return melhor;
+}
+
 export default function Anotacoes({
   filter, sheets, osOptions, disciplinaOptions, contractOptions = [], currentUser, activities = [], usuarios = [], onSave, onDelete, controlledSheet, onCloseControlled,
 }: AnotacoesProps) {
@@ -236,13 +322,22 @@ export default function Anotacoes({
   const redimensionarRef = React.useRef<
     { tipo: 'col' | 'row'; bancoIndex: number; indice: number; inicioPx: number; tamanhoInicial: number } | null
   >(null);
+  // Arrasto da alca "#" pra REORDENAR linha/coluna (drag-and-drop nativo, sem mouse tracking manual).
+  const ordemArrastoRef = React.useRef<{ tipo: 'row' | 'col'; bancoIndex: number; indice: number } | null>(null);
   const [linkPickerOpen, setLinkPickerOpen] = React.useState(false);
   const [linkSearch, setLinkSearch] = React.useState('');
   const [userPickerOpen, setUserPickerOpen] = React.useState(false);
   const [userSearch, setUserSearch] = React.useState('');
+  const [osPickerOpen, setOsPickerOpen] = React.useState(false);
+  const [osPickerSearch, setOsPickerSearch] = React.useState('');
+  const [disciplinaPickerOpen, setDisciplinaPickerOpen] = React.useState(false);
+  const [disciplinaPickerSearch, setDisciplinaPickerSearch] = React.useState('');
   const [openCardMenuId, setOpenCardMenuId] = React.useState<string | null>(null);
   // Aba do painel direito do editor. null = segue a primeira disponivel (OS > Disciplina > Mapa).
   const [sidebarTab, setSidebarTab] = React.useState<'os' | 'disciplina' | 'mapa' | null>(null);
+  // Chip selecionado dentro das abas OS/Disciplina, quando ha mais de um vinculo.
+  const [sidebarOsCodigo, setSidebarOsCodigo] = React.useState<string | null>(null);
+  const [sidebarDisciplina, setSidebarDisciplina] = React.useState<string | null>(null);
   const [contratoFiltro, setContratoFiltro] = React.useState('');
   // Filtro da lista de notas (Autor > Contrato > OS > Disciplina), independente do filtro do editor.
   const [listaAutor, setListaAutor] = React.useState('');
@@ -252,6 +347,8 @@ export default function Anotacoes({
   // Menu do card em posicao FIXED (calculada do botao) para nao ser recortado pelo overflow-hidden do card.
   const [cardMenuPos, setCardMenuPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const textoRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
+  // Rascunho anti-F5 encontrado ao abrir a nota (mais novo que o que esta salvo). null = nenhum.
+  const [rascunhoDisponivel, setRascunhoDisponivel] = React.useState<NotaRascunho | null>(null);
 
   // Fecha o menu do card ao rolar, redimensionar ou apertar Escape (menu fixed nao acompanha o scroll do card).
   React.useEffect(() => {
@@ -271,6 +368,31 @@ export default function Anotacoes({
   React.useEffect(() => {
     if (controlledSheet) setEditing(normalizeForEditing(controlledSheet));
   }, [controlledSheet]);
+
+  // Autosave anti-F5: grava `editing` no localStorage com debounce a cada mudanca, enquanto
+  // o editor estiver aberto e a pessoa puder editar (leitura nunca escreve rascunho por cima).
+  React.useEffect(() => {
+    if (!editing) return;
+    const jaSalva = sheets.some((sheet) => sheet.id === editing.id);
+    const podeSalvar = !jaSalva || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios);
+    if (!podeSalvar) return;
+    const timer = setTimeout(() => salvarRascunho(editing.id || 'nova', editing, currentUser.email), 800);
+    return () => clearTimeout(timer);
+  }, [editing, sheets, currentUser]);
+
+  // Ao abrir uma nota (ou uma nova), procura um rascunho pra oferecer "continuar de onde parou".
+  // So roda quando o id muda (abrir/trocar de nota) - nao a cada tecla, senao o autosave que
+  // acabou de gravar reapareceria como "rascunho encontrado" a cada digitacao.
+  React.useEffect(() => {
+    if (!editing) { setRascunhoDisponivel(null); return; }
+    const jaSalva = sheets.some((sheet) => sheet.id === editing.id);
+    const rascunho = jaSalva
+      ? lerRascunho(editing.id)
+      : encontrarRascunhoOrfao(currentUser.email, sheets, editing.id);
+    const valeAPena = rascunho && (!jaSalva || rascunho.ts > new Date(editing.updatedAt || 0).getTime());
+    setRascunhoDisponivel(valeAPena ? rascunho : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing?.id]);
 
   // Fim do arrasto de selecao e do arrasto de redimensionamento acontecem fora da celula:
   // o mouse pode sair da tabela antes de soltar, entao o listener e na janela.
@@ -307,6 +429,8 @@ export default function Anotacoes({
 
   const resetEditorFields = () => {
     setSidebarTab(null);
+    setSidebarOsCodigo(null);
+    setSidebarDisciplina(null);
     setContratoFiltro('');
     setSelecao(null);
     setPincel(null);
@@ -352,48 +476,143 @@ export default function Anotacoes({
     setContextMenu(null);
   };
 
+  // checklistCells/checklistChecked usam a mesma chave cellKey(r,c) dos styles - remapStyles so
+  // olha a chave (nunca o formato do valor), entao da pra reusar pra remapear os dois tambem.
+  type Move = (r: number, c: number) => { r: number; c: number } | null;
+  const remapChecklistCells = (cells: string[] | undefined, move: Move) => {
+    if (!cells) return undefined;
+    const asRecord: Record<string, CellStyle> = {};
+    cells.forEach((key) => { asRecord[key] = {}; });
+    return Object.keys(remapStyles(asRecord, move) || {});
+  };
+  const remapChecklistChecked = (checked: Record<string, boolean> | undefined, move: Move) => (
+    remapStyles(checked as unknown as Record<string, CellStyle> | undefined, move) as unknown as Record<string, boolean> | undefined
+  );
   const insertRow = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => {
     const rows = [...banco.rows];
     rows.splice(at, 0, Array.from({ length: banco.colCount }, () => ''));
+    const move: Move = (r, c) => ({ r: r >= at ? r + 1 : r, c });
     return {
       ...banco,
       rows,
-      styles: remapStyles(banco.styles, (r, c) => ({ r: r >= at ? r + 1 : r, c })),
+      styles: remapStyles(banco.styles, move),
       merges: remapMerges(banco.merges, 'row', at, 1),
       rowHeights: spliceSizes(banco.rowHeights, at, 1, BANCO_ROW_HEIGHT, banco.rows.length),
+      checklistCells: remapChecklistCells(banco.checklistCells, move),
+      checklistChecked: remapChecklistChecked(banco.checklistChecked, move),
     };
   });
-  const removeRow = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => (
-    banco.rows.length <= 1 ? banco : {
+  const removeRow = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => {
+    if (banco.rows.length <= 1) return banco;
+    const move: Move = (r, c) => (r === at ? null : { r: r > at ? r - 1 : r, c });
+    return {
       ...banco,
       rows: banco.rows.filter((_, ri) => ri !== at),
-      styles: remapStyles(banco.styles, (r, c) => (r === at ? null : { r: r > at ? r - 1 : r, c })),
+      styles: remapStyles(banco.styles, move),
       merges: remapMerges(banco.merges, 'row', at, -1),
       rowHeights: spliceSizes(banco.rowHeights, at, -1, BANCO_ROW_HEIGHT, banco.rows.length),
-    }
-  ));
-  const insertCol = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => ({
-    ...banco,
-    rows: banco.rows.map((row) => {
-      const next = [...row];
-      next.splice(at, 0, '');
-      return next;
-    }),
-    colCount: banco.colCount + 1,
-    styles: remapStyles(banco.styles, (r, c) => ({ r, c: c >= at ? c + 1 : c })),
-    merges: remapMerges(banco.merges, 'col', at, 1),
-    colWidths: spliceSizes(banco.colWidths, at, 1, BANCO_COL_WIDTH, banco.colCount),
-  }));
-  const removeCol = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => (
-    banco.colCount <= 1 ? banco : {
+      checklistCells: remapChecklistCells(banco.checklistCells, move),
+      checklistChecked: remapChecklistChecked(banco.checklistChecked, move),
+    };
+  });
+  const insertCol = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => {
+    const move: Move = (r, c) => ({ r, c: c >= at ? c + 1 : c });
+    return {
+      ...banco,
+      rows: banco.rows.map((row) => {
+        const next = [...row];
+        next.splice(at, 0, '');
+        return next;
+      }),
+      colCount: banco.colCount + 1,
+      styles: remapStyles(banco.styles, move),
+      merges: remapMerges(banco.merges, 'col', at, 1),
+      colWidths: spliceSizes(banco.colWidths, at, 1, BANCO_COL_WIDTH, banco.colCount),
+      checklistCols: banco.checklistCols?.map((c) => (c >= at ? c + 1 : c)),
+      checklistCells: remapChecklistCells(banco.checklistCells, move),
+      checklistChecked: remapChecklistChecked(banco.checklistChecked, move),
+    };
+  });
+  const removeCol = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => {
+    if (banco.colCount <= 1) return banco;
+    const move: Move = (r, c) => (c === at ? null : { r, c: c > at ? c - 1 : c });
+    return {
       ...banco,
       rows: banco.rows.map((row) => row.filter((_, ci) => ci !== at)),
       colCount: banco.colCount - 1,
-      styles: remapStyles(banco.styles, (r, c) => (c === at ? null : { r, c: c > at ? c - 1 : c })),
+      styles: remapStyles(banco.styles, move),
       merges: remapMerges(banco.merges, 'col', at, -1),
       colWidths: spliceSizes(banco.colWidths, at, -1, BANCO_COL_WIDTH, banco.colCount),
-    }
-  ));
+      checklistCols: banco.checklistCols?.filter((c) => c !== at).map((c) => (c > at ? c - 1 : c)),
+      checklistCells: remapChecklistCells(banco.checklistCells, move),
+      checklistChecked: remapChecklistChecked(banco.checklistChecked, move),
+    };
+  });
+  // Liga/desliga a coluna `col` como checklist (usado no menu de contexto da celula).
+  const toggleChecklistCol = (bancoIndex: number, col: number) => updateBanco(bancoIndex, (banco) => {
+    const atual = banco.checklistCols || [];
+    return { ...banco, checklistCols: atual.includes(col) ? atual.filter((c) => c !== col) : [...atual, col] };
+  });
+  // Liga/desliga UMA celula como checklist (independente da coluna inteira).
+  const toggleChecklistCell = (bancoIndex: number, r: number, c: number) => updateBanco(bancoIndex, (banco) => {
+    const key = cellKey(r, c);
+    const atual = banco.checklistCells || [];
+    return { ...banco, checklistCells: atual.includes(key) ? atual.filter((k) => k !== key) : [...atual, key] };
+  });
+  // So o estado "feito" do checkbox - o texto da celula continua no updateCell de sempre.
+  const toggleChecklistChecked = (bancoIndex: number, r: number, c: number) => updateBanco(bancoIndex, (banco) => {
+    const key = cellKey(r, c);
+    return { ...banco, checklistChecked: { ...banco.checklistChecked, [key]: !banco.checklistChecked?.[key] } };
+  });
+
+  // ---- Reordenar linha/coluna (drag da alca "#") ----
+  // Pura e testavel: velho indice -> novo indice apos mover de `from` pra `to`.
+  // Ex.: calcularNovoIndice(0, 0, 2) === 2; calcularNovoIndice(1, 0, 2) === 0; calcularNovoIndice(2, 0, 2) === 1.
+  const calcularNovoIndice = (velho: number, from: number, to: number) => {
+    if (velho === from) return to;
+    if (from < to) return velho > from && velho <= to ? velho - 1 : velho;
+    return velho >= to && velho < from ? velho + 1 : velho;
+  };
+  const moverPosicao = <T,>(lista: T[], from: number, to: number): T[] => {
+    const copia = [...lista];
+    const [item] = copia.splice(from, 1);
+    copia.splice(to, 0, item);
+    return copia;
+  };
+  const moveRow = (bancoIndex: number, from: number, to: number) => updateBanco(bancoIndex, (banco) => {
+    if (from === to || from < 0 || to < 0 || from >= banco.rows.length || to >= banco.rows.length) return banco;
+    const rMin = Math.min(from, to);
+    const rMax = Math.max(from, to);
+    // ponytail: merge de mais de 1 linha cruzando o trecho movido bloqueia o reorder (no-op) em vez
+    // de remendar a mesclagem. Desfaca o merge antes se precisar mover atraves dele.
+    if ((banco.merges || []).some((m) => m.rowSpan > 1 && m.r <= rMax && m.r + m.rowSpan - 1 >= rMin)) return banco;
+    return {
+      ...banco,
+      rows: moverPosicao(banco.rows, from, to),
+      rowHeights: moverPosicao(Array.from({ length: banco.rows.length }, (_, i) => banco.rowHeights?.[i] ?? BANCO_ROW_HEIGHT), from, to),
+      styles: remapStyles(banco.styles, (r, c) => ({ r: calcularNovoIndice(r, from, to), c })),
+      merges: (banco.merges || []).map((m) => ({ ...m, r: calcularNovoIndice(m.r, from, to) })),
+      checklistCells: remapChecklistCells(banco.checklistCells, (r, c) => ({ r: calcularNovoIndice(r, from, to), c })),
+      checklistChecked: remapChecklistChecked(banco.checklistChecked, (r, c) => ({ r: calcularNovoIndice(r, from, to), c })),
+    };
+  });
+  const moveCol = (bancoIndex: number, from: number, to: number) => updateBanco(bancoIndex, (banco) => {
+    if (from === to || from < 0 || to < 0 || from >= banco.colCount || to >= banco.colCount) return banco;
+    const cMin = Math.min(from, to);
+    const cMax = Math.max(from, to);
+    // ponytail: mesmo limite acima, no eixo coluna.
+    if ((banco.merges || []).some((m) => m.colSpan > 1 && m.c <= cMax && m.c + m.colSpan - 1 >= cMin)) return banco;
+    return {
+      ...banco,
+      rows: banco.rows.map((row) => moverPosicao(row, from, to)),
+      colWidths: moverPosicao(Array.from({ length: banco.colCount }, (_, i) => banco.colWidths?.[i] ?? BANCO_COL_WIDTH), from, to),
+      styles: remapStyles(banco.styles, (r, c) => ({ r, c: calcularNovoIndice(c, from, to) })),
+      merges: (banco.merges || []).map((m) => ({ ...m, c: calcularNovoIndice(m.c, from, to) })),
+      checklistCols: banco.checklistCols?.map((c) => calcularNovoIndice(c, from, to)),
+      checklistCells: remapChecklistCells(banco.checklistCells, (r, c) => ({ r, c: calcularNovoIndice(c, from, to) })),
+      checklistChecked: remapChecklistChecked(banco.checklistChecked, (r, c) => ({ r, c: calcularNovoIndice(c, from, to) })),
+    };
+  });
 
   // ---- Selecao e formatacao ----
   const selRect = (sel: CellSelection) => ({
@@ -576,7 +795,7 @@ export default function Anotacoes({
   const visiveis = sheets.filter((sheet) => {
     const matchesFilter = filter.type === 'all'
       ? true
-      : filter.type === 'disciplina' ? getSheetDisciplinas(sheet).includes(filter.value) : sheet.osCodigo === filter.value;
+      : filter.type === 'disciplina' ? getSheetDisciplinas(sheet).includes(filter.value) : getSheetOsCodigos(sheet).includes(filter.value);
     if (!matchesFilter) return false;
     // Regra unica: nota propria sempre, nota de outro so se publica.
     if (sheet.autorEmail === currentUser.email) return true;
@@ -594,8 +813,8 @@ export default function Anotacoes({
       if (listaAutor === AUTOR_EU) return sheet.autorEmail === currentUser.email;
       return sheet.autorEmail === listaAutor;
     })
-    .filter((sheet) => !listaContrato || (sheet.osCodigo ? codigosDoContrato.has(sheet.osCodigo) : false))
-    .filter((sheet) => !listaOs || sheet.osCodigo === listaOs)
+    .filter((sheet) => !listaContrato || getSheetOsCodigos(sheet).some((codigo) => codigosDoContrato.has(codigo)))
+    .filter((sheet) => !listaOs || getSheetOsCodigos(sheet).includes(listaOs))
     // Filtro fala em setor: escolher 'Arquitetura' traz URB, LAY, LUM...
     .filter((sheet) => !listaDisciplina || getSheetDisciplinas(sheet).some((item) => disciplineMatchesSector(item, listaDisciplina)));
   const temFiltroLista = Boolean(listaAutor || listaContrato || listaOs || listaDisciplina);
@@ -609,6 +828,7 @@ export default function Anotacoes({
     setEditing(null);
     setContextMenu(null);
     setLinkPickerOpen(false);
+    setRascunhoDisponivel(null);
     resetEditorFields();
     onCloseControlled?.();
   };
@@ -624,8 +844,13 @@ export default function Anotacoes({
     const podeEditar = !notaJaSalva || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios);
 
     const updateTitulo = (titulo: string) => setEditing((prev) => (prev ? { ...prev, titulo } : prev));
-    const updateOs = (osCodigo: string) => setEditing((prev) => (prev ? { ...prev, osCodigo: osCodigo || undefined } : prev));
-    const updateDisciplina = (disciplina: string) => setEditing((prev) => (prev ? { ...prev, disciplina } : prev));
+    const toggleOs = (codigo: string) => setEditing((prev) => {
+      if (!prev) return prev;
+      const current = getSheetOsCodigos(prev);
+      const next = current.includes(codigo) ? current.filter((item) => item !== codigo) : [...current, codigo];
+      // osCodigo (legado) sempre = primeira da lista: ~20 outros arquivos ainda leem so ele.
+      return { ...prev, osCodigos: next, osCodigo: next[0] || undefined };
+    });
     const toggleDisciplina = (disciplina: string) => setEditing((prev) => {
       if (!prev) return prev;
       const current = getSheetDisciplinas(prev);
@@ -633,7 +858,7 @@ export default function Anotacoes({
       return { ...prev, disciplinas: next, disciplina: next[0] || '' };
     });
     const markAllDisciplinas = () => setEditing((prev) => (
-      prev ? { ...prev, disciplinas: [...disciplinaOptions], disciplina: disciplinaOptions[0] || '' } : prev
+      prev ? { ...prev, disciplinas: [...disciplinaGroupOptions], disciplina: disciplinaGroupOptions[0] || '' } : prev
     ));
     const updatePublica = (publica: boolean) => setEditing((prev) => (prev ? { ...prev, publica } : prev));
     const addLink = (targetId: string) => setEditing((prev) => {
@@ -658,6 +883,10 @@ export default function Anotacoes({
       if (!prev) return prev;
       return { ...prev, textos: (prev.textos ?? []).map((bloco, i) => (i === index ? { ...bloco, texto } : bloco)) };
     });
+    const updateTextoBlockNome = (index: number, nome: string) => setEditing((prev) => {
+      if (!prev) return prev;
+      return { ...prev, textos: (prev.textos ?? []).map((bloco, i) => (i === index ? { ...bloco, nome } : bloco)) };
+    });
     const removeTextoBlock = (index: number) => setEditing((prev) => (
       prev ? { ...prev, textos: (prev.textos ?? []).filter((_, i) => i !== index) } : prev
     ));
@@ -676,23 +905,31 @@ export default function Anotacoes({
       ? uniqueOsOptions.filter((os) => os.contratoCodigo === contratoFiltro)
       : uniqueOsOptions;
 
-    // Sem contexto de disciplina/OS: a nota escolhe os dois - OS opcional, disciplina obrigatoria.
-    const isOsNote = filter.type === 'os';
-    const showOsSelector = !isOsNote;
-    const showDisciplinaSelect = filter.type === 'all';
-    // Nota de OS: disciplina vira multi-select (pode marcar varias, ou todas de uma vez).
-    const showDisciplinaMultiSelect = isOsNote;
-    const disciplinaPendente = isOsNote ? selectedDisciplinas.length === 0 : !editing.disciplina.trim();
+    // OS e disciplina agora se vinculam so pelos botoes do rodape (Vincular OS/Disciplina) -
+    // OS opcional, disciplina obrigatoria (pelo menos uma).
+    const disciplinaPendente = selectedDisciplinas.length === 0;
 
     const handleSave = async () => {
       if (!editing.titulo.trim() || disciplinaPendente) return;
       setSaving(true);
       try {
         await onSave({ ...editing, updatedAt: new Date().toISOString() });
+        removerRascunho(editing.id || 'nova');
         closeEditing();
       } finally {
         setSaving(false);
       }
+    };
+
+    const continuarRascunho = () => {
+      if (!rascunhoDisponivel) return;
+      setEditing(normalizeForEditing(rascunhoDisponivel.sheet));
+      setRascunhoDisponivel(null);
+    };
+    const descartarRascunho = () => {
+      if (!rascunhoDisponivel) return;
+      removerRascunho(rascunhoDisponivel.sheet.id || 'nova');
+      setRascunhoDisponivel(null);
     };
 
     const autorInfo = [
@@ -716,21 +953,35 @@ export default function Anotacoes({
       const query = normalizeText(userSearch);
       return !query || normalizeText(user.nome).includes(query) || normalizeText(user.email).includes(query);
     });
+    const osPickerResults = osFiltradas.filter((os) => {
+      const query = normalizeText(osPickerSearch);
+      return !query || normalizeText(formatOsLabel(os)).includes(query);
+    });
+    // Picker "Vincular Disciplina" oferece os GRUPOS (nao mais as disciplinas finas de disciplinaOptions).
+    const disciplinaGroupOptions = getDisciplineGroups();
+    const disciplinaPickerResults = disciplinaGroupOptions.filter((disciplina) => {
+      const query = normalizeText(disciplinaPickerSearch);
+      return !query || normalizeText(getDisciplineDisplayName(disciplina)).includes(query);
+    });
 
     // Painel direito: cronograma da OS, cronograma da disciplina, ou o mapa mental.
-    // As duas primeiras abas so existem depois que o usuario escolhe OS / disciplina.
-    const osActivities = editing.osCodigo
-      ? activities.filter((activity) => activity.osCodigo === editing.osCodigo)
+    // As duas primeiras abas so existem depois que o usuario vincula OS / disciplina.
+    // Com varios vinculos, um chip escolhe qual OS/disciplina o cronograma mostra.
+    const editingOsCodigos = getSheetOsCodigos(editing);
+    const osCodigoAtivo = (sidebarOsCodigo && editingOsCodigos.includes(sidebarOsCodigo)) ? sidebarOsCodigo : editingOsCodigos[0];
+    const disciplinaAtiva = (sidebarDisciplina && selectedDisciplinas.includes(sidebarDisciplina)) ? sidebarDisciplina : selectedDisciplinas[0];
+    const osActivities = osCodigoAtivo
+      ? activities.filter((activity) => activity.osCodigo === osCodigoAtivo)
       : [];
-    const disciplinaActivities = editing.disciplina
-      ? activities.filter((activity) => activity.disciplinas.some((disciplina) => getDisciplineDisplayName(disciplina) === getDisciplineDisplayName(editing.disciplina)))
+    const disciplinaActivities = disciplinaAtiva
+      ? activities.filter((activity) => activity.disciplinas.some((disciplina) => getDisciplineDisplayName(disciplina) === getDisciplineDisplayName(disciplinaAtiva)))
       : [];
     const sidebarTabs: Array<{ key: 'os' | 'disciplina' | 'mapa'; label: string }> = [
-      ...(editing.osCodigo ? [{ key: 'os' as const, label: 'Ordem de Serviço' }] : []),
-      ...(editing.disciplina ? [{ key: 'disciplina' as const, label: 'Disciplina' }] : []),
+      ...(editingOsCodigos.length > 0 ? [{ key: 'os' as const, label: 'Ordem de Serviço' }] : []),
+      ...(selectedDisciplinas.length > 0 ? [{ key: 'disciplina' as const, label: 'Disciplina' }] : []),
       { key: 'mapa' as const, label: 'Mapa Mental' },
     ];
-    // Se a aba escolhida sumiu (usuario limpou a OS, por ex.), cai na primeira disponivel.
+    // Se a aba escolhida sumiu (usuario removeu o vinculo, por ex.), cai na primeira disponivel.
     const abaAtiva = sidebarTabs.find((tab) => tab.key === sidebarTab)?.key ?? sidebarTabs[0].key;
 
     // Portal pro body: fullscreen de verdade (fora do <main> relative z-10). Sem isso o editor
@@ -812,6 +1063,29 @@ export default function Anotacoes({
 
         <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="min-w-0 flex-1 overflow-auto p-5">
+          {rascunhoDisponivel && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#FED7AA] bg-[#FFF7ED] px-4 py-3">
+              <p className="text-[12px] font-medium text-[#B45309]">
+                Encontramos um rascunho não salvo desta nota, de {new Date(rascunhoDisponivel.ts).toLocaleString('pt-BR')}. Continuar de onde parou?
+              </p>
+              <div className="flex flex-shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={continuarRascunho}
+                  className="h-8 rounded-lg bg-[#F05D28] px-3 text-[12px] font-bold text-white hover:bg-[#D94E1F]"
+                >
+                  Continuar de onde parou
+                </button>
+                <button
+                  type="button"
+                  onClick={descartarRascunho}
+                  className="h-8 rounded-lg border border-[#FED7AA] bg-white px-3 text-[12px] font-bold text-[#B45309] hover:bg-[#FFF3EC]"
+                >
+                  Descartar
+                </button>
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             <input
               value={editing.titulo}
@@ -822,49 +1096,6 @@ export default function Anotacoes({
               lang="pt-BR"
               className="h-11 min-w-[220px] flex-1 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[14px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]"
             />
-            {showOsSelector && contractOptions.length > 0 && (
-              <SearchableSelect
-                value={contratoFiltro}
-                onChange={(event) => setContratoFiltro(event.target.value)}
-                title="Filtra a lista de OS por contrato"
-                disabled={!podeEditar}
-                searchPlaceholder="Todos os contratos"
-                className={campoClass}
-              >
-                <option value="">Todos os contratos</option>
-                {contractOptions.map((contrato) => (
-                  <option key={contrato.codigo} value={contrato.codigo}>{contrato.codigo} - {contrato.nome}</option>
-                ))}
-              </SearchableSelect>
-            )}
-            {showOsSelector && (
-              <SearchableSelect
-                value={editing.osCodigo || ''}
-                onChange={(event) => updateOs(event.target.value)}
-                disabled={!podeEditar}
-                searchPlaceholder="Pesquisar OS..."
-                className={campoClass}
-              >
-                <option value="">Ordem de Serviço</option>
-                {osFiltradas.map((os) => (
-                  <option key={os.codigo} value={os.codigo}>{formatOsLabel(os)}</option>
-                ))}
-              </SearchableSelect>
-            )}
-            {showDisciplinaSelect && (
-              <SearchableSelect
-                value={editing.disciplina}
-                onChange={(event) => updateDisciplina(event.target.value)}
-                disabled={!podeEditar}
-                searchPlaceholder="Pesquisar disciplina..."
-                className={campoClass}
-              >
-                <option value="">Selecione a disciplina...</option>
-                {disciplinaOptions.map((disciplina) => (
-                  <option key={disciplina} value={disciplina}>{getDisciplineDisplayName(disciplina)}</option>
-                ))}
-              </SearchableSelect>
-            )}
             <label className="flex h-11 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] cursor-pointer">
               <input
                 type="checkbox"
@@ -887,39 +1118,6 @@ export default function Anotacoes({
             )}
           </div>
 
-          {showDisciplinaMultiSelect && (
-            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white p-3">
-              <span className="text-[12px] font-bold text-[#2D2D2D]">Disciplinas:</span>
-              {podeEditar && (
-                <button
-                  type="button"
-                  onClick={markAllDisciplinas}
-                  className="rounded-full border border-[#F05D28] px-2.5 py-1 text-[11px] font-bold text-[#F05D28] hover:bg-[#FFF3EE]"
-                >
-                  Marcar todas
-                </button>
-              )}
-              {disciplinaOptions.map((disciplina) => {
-                const checked = selectedDisciplinas.includes(disciplina);
-                return (
-                  <label
-                    key={disciplina}
-                    className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium cursor-pointer ${checked ? 'border-[#F05D28] bg-[#FFF3EE] text-[#F05D28]' : 'border-[#E5E7EB] text-[#64748B]'}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={!podeEditar}
-                      onChange={() => toggleDisciplina(disciplina)}
-                      className="h-3 w-3 accent-[#F05D28] cursor-pointer"
-                    />
-                    {getDisciplineDisplayName(disciplina)}
-                  </label>
-                );
-              })}
-            </div>
-          )}
-
           <p className="mt-2 text-[11px] text-[#94A3B8]">
             {editing.publica === false ? 'Privada: só visível para quem criou. ' : 'Pública: visível para todos. '}
             {podeEditar
@@ -933,7 +1131,16 @@ export default function Anotacoes({
                 <div key={banco.id} className="overflow-hidden rounded-xl border border-[#E5E7EB]">
                   <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-bold text-[#64748B]">Banco {bancoIndex + 1}</span>
+                      {podeEditar ? (
+                        <input
+                          value={banco.nome ?? ''}
+                          onChange={(event) => updateBanco(bancoIndex, (b) => ({ ...b, nome: event.target.value }))}
+                          placeholder={`Banco ${bancoIndex + 1}`}
+                          className="h-6 w-28 rounded-md border border-transparent bg-transparent px-1 text-[11px] font-bold text-[#64748B] outline-none focus:border-[#F05D28] focus:bg-white"
+                        />
+                      ) : (
+                        <span className="text-[11px] font-bold text-[#64748B]">{banco.nome || `Banco ${bancoIndex + 1}`}</span>
+                      )}
                       {podeEditar && (
                         <button
                           type="button"
@@ -1031,19 +1238,55 @@ export default function Anotacoes({
                                     if (!naSelecao(bancoIndex, r, c)) setSelecao({ bancoIndex, r1: r, c1: c, r2: r, c2: c });
                                     setContextMenu({ bancoIndex, row: r, col: c, x: event.clientX, y: event.clientY });
                                   }}
+                                  onDragOver={(event) => {
+                                    const alvo = ordemArrastoRef.current;
+                                    if (alvo && alvo.bancoIndex === bancoIndex) event.preventDefault();
+                                  }}
+                                  onDrop={(event) => {
+                                    const alvo = ordemArrastoRef.current;
+                                    ordemArrastoRef.current = null;
+                                    if (!alvo || alvo.bancoIndex !== bancoIndex) return;
+                                    event.preventDefault();
+                                    if (alvo.tipo === 'row') moveRow(bancoIndex, alvo.indice, r);
+                                    else moveCol(bancoIndex, alvo.indice, c);
+                                  }}
                                   style={{ backgroundColor: estilo?.bg || (r === 0 ? '#F3F4F6' : '#FFFFFF'), height: `${alturaCelulaPx}px` }}
                                   className={`relative border border-[#E5E7EB] p-0 ${selecionada ? 'shadow-[inset_0_0_0_2px_#F05D28]' : ''} ${pincel ? 'cursor-copy' : ''}`}
                                 >
-                                  {/* textarea (nao input) pra que o texto quebre em varias linhas. */}
-                                  <textarea
-                                    value={cell}
-                                    onChange={(event) => updateCell(bancoIndex, r, c, event.target.value)}
-                                    readOnly={!podeEditar}
-                                    spellCheck
-                                    lang="pt-BR"
-                                    style={cellCss(estilo)}
-                                    className={`h-full w-full resize-none overflow-auto bg-transparent px-2 py-1.5 leading-[1.4] outline-none ${r === 0 && !estilo ? 'font-bold text-[#2D2D2D]' : 'text-[#374151]'}`}
-                                  />
+                                  {/* Celula de checklist (coluna inteira via checklistCols OU celula avulsa via
+                                      checklistCells), r>=1: checkbox + texto lado a lado. r===0 continua
+                                      textarea normal (titulo/rotulo), mesmo numa coluna de checklist. */}
+                                  {r > 0 && (banco.checklistCols?.includes(c) || banco.checklistCells?.includes(cellKey(r, c))) ? (
+                                    <div className="flex h-full w-full items-center gap-1.5 px-1.5">
+                                      <input
+                                        type="checkbox"
+                                        checked={banco.checklistChecked?.[cellKey(r, c)] ?? false}
+                                        disabled={!podeEditar}
+                                        onChange={() => toggleChecklistChecked(bancoIndex, r, c)}
+                                        className="h-4 w-4 flex-shrink-0 accent-[#F05D28] cursor-pointer"
+                                      />
+                                      <textarea
+                                        value={cell}
+                                        onChange={(event) => updateCell(bancoIndex, r, c, event.target.value)}
+                                        readOnly={!podeEditar}
+                                        spellCheck
+                                        lang="pt-BR"
+                                        style={cellCss(estilo)}
+                                        className="h-full flex-1 resize-none overflow-auto bg-transparent py-1.5 leading-[1.4] outline-none text-[#374151]"
+                                      />
+                                    </div>
+                                  ) : (
+                                    // textarea (nao input) pra que o texto quebre em varias linhas.
+                                    <textarea
+                                      value={cell}
+                                      onChange={(event) => updateCell(bancoIndex, r, c, event.target.value)}
+                                      readOnly={!podeEditar}
+                                      spellCheck
+                                      lang="pt-BR"
+                                      style={cellCss(estilo)}
+                                      className={`h-full w-full resize-none overflow-auto bg-transparent px-2 py-1.5 leading-[1.4] outline-none ${r === 0 && !estilo ? 'font-bold text-[#2D2D2D]' : 'text-[#374151]'}`}
+                                    />
+                                  )}
                                   {/* Alcas de redimensionamento: coluna na 1a linha, linha na 1a coluna. */}
                                   {podeEditar && r === 0 && (
                                     <div
@@ -1072,6 +1315,39 @@ export default function Anotacoes({
                                       }}
                                       className="absolute bottom-0 left-0 h-1.5 w-full cursor-row-resize hover:bg-[#F05D28]"
                                     />
+                                  )}
+                                  {/* Alcas de REORDENAR (drag nativo): "#" a esquerda da linha, "#" no topo da coluna. */}
+                                  {podeEditar && c === 0 && (
+                                    <div
+                                      draggable
+                                      title="Arrastar para reordenar a linha"
+                                      onMouseDown={(event) => event.stopPropagation()}
+                                      onDragStart={(event) => {
+                                        event.stopPropagation();
+                                        event.dataTransfer.effectAllowed = 'move';
+                                        event.dataTransfer.setData('text/plain', '');
+                                        ordemArrastoRef.current = { tipo: 'row', bancoIndex, indice: r };
+                                      }}
+                                      className="absolute left-0.5 top-1/2 -translate-y-1/2 cursor-grab text-[#F05D28] opacity-30 hover:opacity-100"
+                                    >
+                                      <GripVertical size={12} />
+                                    </div>
+                                  )}
+                                  {podeEditar && r === 0 && (
+                                    <div
+                                      draggable
+                                      title="Arrastar para reordenar a coluna"
+                                      onMouseDown={(event) => event.stopPropagation()}
+                                      onDragStart={(event) => {
+                                        event.stopPropagation();
+                                        event.dataTransfer.effectAllowed = 'move';
+                                        event.dataTransfer.setData('text/plain', '');
+                                        ordemArrastoRef.current = { tipo: 'col', bancoIndex, indice: c };
+                                      }}
+                                      className="absolute left-1/2 top-0.5 -translate-x-1/2 cursor-grab text-[#F05D28] opacity-30 hover:opacity-100"
+                                    >
+                                      <GripHorizontal size={12} />
+                                    </div>
                                   )}
                                 </td>
                               );
@@ -1102,8 +1378,17 @@ export default function Anotacoes({
               {checklists.map((lista, index) => (
                 <div key={lista.id} className="rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)]">
                   <div className="mb-2 flex items-center justify-between">
-                    <h4 className="text-[13px] font-bold text-[#2D2D2D]">
-                      Checklist {index + 1}
+                    <h4 className="flex items-center text-[13px] font-bold text-[#2D2D2D]">
+                      {podeEditar ? (
+                        <input
+                          value={lista.nome ?? ''}
+                          onChange={(event) => updateChecklist(index, (l) => ({ ...l, nome: event.target.value }))}
+                          placeholder={`Checklist ${index + 1}`}
+                          className="h-6 w-32 rounded-md border border-transparent bg-transparent px-1 text-[13px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28] focus:bg-[#F9FAFB]"
+                        />
+                      ) : (
+                        <span>{lista.nome || `Checklist ${index + 1}`}</span>
+                      )}
                       <span className="ml-2 text-[11px] font-medium text-[#94A3B8]">
                         {lista.itens.filter((item) => item.feito).length}/{lista.itens.length}
                       </span>
@@ -1171,7 +1456,16 @@ export default function Anotacoes({
                 return (
                   <div key={bloco.id} className="rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)]">
                     <div className="mb-2 flex items-center justify-between">
-                      <h4 className="text-[13px] font-bold text-[#2D2D2D]">Notas {index + 1}</h4>
+                      {podeEditar ? (
+                        <input
+                          value={bloco.nome ?? ''}
+                          onChange={(event) => updateTextoBlockNome(index, event.target.value)}
+                          placeholder={`Nota ${index + 1}`}
+                          className="h-6 w-32 rounded-md border border-transparent bg-transparent px-1 text-[13px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28] focus:bg-[#F9FAFB]"
+                        />
+                      ) : (
+                        <h4 className="text-[13px] font-bold text-[#2D2D2D]">{bloco.nome || `Nota ${index + 1}`}</h4>
+                      )}
                       {podeEditar && (
                         <div className="flex items-center gap-1">
                           <button
@@ -1243,8 +1537,63 @@ export default function Anotacoes({
                 >
                   Vincular Usuários
                 </button>
+                <button
+                  type="button"
+                  onClick={() => { setOsPickerOpen(true); setOsPickerSearch(''); }}
+                  className="text-[12px] font-bold text-[#F05D28] hover:underline"
+                >
+                  Vincular Ordem de Serviço
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setDisciplinaPickerOpen(true); setDisciplinaPickerSearch(''); }}
+                  className="text-[12px] font-bold text-[#F05D28] hover:underline"
+                >
+                  Vincular Disciplina
+                </button>
               </div>
             )}
+            {editingOsCodigos.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {editingOsCodigos.map((codigo) => {
+                  const os = uniqueOsOptions.find((item) => item.codigo === codigo);
+                  return (
+                    <span key={codigo} className="inline-flex items-center gap-1.5 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] py-1 pl-3 pr-1.5 text-[12px] font-medium text-[#2D2D2D]">
+                      {os ? formatOsLabel(os) : codigo}
+                      {podeEditar && (
+                        <button
+                          type="button"
+                          onClick={() => toggleOs(codigo)}
+                          className="flex h-5 w-5 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#FEE2E2] hover:text-[#DC2626]"
+                        >
+                          <X size={11} />
+                        </button>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
+            {selectedDisciplinas.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {selectedDisciplinas.map((disciplina) => (
+                  <span key={disciplina} className="inline-flex items-center gap-1.5 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] py-1 pl-3 pr-1.5 text-[12px] font-medium text-[#2D2D2D]">
+                    {getDisciplineDisplayName(disciplina)}
+                    {podeEditar && (
+                      <button
+                        type="button"
+                        onClick={() => toggleDisciplina(disciplina)}
+                        className="flex h-5 w-5 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#FEE2E2] hover:text-[#DC2626]"
+                      >
+                        <X size={11} />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
+
             {linkedNotes.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2">
                 {linkedNotes.map((note) => (
@@ -1317,6 +1666,35 @@ export default function Anotacoes({
               </button>
             ))}
           </div>
+          {/* Varias OS/disciplinas vinculadas: chip escolhe qual cronograma a aba mostra. */}
+          {abaAtiva === 'os' && editingOsCodigos.length > 1 && (
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {editingOsCodigos.map((codigo) => (
+                <button
+                  key={codigo}
+                  type="button"
+                  onClick={() => setSidebarOsCodigo(codigo)}
+                  className={`h-7 rounded-full px-2.5 text-[11px] font-bold transition-colors ${osCodigoAtivo === codigo ? 'bg-[#2D2D2D] text-white' : 'border border-[#E5E7EB] bg-white text-[#64748B] hover:border-[#F7C7B7] hover:text-[#F05D28]'}`}
+                >
+                  {codigo}
+                </button>
+              ))}
+            </div>
+          )}
+          {abaAtiva === 'disciplina' && selectedDisciplinas.length > 1 && (
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {selectedDisciplinas.map((disciplina) => (
+                <button
+                  key={disciplina}
+                  type="button"
+                  onClick={() => setSidebarDisciplina(disciplina)}
+                  className={`h-7 rounded-full px-2.5 text-[11px] font-bold transition-colors ${disciplinaAtiva === disciplina ? 'bg-[#2D2D2D] text-white' : 'border border-[#E5E7EB] bg-white text-[#64748B] hover:border-[#F7C7B7] hover:text-[#F05D28]'}`}
+                >
+                  {getDisciplineDisplayName(disciplina)}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="min-h-0 flex-1 overflow-auto">
             {abaAtiva === 'mapa' ? (
               <div className="h-full">
@@ -1469,6 +1847,60 @@ export default function Anotacoes({
                 </button>
                 <button
                   type="button"
+                  onClick={() => { toggleChecklistCol(contextMenu.bancoIndex, contextMenu.col); setContextMenu(null); }}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                >
+                  <ListChecks size={14} />
+                  {(editing.bancos ?? [])[contextMenu.bancoIndex]?.checklistCols?.includes(contextMenu.col)
+                    ? 'Desmarcar coluna de checklist'
+                    : 'Marcar como coluna de checklist'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { toggleChecklistCell(contextMenu.bancoIndex, contextMenu.row, contextMenu.col); setContextMenu(null); }}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                >
+                  <ListChecks size={14} />
+                  {(editing.bancos ?? [])[contextMenu.bancoIndex]?.checklistCells?.includes(cellKey(contextMenu.row, contextMenu.col))
+                    ? 'Desmarcar célula de checklist'
+                    : 'Marcar célula de checklist'}
+                </button>
+                <div className="mt-1.5 border-t border-[#F1F5F9] pt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => { insertRow(contextMenu.bancoIndex, contextMenu.row); setContextMenu(null); setSelecao(null); }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                  >
+                    <ArrowUp size={14} />
+                    Inserir linha acima
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { insertRow(contextMenu.bancoIndex, contextMenu.row + 1); setContextMenu(null); setSelecao(null); }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                  >
+                    <ArrowDown size={14} />
+                    Inserir linha abaixo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { insertCol(contextMenu.bancoIndex, contextMenu.col); setContextMenu(null); setSelecao(null); }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                  >
+                    <ArrowLeft size={14} />
+                    Inserir coluna à esquerda
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { insertCol(contextMenu.bancoIndex, contextMenu.col + 1); setContextMenu(null); setSelecao(null); }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                  >
+                    <ArrowRight size={14} />
+                    Inserir coluna à direita
+                  </button>
+                </div>
+                <button
+                  type="button"
                   onClick={() => { removeRow(contextMenu.bancoIndex, contextMenu.row); setContextMenu(null); setSelecao(null); }}
                   className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#DC2626] hover:bg-[#FEE2E2]"
                 >
@@ -1575,6 +2007,111 @@ export default function Anotacoes({
               <button
                 type="button"
                 onClick={() => setUserPickerOpen(false)}
+                className="mt-3 h-9 rounded-lg bg-[#F05D28] px-4 text-[12px] font-bold text-white hover:bg-[#D94E1F]"
+              >
+                Concluído
+              </button>
+            </div>
+          </div>
+        )}
+
+        {osPickerOpen && (
+          <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setOsPickerOpen(false)}>
+            <div className="flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-xl bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
+              {contractOptions.length > 0 && (
+                <SearchableSelect
+                  value={contratoFiltro}
+                  onChange={(event) => setContratoFiltro(event.target.value)}
+                  title="Filtra a lista de OS por contrato"
+                  searchPlaceholder="Todos os contratos"
+                  className={`${campoClass} mb-2 w-full`}
+                >
+                  <option value="">Todos os contratos</option>
+                  {contractOptions.map((contrato) => (
+                    <option key={contrato.codigo} value={contrato.codigo}>{contrato.codigo} - {contrato.nome}</option>
+                  ))}
+                </SearchableSelect>
+              )}
+              <input
+                autoFocus
+                value={osPickerSearch}
+                onChange={(event) => setOsPickerSearch(event.target.value)}
+                placeholder="Buscar OS..."
+                className="h-10 rounded-lg border border-[#E5E7EB] px-3 text-[13px] outline-none focus:border-[#F05D28]"
+              />
+              <div className="mt-3 flex-1 overflow-auto">
+                {osPickerResults.length === 0 ? (
+                  <p className="px-1 py-2 text-[12px] text-[#94A3B8]">Nenhuma OS encontrada.</p>
+                ) : (
+                  osPickerResults.map((os) => {
+                    const marcado = editingOsCodigos.includes(os.codigo);
+                    return (
+                      <button
+                        key={os.codigo}
+                        type="button"
+                        onClick={() => toggleOs(os.codigo)}
+                        className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] ${marcado ? 'bg-[#FFF3EC] text-[#B45309]' : 'text-[#2D2D2D] hover:bg-[#F9FAFB]'}`}
+                      >
+                        {formatOsLabel(os)}
+                        {marcado && <Check size={14} />}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setOsPickerOpen(false)}
+                className="mt-3 h-9 rounded-lg bg-[#F05D28] px-4 text-[12px] font-bold text-white hover:bg-[#D94E1F]"
+              >
+                Concluído
+              </button>
+            </div>
+          </div>
+        )}
+
+        {disciplinaPickerOpen && (
+          <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setDisciplinaPickerOpen(false)}>
+            <div className="flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-xl bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
+              <div className="flex items-center gap-2">
+                <input
+                  autoFocus
+                  value={disciplinaPickerSearch}
+                  onChange={(event) => setDisciplinaPickerSearch(event.target.value)}
+                  placeholder="Buscar disciplina..."
+                  className="h-10 flex-1 rounded-lg border border-[#E5E7EB] px-3 text-[13px] outline-none focus:border-[#F05D28]"
+                />
+                <button
+                  type="button"
+                  onClick={markAllDisciplinas}
+                  className="h-10 flex-shrink-0 rounded-lg border border-[#F05D28] px-3 text-[12px] font-bold text-[#F05D28] hover:bg-[#FFF3EE]"
+                >
+                  Marcar todas
+                </button>
+              </div>
+              <div className="mt-3 flex-1 overflow-auto">
+                {disciplinaPickerResults.length === 0 ? (
+                  <p className="px-1 py-2 text-[12px] text-[#94A3B8]">Nenhuma disciplina encontrada.</p>
+                ) : (
+                  disciplinaPickerResults.map((disciplina) => {
+                    const marcado = selectedDisciplinas.includes(disciplina);
+                    return (
+                      <button
+                        key={disciplina}
+                        type="button"
+                        onClick={() => toggleDisciplina(disciplina)}
+                        className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] ${marcado ? 'bg-[#FFF3EC] text-[#B45309]' : 'text-[#2D2D2D] hover:bg-[#F9FAFB]'}`}
+                      >
+                        {getDisciplineDisplayName(disciplina)}
+                        {marcado && <Check size={14} />}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setDisciplinaPickerOpen(false)}
                 className="mt-3 h-9 rounded-lg bg-[#F05D28] px-4 text-[12px] font-bold text-white hover:bg-[#D94E1F]"
               >
                 Concluído

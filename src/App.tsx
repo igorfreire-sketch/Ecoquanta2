@@ -162,6 +162,7 @@ const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'planejamento', label: 'Planejamento' },
   { key: 'contrato', label: 'Contrato' },
   { key: 'cronograma', label: 'Cronograma' },
+  { key: 'solucoes', label: 'Soluções digitais' },
   { key: 'administracao', label: 'Administração' },
 ];
 

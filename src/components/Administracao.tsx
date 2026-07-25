@@ -58,6 +58,7 @@ export type AppTabKey =
   | 'nc'
   | 'nc2'
   | 'cronograma'
+  | 'solucoes'
   | 'administracao';
 
 // Pedido de outras disciplinas feito pelo proprio usuario na Area do Usuario, aguardando o admin aprovar/negar.

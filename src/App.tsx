@@ -1601,7 +1601,7 @@ export default function App() {
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('atividades');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [cronogramaSubTab, setCronogramaSubTab] = React.useState<'cronograma' | 'disciplinas'>('cronograma');
-  const [solucoesSubTab, setSolucoesSubTab] = React.useState<'notas' | 'cronograma'>('notas');
+  const [solucoesSubTab, setSolucoesSubTab] = React.useState<'notas' | 'cronograma'>('cronograma');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [globalData, setGlobalData] = useState<GlobalData>({});
 
@@ -3150,8 +3150,8 @@ export default function App() {
 
     if (activeTab === 'solucoes') {
       return [
-        { key: 'notas', label: 'Notas', icon: <Layers size={16} />, active: solucoesSubTab === 'notas', onClick: () => setSolucoesSubTab('notas') },
         { key: 'cronograma', label: 'Project', icon: <Calendar size={16} />, active: solucoesSubTab === 'cronograma', onClick: () => setSolucoesSubTab('cronograma') },
+        { key: 'notas', label: 'Notas', icon: <Layers size={16} />, active: solucoesSubTab === 'notas', onClick: () => setSolucoesSubTab('notas') },
       ];
     }
 

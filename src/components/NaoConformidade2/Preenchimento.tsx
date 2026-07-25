@@ -2,7 +2,7 @@ import SearchableSelect from '../SearchableSelect';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Send } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
-import { getUserDisciplineList } from '../../lib/disciplineCatalog';
+import { getSectorOptions, getUserDisciplineList } from '../../lib/disciplineCatalog';
 import { generateId, saveRecordsBatch, type Nc2Record } from './ncStore';
 
 type ItemKey = 'carimbo' | 'desenho' | 'relatorio' | 'faltaArquivo';
@@ -172,6 +172,14 @@ export default function Preenchimento({
     };
     updateClock();
   }, []);
+
+  // Opcoes de disciplina viram GRUPOS; se o valor gravado for legado (nao esta nos grupos), mantem visivel no topo.
+  const disciplinaGroupOptions = useMemo(() => {
+    const groups = getSectorOptions(disciplinas);
+    return formData.disciplina && !groups.includes(formData.disciplina)
+      ? [formData.disciplina, ...groups]
+      : groups;
+  }, [disciplinas, formData.disciplina]);
 
   const filteredOsOptions = useMemo(() => (
     osOptions.filter((os) => !formData.contrato || normalizeText(getOsContractCode(os)) === normalizeText(formData.contrato))
@@ -464,7 +472,7 @@ export default function Preenchimento({
                 style={selectStyle}
               >
                 <option value="">Selecione...</option>
-                {disciplinas.map((disciplina) => (
+                {disciplinaGroupOptions.map((disciplina) => (
                   <option key={disciplina} value={disciplina}>
                     {disciplina}
                   </option>

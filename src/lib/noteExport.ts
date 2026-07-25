@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import { getDisciplineDisplayName } from '../components/Atividades';
-import { getSheetBancos, getSheetDisciplinas, getSheetTextos, type AnnotationBanco, type AnnotationSheet } from '../components/CoordenacaoEngenharia/Anotacoes';
+import { getSheetBancos, getSheetDisciplinas, getSheetOsCodigos, getSheetTextos, type AnnotationBanco, type AnnotationSheet } from '../components/CoordenacaoEngenharia/Anotacoes';
 import { cellKey, quebrarTexto } from './bancoGrid';
 
 // Cor de celula/texto vem como hex (#RGB ou #RRGGBB) dos presets. Converte pro [r,g,b] do jsPDF.
@@ -183,7 +183,18 @@ export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] =
 // estruturado pra uma IA conseguir ler tudo sem ambiguidade: indice, metadados completos
 // por nota (id, autor, disciplina(s), OS, visibilidade), cada banco como tabela separada,
 // texto livre e referencias cruzadas entre notas por titulo.
-export function exportNotesToMarkdown(sheets: AnnotationSheet[], currentUserEmail: string) {
+export type NotesGroupBy = 'contrato' | 'os' | 'disciplina';
+
+export interface ExportNotesOptions {
+  groupBy?: NotesGroupBy;
+  // OS -> codigo do contrato (so usado quando groupBy === 'contrato').
+  osContrato?: Record<string, string>;
+  // Rotulo de exibicao por codigo de OS/contrato; sem entrada usa o proprio codigo.
+  osLabel?: Record<string, string>;
+  contratoLabel?: Record<string, string>;
+}
+
+export function exportNotesToMarkdown(sheets: AnnotationSheet[], currentUserEmail: string, options?: ExportNotesOptions) {
   const titleById = new Map(sheets.map((sheet) => [sheet.id, sheet.titulo || 'Sem título']));
   const escapeCell = (value: string) => String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
 
@@ -197,11 +208,11 @@ export function exportNotesToMarkdown(sheets: AnnotationSheet[], currentUserEmai
       : '_Banco vazio._'
   );
 
-  const toc = sheets
-    .map((sheet, index) => `${index + 1}. [${sheet.titulo || 'Sem título'}](#nota-${sheet.id})`)
-    .join('\n');
-
-  const sections = sheets.map((sheet) => {
+  // Monta a secao de uma nota; headingLevel controla se o titulo da nota vira ## ou ###
+  // (rebaixado quando agrupada dentro de um cabecalho de grupo). Ancora so e emitida na
+  // primeira ocorrencia da nota (ela pode repetir em varios grupos, ex: varias disciplinas).
+  const anchoredIds = new Set<string>();
+  const renderSection = (sheet: AnnotationSheet, headingMark: string) => {
     const disciplinas = getSheetDisciplinas(sheet).map((item) => getDisciplineDisplayName(item));
     const bancos = getSheetBancos(sheet);
     const linkedTitles = (sheet.linkedNoteIds || []).map((id) => titleById.get(id)).filter(Boolean);
@@ -236,9 +247,12 @@ export function exportNotesToMarkdown(sheets: AnnotationSheet[], currentUserEmai
       ].join('\n\n'))
       .join('\n\n');
 
+    const firstOccurrence = !anchoredIds.has(sheet.id);
+    anchoredIds.add(sheet.id);
+
     return [
-      `<a id="nota-${sheet.id}"></a>`,
-      `## ${sheet.titulo || 'Sem título'}`,
+      firstOccurrence ? `<a id="nota-${sheet.id}"></a>` : '',
+      `${headingMark} ${sheet.titulo || 'Sem título'}`,
       metaLines,
       bancosMarkdown,
       textosMarkdown,
@@ -246,16 +260,80 @@ export function exportNotesToMarkdown(sheets: AnnotationSheet[], currentUserEmai
       linkedTitles.length > 0 ? `**Notas que esta referencia:** ${linkedTitles.join(', ')}` : '',
       backlinkTitles.length > 0 ? `**Notas que referenciam esta:** ${backlinkTitles.join(', ')}` : '',
     ].filter(Boolean).join('\n\n');
+  };
+
+  const groupBy = options?.groupBy;
+
+  if (!groupBy) {
+    const toc = sheets
+      .map((sheet, index) => `${index + 1}. [${sheet.titulo || 'Sem título'}](#nota-${sheet.id})`)
+      .join('\n');
+    const sections = sheets.map((sheet) => renderSection(sheet, '##'));
+
+    const markdown = [
+      '# Notas de Engenharia — export para IA',
+      `Exportado por ${currentUserEmail} em ${new Date().toLocaleString('pt-BR')}. Total: ${sheets.length} nota(s).`,
+      'Este documento reune todas as notas privadas de quem exportou e todas as notas públicas do sistema. Cada nota tem seus metadados, seus bancos de dados (tabelas) e o texto livre, nessa ordem.',
+      '## Índice',
+      toc,
+      sections.join('\n\n---\n\n'),
+    ].join('\n\n');
+
+    downloadBlob(`notas_${safeFileName(currentUserEmail.split('@')[0])}.md`, new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
+    return;
+  }
+
+  // Agrupamento: uma nota pode cair em varios grupos (varias OS / varias disciplinas).
+  const osContrato = options?.osContrato || {};
+  const osLabel = options?.osLabel || {};
+  const contratoLabel = options?.contratoLabel || {};
+
+  const groupsByLabel = new Map<string, AnnotationSheet[]>();
+  const addToGroup = (label: string, sheet: AnnotationSheet) => {
+    const list = groupsByLabel.get(label) || [];
+    list.push(sheet);
+    groupsByLabel.set(label, list);
+  };
+
+  sheets.forEach((sheet) => {
+    if (groupBy === 'os') {
+      const codigos = getSheetOsCodigos(sheet);
+      if (codigos.length === 0) { addToGroup('Sem OS', sheet); return; }
+      codigos.forEach((codigo) => addToGroup(osLabel[codigo] || codigo, sheet));
+    } else if (groupBy === 'disciplina') {
+      const disciplinas = getSheetDisciplinas(sheet);
+      if (disciplinas.length === 0) { addToGroup('Sem disciplina', sheet); return; }
+      disciplinas.forEach((item) => addToGroup(getDisciplineDisplayName(item), sheet));
+    } else {
+      const codigosContrato = new Set(getSheetOsCodigos(sheet).map((codigo) => osContrato[codigo]).filter(Boolean));
+      if (codigosContrato.size === 0) { addToGroup('Sem contrato', sheet); return; }
+      codigosContrato.forEach((codigo) => addToGroup(contratoLabel[codigo!] || codigo!, sheet));
+    }
   });
 
+  const groupLabels = Array.from(groupsByLabel.keys()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  const toc = groupLabels
+    .map((label) => [
+      `- **${label}**`,
+      ...groupsByLabel.get(label)!.map((sheet) => `  - [${sheet.titulo || 'Sem título'}](#nota-${sheet.id})`),
+    ].join('\n'))
+    .join('\n');
+
+  const sections = groupLabels.map((label) => [
+    `## ${label}`,
+    groupsByLabel.get(label)!.map((sheet) => renderSection(sheet, '###')).join('\n\n---\n\n'),
+  ].join('\n\n'));
+
+  const suffix = groupBy === 'contrato' ? '_por_contrato' : groupBy === 'os' ? '_por_os' : '_por_disciplina';
   const markdown = [
     '# Notas de Engenharia — export para IA',
-    `Exportado por ${currentUserEmail} em ${new Date().toLocaleString('pt-BR')}. Total: ${sheets.length} nota(s).`,
-    'Este documento reune todas as notas privadas de quem exportou e todas as notas públicas do sistema. Cada nota tem seus metadados, seus bancos de dados (tabelas) e o texto livre, nessa ordem.',
+    `Exportado por ${currentUserEmail} em ${new Date().toLocaleString('pt-BR')}. Total: ${sheets.length} nota(s), agrupadas por ${groupBy}.`,
+    'Este documento reune todas as notas privadas de quem exportou e todas as notas públicas do sistema, agrupadas conforme indicado. Uma nota pode aparecer em mais de um grupo. Cada nota tem seus metadados, seus bancos de dados (tabelas) e o texto livre, nessa ordem.',
     '## Índice',
     toc,
     sections.join('\n\n---\n\n'),
   ].join('\n\n');
 
-  downloadBlob(`notas_${safeFileName(currentUserEmail.split('@')[0])}.md`, new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
+  downloadBlob(`notas_${safeFileName(currentUserEmail.split('@')[0])}${suffix}.md`, new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
 }

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { CheckCircle2, Clock3, Loader2, Save } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
 import { getDemoRecords, getRecords, updateRecord, type Nc2Item, type Nc2Record } from './ncStore';
+import { getDisciplineGroups } from '../../lib/disciplineCatalog';
 
 function itemUnitLabel(item: Nc2Item) {
   const total = item.quantidadeT || item.quantidadeC || 0;
@@ -142,7 +143,7 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Disciplina</label>
-                  <input
+                  <select
                     value={rec.disciplina}
                     onChange={(event) => {
                       const value = event.target.value;
@@ -153,7 +154,16 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
                       if (fresh) void persistRecord(fresh);
                     }}
                     className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] px-3 text-[13px] font-medium outline-none focus:border-[#F05D28]"
-                  />
+                  >
+                    {rec.disciplina && !getDisciplineGroups().includes(rec.disciplina) && (
+                      <option value={rec.disciplina}>{rec.disciplina}</option>
+                    )}
+                    {getDisciplineGroups().map((grupo) => (
+                      <option key={grupo} value={grupo}>
+                        {grupo}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

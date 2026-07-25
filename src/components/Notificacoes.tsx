@@ -15,7 +15,7 @@ interface NotificacoesProps {
   // Itens mais recentes que a ultima visita: viram o contador vermelho.
   naoLidos: number;
   onAbrir: (id: string) => void;
-  onVisualizar: () => void;
+  onVisualizar?: () => void;
   // 'header' = botao redondo com borda; 'rail' = simbolo sutil no rodape da barra, painel sobe.
   variante?: 'header' | 'rail';
 }
@@ -33,8 +33,8 @@ export default function Notificacoes({ icone, titulo, vazio, itens, naoLidos, on
       setCoord({ left: r.right + 10, bottom: window.innerHeight - r.bottom });
     }
     setAberto(proximo);
-    // Abrir o painel ja conta como visto - o contador zera.
-    if (proximo) onVisualizar();
+    // Abrir o painel NAO zera mais o contador (so o botao "Limpar" zera); onVisualizar e opcional.
+    if (proximo) onVisualizar?.();
   };
 
   const rail = variante === 'rail';

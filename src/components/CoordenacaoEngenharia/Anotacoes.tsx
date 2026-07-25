@@ -1,6 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, Check, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, Calendar, Check, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
 import SearchableSelect from '../SearchableSelect';
 import { getDisciplineDisplayName, getDisciplineIconInfo, type EngineeringActivity } from '../Atividades';
 import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups } from '../../lib/disciplineCatalog';
@@ -69,6 +69,8 @@ export interface AnnotationSheet {
   bancos?: AnnotationBanco[];
   textos?: AnnotationTextBlock[];
   checklists?: AnnotationChecklist[];
+  // Link colado do evento do Google Agenda (sem OAuth). Ausente = nota sem vinculo.
+  googleEventUrl?: string;
   updatedAt: string;
   // Campos abaixo podem faltar em anotacoes salvas antes desta feature.
   // publica ausente = tratado como publica (nao muda a visibilidade de notas antigas).
@@ -79,6 +81,8 @@ export interface AnnotationSheet {
   linkedNoteIds?: string[];
   // Emails de usuarios marcados na nota - o card fica alaranjado pra eles (ver isMarcadoPara).
   marcadosUsuarios?: string[];
+  // Coluna do Kanban de "Minhas Notas". Ausente = tratado como 'criado' (nota antiga sem o campo).
+  status?: 'criado' | 'iniciado' | 'concluido';
   // Legado: antes de suportar varios blocos de notas, o texto livre unico ficava aqui. Migrado por getSheetTextos.
   texto?: string;
   // Legado: antes de suportar varios bancos, a tabela unica ficava aqui. Migrada por getSheetBancos.
@@ -98,6 +102,18 @@ export function getSheetTextos(sheet: AnnotationSheet): AnnotationTextBlock[] {
   if (sheet.textos && sheet.textos.length > 0) return sheet.textos;
   if (sheet.texto && sheet.texto.trim()) return [{ id: 'legacy', texto: sheet.texto }];
   return [];
+}
+
+// Status de uma nota no Kanban - ausente (nota antiga) = 'criado'.
+export function getSheetStatus(sheet: AnnotationSheet): 'criado' | 'iniciado' | 'concluido' {
+  return sheet.status || 'criado';
+}
+
+// Concluida ha 10 dias ou mais (sem alteracao): sai do Kanban e vai pra aba "Notas Concluidas".
+const DEZ_DIAS_MS = 10 * 24 * 60 * 60 * 1000;
+export function isConcluidaAntiga(sheet: AnnotationSheet): boolean {
+  if (getSheetStatus(sheet) !== 'concluido' || !sheet.updatedAt) return false;
+  return (Date.now() - new Date(sheet.updatedAt).getTime()) >= DEZ_DIAS_MS;
 }
 
 // Disciplinas de uma nota, considerando o campo multiplo novo com fallback pro singular antigo.
@@ -181,6 +197,7 @@ export function novaNotaBase(autor: { nome: string; email: string }): Annotation
     autorNome: autor.nome,
     autorEmail: autor.email,
     publica: true,
+    status: 'criado',
   };
 }
 
@@ -307,6 +324,7 @@ export default function Anotacoes({
   const [sugestoesOrtografia, setSugestoesOrtografia] = React.useState<SugestaoOrtografica[]>([]);
   const [saving, setSaving] = React.useState(false);
   const [configOpen, setConfigOpen] = React.useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = React.useState(false);
   // Selecao retangular de celulas (clicar e arrastar). Base do menu de formatacao,
   // da limpeza em massa, da mesclagem e do pincel.
   const [selecao, setSelecao] = React.useState<CellSelection | null>(null);
@@ -344,6 +362,9 @@ export default function Anotacoes({
   const [listaContrato, setListaContrato] = React.useState('');
   const [listaOs, setListaOs] = React.useState('');
   const [listaDisciplina, setListaDisciplina] = React.useState('');
+  const [listaVinculo, setListaVinculo] = React.useState('');
+  // Aba ativa da lista de notas: minhas (Kanban), publicas de outros, ou concluidas ha 10+ dias.
+  const [notasTab, setNotasTab] = React.useState<'minhas' | 'publicas' | 'concluidas'>('minhas');
   // Menu do card em posicao FIXED (calculada do botao) para nao ser recortado pelo overflow-hidden do card.
   const [cardMenuPos, setCardMenuPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const textoRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
@@ -816,9 +837,10 @@ export default function Anotacoes({
     .filter((sheet) => !listaContrato || getSheetOsCodigos(sheet).some((codigo) => codigosDoContrato.has(codigo)))
     .filter((sheet) => !listaOs || getSheetOsCodigos(sheet).includes(listaOs))
     // Filtro fala em setor: escolher 'Arquitetura' traz URB, LAY, LUM...
-    .filter((sheet) => !listaDisciplina || getSheetDisciplinas(sheet).some((item) => disciplineMatchesSector(item, listaDisciplina)));
-  const temFiltroLista = Boolean(listaAutor || listaContrato || listaOs || listaDisciplina);
-  const limparFiltroLista = () => { setListaAutor(''); setListaContrato(''); setListaOs(''); setListaDisciplina(''); };
+    .filter((sheet) => !listaDisciplina || getSheetDisciplinas(sheet).some((item) => disciplineMatchesSector(item, listaDisciplina)))
+    .filter((sheet) => listaVinculo !== 'vinculado' || (sheet.marcadosUsuarios || []).includes(currentUser.email));
+  const temFiltroLista = Boolean(listaAutor || listaContrato || listaOs || listaDisciplina || listaVinculo);
+  const limparFiltroLista = () => { setListaAutor(''); setListaContrato(''); setListaOs(''); setListaDisciplina(''); setListaVinculo(''); };
   // Autores que aparecem no seletor: os cadastrados no sistema, sem o proprio usuario
   // (ele ja tem a opcao "Criado por mim").
   const autoresDisponiveis = usuarios
@@ -844,6 +866,7 @@ export default function Anotacoes({
     const podeEditar = !notaJaSalva || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios);
 
     const updateTitulo = (titulo: string) => setEditing((prev) => (prev ? { ...prev, titulo } : prev));
+    const updateGoogleEventUrl = (googleEventUrl: string) => setEditing((prev) => (prev ? { ...prev, googleEventUrl } : prev));
     const toggleOs = (codigo: string) => setEditing((prev) => {
       if (!prev) return prev;
       const current = getSheetOsCodigos(prev);
@@ -974,7 +997,9 @@ export default function Anotacoes({
       ? activities.filter((activity) => activity.osCodigo === osCodigoAtivo)
       : [];
     const disciplinaActivities = disciplinaAtiva
-      ? activities.filter((activity) => activity.disciplinas.some((disciplina) => getDisciplineDisplayName(disciplina) === getDisciplineDisplayName(disciplinaAtiva)))
+      // disciplinaAtiva agora é um grupo (T20); as atividades guardam disciplina fina.
+      // Casa por setor/grupo, igual a lista de notas — comparar displayName não casava.
+      ? activities.filter((activity) => activity.disciplinas.some((disciplina) => disciplineMatchesSector(disciplina, disciplinaAtiva)))
       : [];
     const sidebarTabs: Array<{ key: 'os' | 'disciplina' | 'mapa'; label: string }> = [
       ...(editingOsCodigos.length > 0 ? [{ key: 'os' as const, label: 'Ordem de Serviço' }] : []),
@@ -1118,6 +1143,31 @@ export default function Anotacoes({
             )}
           </div>
 
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[#64748B]">
+            <Calendar size={12} />
+            <span className="font-bold">Google Agenda</span>
+            {podeEditar && (
+              <input
+                type="url"
+                value={editing.googleEventUrl || ''}
+                onChange={(event) => updateGoogleEventUrl(event.target.value)}
+                placeholder="Colar link do evento do Google Agenda"
+                className="h-7 min-w-[220px] flex-1 rounded-lg border border-[#E5E7EB] bg-white px-2 text-[12px] text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+              />
+            )}
+            {editing.googleEventUrl && /^https?:\/\//.test(editing.googleEventUrl) && (
+              <a
+                href={editing.googleEventUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 font-bold text-[#F05D28] hover:underline"
+              >
+                <Link2 size={12} />
+                Abrir evento
+              </a>
+            )}
+          </div>
+
           <p className="mt-2 text-[11px] text-[#94A3B8]">
             {editing.publica === false ? 'Privada: só visível para quem criou. ' : 'Pública: visível para todos. '}
             {podeEditar
@@ -1195,7 +1245,8 @@ export default function Anotacoes({
                       </div>
                     )}
                   </div>
-                  <div className="overflow-auto">
+                  {/* pl-4/pt-4: calha pras alcas "#" ficarem FORA das celulas (sem sobrepor checklist). */}
+                  <div className="overflow-auto pl-4 pt-4">
                     {/* table-fixed + colgroup: sem isso o navegador ignora as larguras arrastadas. */}
                     <table className="border-collapse text-[13px]" style={{ tableLayout: 'fixed' }}>
                       <colgroup>
@@ -1328,7 +1379,7 @@ export default function Anotacoes({
                                         event.dataTransfer.setData('text/plain', '');
                                         ordemArrastoRef.current = { tipo: 'row', bancoIndex, indice: r };
                                       }}
-                                      className="absolute left-0.5 top-1/2 -translate-y-1/2 cursor-grab text-[#F05D28] opacity-30 hover:opacity-100"
+                                      className="absolute -left-3.5 top-1/2 -translate-y-1/2 cursor-grab text-[#F05D28] opacity-30 hover:opacity-100"
                                     >
                                       <GripVertical size={12} />
                                     </div>
@@ -1344,7 +1395,7 @@ export default function Anotacoes({
                                         event.dataTransfer.setData('text/plain', '');
                                         ordemArrastoRef.current = { tipo: 'col', bancoIndex, indice: c };
                                       }}
-                                      className="absolute left-1/2 top-0.5 -translate-x-1/2 cursor-grab text-[#F05D28] opacity-30 hover:opacity-100"
+                                      className="absolute left-1/2 -top-3.5 -translate-x-1/2 cursor-grab text-[#F05D28] opacity-30 hover:opacity-100"
                                     >
                                       <GripHorizontal size={12} />
                                     </div>
@@ -1726,11 +1777,12 @@ export default function Anotacoes({
             <div
               className="fixed z-[211] flex items-start gap-2"
               style={{
-                left: Math.min(contextMenu.x, window.innerWidth - (sugestoesOrtografia.length ? 540 : 272)),
-                top: Math.min(contextMenu.y, window.innerHeight - 430),
+                left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - (sugestoesOrtografia.length ? 540 : 272) - 8)),
+                top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 430)),
+                maxHeight: 'calc(100vh - 16px)',
               }}
             >
-            <div className="w-64 rounded-xl bg-white p-2 shadow-xl">
+            <div className="w-64 max-h-[90vh] overflow-y-auto rounded-xl bg-white p-2 shadow-xl">
               <div className="flex items-center gap-1">
                 {([['bold', 'N', 'font-black'], ['italic', 'I', 'italic'], ['strike', 'S', 'line-through']] as const).map(([chave, rotulo, classe]) => (
                   <button
@@ -1920,7 +1972,7 @@ export default function Anotacoes({
 
             {/* Segunda coluna: so aparece quando o corretor achou erro na celula. */}
             {sugestoesOrtografia.length > 0 && (
-              <div className="w-64 rounded-xl bg-white p-2 shadow-xl">
+              <div className="w-64 max-h-[90vh] overflow-y-auto rounded-xl bg-white p-2 shadow-xl">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">Ortografia</p>
                 {sugestoesOrtografia.map((item) => (
                   <div key={item.palavra} className="mt-1.5 border-t border-[#F1F5F9] pt-1.5 first:border-t-0 first:pt-0">
@@ -2124,10 +2176,24 @@ export default function Anotacoes({
     );
   }
 
-  const minhasNotas = listaFiltrada.filter((sheet) => sheet.autorEmail === currentUser.email);
+  const minhasNotasTodas = listaFiltrada.filter((sheet) => sheet.autorEmail === currentUser.email);
   const notasDeOutros = listaFiltrada.filter((sheet) => sheet.autorEmail !== currentUser.email);
+  // Concluidas ha 10+ dias saem do Kanban e vao pra aba propria.
+  const minhasNotasKanban = minhasNotasTodas.filter((sheet) => !isConcluidaAntiga(sheet));
+  const minhasNotasConcluidas = minhasNotasTodas.filter(isConcluidaAntiga);
   // So o autor ou um admin do sistema pode excluir a nota.
   const canDeleteSheet = (sheet: AnnotationSheet) => canDeleteNote(currentUser, sheet.autorEmail);
+
+  // Move a nota pra outra coluna do Kanban (drag-and-drop ou clique nos botoes de status).
+  const moverStatus = (sheet: AnnotationSheet, status: 'criado' | 'iniciado' | 'concluido') => {
+    if (getSheetStatus(sheet) === status) return;
+    void onSave({ ...sheet, status, updatedAt: new Date().toISOString() });
+  };
+  const KANBAN_COLUNAS: Array<{ key: 'criado' | 'iniciado' | 'concluido'; label: string }> = [
+    { key: 'criado', label: 'Criado' },
+    { key: 'iniciado', label: 'Iniciado' },
+    { key: 'concluido', label: 'Concluído' },
+  ];
 
   const handleDeleteSheet = (sheet: AnnotationSheet) => {
     setOpenCardMenuId(null);
@@ -2286,6 +2352,15 @@ export default function Anotacoes({
               <option key={setor} value={setor}>{setor}</option>
             ))}
           </SearchableSelect>
+          <SearchableSelect
+            value={listaVinculo}
+            onChange={(event) => setListaVinculo(event.target.value)}
+            searchPlaceholder="Pesquisar vinculo..."
+            className={filtroClass}
+          >
+            <option value="">Todas as notas</option>
+            <option value="vinculado">Fui vinculado</option>
+          </SearchableSelect>
           {temFiltroLista && (
             <button
               type="button"
@@ -2295,14 +2370,46 @@ export default function Anotacoes({
               Limpar filtros
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => exportNotesToMarkdown(listaFiltrada, currentUser.email)}
-            className="ml-auto inline-flex h-11 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-4 text-[13px] font-bold text-[#2D2D2D] hover:border-[#F7C7B7] hover:text-[#F05D28]"
-          >
-            <FileText size={15} />
-            Exportar em .MD
-          </button>
+          <div className="relative ml-auto">
+            <button
+              type="button"
+              onClick={() => setExportMenuOpen((prev) => !prev)}
+              className="inline-flex h-11 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-4 text-[13px] font-bold text-[#2D2D2D] hover:border-[#F7C7B7] hover:text-[#F05D28]"
+            >
+              <FileText size={15} />
+              Exportar em .MD
+            </button>
+            {exportMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-[205]" onClick={() => setExportMenuOpen(false)} />
+                <div className="absolute right-0 top-full z-[206] mt-1 w-48 rounded-xl bg-white p-1.5 shadow-xl">
+                  {[
+                    { label: 'Exportar tudo', groupBy: undefined },
+                    { label: 'Por Contrato', groupBy: 'contrato' as const },
+                    { label: 'Por OS', groupBy: 'os' as const },
+                    { label: 'Por Disciplina', groupBy: 'disciplina' as const },
+                  ].map((opcao) => (
+                    <button
+                      key={opcao.label}
+                      type="button"
+                      onClick={() => {
+                        exportNotesToMarkdown(listaFiltrada, currentUser.email, opcao.groupBy && {
+                          groupBy: opcao.groupBy,
+                          osContrato: Object.fromEntries(osOptions.map((os) => [os.codigo, os.contratoCodigo || ''])),
+                          osLabel: Object.fromEntries(osOptions.map((os) => [os.codigo, formatOsLabel(os)])),
+                          contratoLabel: Object.fromEntries(contractOptions.map((contrato) => [contrato.codigo, `${contrato.codigo} - ${contrato.nome}`])),
+                        });
+                        setExportMenuOpen(false);
+                      }}
+                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                    >
+                      {opcao.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -2313,24 +2420,92 @@ export default function Anotacoes({
             : 'Nenhuma anotação encontrada ainda.'}
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <div>
-            <h4 className="mb-2 text-[12px] font-bold uppercase tracking-wide text-[#64748B]">Minhas notas</h4>
-            {minhasNotas.length === 0 ? (
+        <>
+          {/* Abas sutis: Minhas Notas / Notas Públicas a esquerda, Notas Concluídas (verde) a direita. */}
+          <div className="mb-4 flex items-center gap-1 border-b border-[#E5E7EB]">
+            <button
+              type="button"
+              onClick={() => setNotasTab('minhas')}
+              className={`border-b-2 px-3 py-2 text-[12px] font-bold transition-colors ${notasTab === 'minhas' ? 'border-[#F05D28] text-[#2D2D2D]' : 'border-transparent text-[#94A3B8] hover:text-[#2D2D2D]'}`}
+            >
+              Minhas Notas
+            </button>
+            <button
+              type="button"
+              onClick={() => setNotasTab('publicas')}
+              className={`border-b-2 px-3 py-2 text-[12px] font-bold transition-colors ${notasTab === 'publicas' ? 'border-[#F05D28] text-[#2D2D2D]' : 'border-transparent text-[#94A3B8] hover:text-[#2D2D2D]'}`}
+            >
+              Notas Públicas
+            </button>
+            <button
+              type="button"
+              onClick={() => setNotasTab('concluidas')}
+              className={`ml-auto border-b-2 px-3 py-2 text-[12px] font-bold transition-colors ${notasTab === 'concluidas' ? 'border-emerald-500 text-emerald-700' : 'border-transparent text-emerald-600/70 hover:text-emerald-700'}`}
+            >
+              Notas Concluídas{minhasNotasConcluidas.length > 0 ? ` (${minhasNotasConcluidas.length})` : ''}
+            </button>
+          </div>
+
+          {notasTab === 'minhas' && (
+            minhasNotasKanban.length === 0 ? (
               <p className="text-[12px] text-[#94A3B8]">Você ainda não criou nenhuma anotação aqui.</p>
             ) : (
-              <div className="flex flex-col gap-3">{minhasNotas.map(renderCard)}</div>
-            )}
-          </div>
-          <div>
-            <h4 className="mb-2 text-[12px] font-bold uppercase tracking-wide text-[#64748B]">Notas públicas de outros usuários</h4>
-            {notasDeOutros.length === 0 ? (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                {KANBAN_COLUNAS.map((coluna) => {
+                  const notasColuna = minhasNotasKanban.filter((sheet) => getSheetStatus(sheet) === coluna.key);
+                  return (
+                    <div
+                      key={coluna.key}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const id = event.dataTransfer.getData('text/plain');
+                        const sheet = minhasNotasKanban.find((item) => item.id === id);
+                        if (sheet) moverStatus(sheet, coluna.key);
+                      }}
+                      className="min-h-[80px] rounded-xl bg-[#F9FAFB] p-3"
+                    >
+                      <h4 className="mb-2 text-[12px] font-bold uppercase tracking-wide text-[#64748B]">
+                        {coluna.label} <span className="text-[#94A3B8]">({notasColuna.length})</span>
+                      </h4>
+                      <div className="flex flex-col gap-3">
+                        {notasColuna.map((sheet) => (
+                          <div
+                            key={sheet.id}
+                            draggable
+                            onDragStart={(event) => event.dataTransfer.setData('text/plain', sheet.id)}
+                          >
+                            {renderCard(sheet)}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          )}
+
+          {notasTab === 'publicas' && (
+            notasDeOutros.length === 0 ? (
               <p className="text-[12px] text-[#94A3B8]">Nenhuma anotação pública de outra pessoa aqui ainda.</p>
             ) : (
               <div className="flex flex-col gap-3">{notasDeOutros.map(renderCard)}</div>
-            )}
-          </div>
-        </div>
+            )
+          )}
+
+          {notasTab === 'concluidas' && (
+            minhasNotasConcluidas.length === 0 ? (
+              <p className="text-[12px] text-[#94A3B8]">Nenhuma nota concluída há mais de 10 dias.</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {minhasNotasConcluidas.map((sheet) => (
+                  <div key={sheet.id} className="rounded-xl border-l-4 border-emerald-400">{renderCard(sheet)}</div>
+                ))}
+              </div>
+            )
+          )}
+        </>
       )}
     </div>
   );

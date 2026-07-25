@@ -134,6 +134,8 @@ interface AtividadesProps {
   splitOsCardsByDiscipline?: boolean;
   // Notas (AnnotationSheet) do app: usadas para mostrar a nota da disciplina no painel esquerdo do card de OS.
   notes?: AnnotationSheet[];
+  // Área Técnica: no fullscreen do card de OS, mostra placeholder no lugar do cronograma (painel direito).
+  cronogramaPlaceholder?: boolean;
 }
 
 const STORAGE_KEY = 'quanta_producao_tecnica_cards';
@@ -1619,15 +1621,13 @@ function FilterMultiSelectDropdown({
   value,
   options,
   placeholder,
-  onChange,
-  headerAction
+  onChange
 }: {
   label: string;
   value: string[];
   options: string[];
   placeholder: string;
   onChange: (next: string[]) => void;
-  headerAction?: React.ReactNode;
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -1679,7 +1679,6 @@ function FilterMultiSelectDropdown({
     <div ref={wrapperRef} className="flex min-w-0 flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
         <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#757575]">{label}</label>
-        {headerAction}
       </div>
       <button
         type="button"
@@ -2451,7 +2450,11 @@ export function getDisciplineDisplayName(value?: string) {
   return getDisciplineIconInfo(cleaned).label || cleaned;
 }
 
+// "Ver todas as disciplinas" agora e a primeira opcao do proprio dropdown (padrao.md), nao um checkbox solto.
+const VER_TODAS_DISCIPLINAS_OPTION = '__ver_todas_disciplinas__';
+
 function getDisciplineFilterLabel(value?: string) {
+  if (value === VER_TODAS_DISCIPLINAS_OPTION) return 'Ver todas as disciplinas';
   return getDisciplineDisplayName(value);
 }
 
@@ -2515,165 +2518,6 @@ function useResponsiveCardScale() {
   }, []);
 
   return { hostRef, scale };
-}
-
-function ProductionCard({
-  activity,
-  tipoLicitacao,
-  onClick
-}: {
-  activity: EngineeringActivity;
-  tipoLicitacao: string;
-  onClick: () => void;
-}) {
-  const { hostRef, scale } = useResponsiveCardScale();
-  const leaderPercentual = getLeaderPercentual(activity);
-  const isBehind = leaderPercentual < activity.percentualPrevisto;
-  const valueTone = isBehind ? 'text-[#EF4444]' : 'text-[#166534]';
-  const participants = getActivityParticipants(activity);
-  const disciplineIcon = getDisciplineIconInfo(activity.disciplina || activity.disciplinas?.[0] || '');
-  const disciplineDisplayName = getDisciplineDisplayName(activity.disciplina || activity.disciplinas?.[0] || '');
-  const DisciplineIcon = disciplineIcon.icon;
-  const visibleParticipants = participants.slice(0, 2);
-  const extraParticipants = Math.max(0, participants.length - visibleParticipants.length);
-  const displayCode = extractVisualOsCode(activity) || activity.osCodigo || getActivityRenderableCode(activity) || activity.origemItem;
-  const displayTitle = stripLodFromTitle(activity.osNome, displayCode) || activity.osNome || activity.osCodigo;
-  const workFrontText = getActivityProjectLabel(activity);
-
-  return (
-    <div ref={hostRef} className="relative w-full" style={{ height: `${CARD_DESIGN_HEIGHT * scale}px` }}>
-      <button
-        type="button"
-        onClick={onClick}
-        className="absolute left-0 top-0 block overflow-hidden rounded-[28px] border border-transparent bg-white px-4 py-3.5 text-left shadow-[0_9px_20px_rgba(45,45,45,0.22)] transition-[border-color,box-shadow] hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.14)] cursor-pointer"
-        style={{
-          width: `${CARD_DESIGN_WIDTH}px`,
-          transform: scale !== null ? `scale(${scale})` : 'scale(1)',
-          transformOrigin: 'top left',
-          visibility: scale !== null ? 'visible' : 'hidden',
-        }}
-      >
-        <div
-          className="absolute right-[32px] top-0 flex flex-col items-center"
-          aria-hidden="true"
-          style={{ '--flag-color': getOsAccentColor(activity.osCodigo) } as React.CSSProperties}
-        >
-          <div
-            className="h-[28px] w-4"
-            style={{ backgroundColor: getOsAccentColor(activity.osCodigo) }}
-          />
-          <div
-            className="h-0 w-0 border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent"
-            style={{ borderTopColor: getOsAccentColor(activity.osCodigo) }}
-          />
-        </div>
-        {activity.edificio && (
-          <div
-            className="absolute right-[52px] top-0 flex flex-col items-center"
-            aria-hidden="true"
-            title={`Edifício ${activity.edificio}`}
-          >
-            <div
-              className="h-[28px] w-4"
-              style={{ backgroundColor: getBuildingAccentColor(activity.edificio) }}
-            />
-            <div
-              className="h-0 w-0 border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent"
-              style={{ borderTopColor: getBuildingAccentColor(activity.edificio) }}
-            />
-          </div>
-        )}
-
-        <div className="flex min-h-[54px] items-center pr-8">
-          <p className="text-[18px] font-medium leading-[1.18] text-[#111827]">
-            {displayCode ? <span className="font-black text-[#F05D28]">{displayCode}</span> : null}
-            {displayCode ? ' - ' : ''}
-            {displayTitle}
-          </p>
-        </div>
-
-        <div className="mt-2 grid grid-cols-[minmax(0,1fr)_190px] gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-[12px] bg-[#F3F4F6] px-2.5 py-2">
-            <div
-              className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-[3px] text-[#F05D28] shadow-[0_3px_8px_rgba(240,93,40,0.10)]"
-              title={disciplineDisplayName}
-              aria-label={disciplineDisplayName}
-            >
-              {disciplineIcon.imageSrc ? (
-                <img
-                  src={disciplineIcon.imageSrc}
-                  alt={disciplineDisplayName}
-                  className="h-full w-full rounded-full object-cover"
-                />
-              ) : DisciplineIcon ? (
-                <DisciplineIcon size={30} className="scale-[1.05]" strokeWidth={2.2} />
-              ) : null}
-            </div>
-
-            {visibleParticipants.map((person) => {
-              const initials = getAssigneeInitials(person);
-              const color = getAssigneeColor(person);
-              return (
-                <div
-                  key={person}
-                  className="flex h-10 w-10 items-center justify-center rounded-full border border-[#F05D28] bg-white text-[11px] font-black uppercase text-[#F05D28] shadow-[0_3px_8px_rgba(240,93,40,0.10)]"
-                  style={{ boxShadow: `0 4px 12px ${color}20` }}
-                  title={person}
-                  aria-label={person}
-                >
-                  {initials}
-                </div>
-              );
-            })}
-
-            {extraParticipants > 0 && (
-              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[#CBD5E1] bg-white text-[10px] font-black uppercase text-[#64748B] shadow-[0_3px_8px_rgba(100,116,139,0.10)]">
-                +{extraParticipants}
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-[12px] bg-[#DCF5E2] px-3 py-2">
-            <div className="grid grid-cols-3 gap-1.5 text-center xl:gap-2">
-              <div className="min-w-0">
-                <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">LOD</p>
-                <p className="mt-0.5 text-[15px] font-black leading-none text-[#2D2D2D]">{activity.lodAtual}</p>
-              </div>
-              <div className="min-w-0">
-                <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">Exec</p>
-                <p className={`mt-0.5 text-[15px] font-black leading-none ${valueTone}`}>{activity.percentualRealizado}%</p>
-              </div>
-              <div className="min-w-0">
-                <p className="text-[9px] font-black uppercase tracking-[0.7px] text-[#7C8AA0]">Prev</p>
-                <p className={`mt-0.5 text-[15px] font-black leading-none ${valueTone}`}>{activity.percentualPrevisto}%</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-3 rounded-[12px] bg-[#F3F4F6] px-3 py-2">
-          <div className="grid grid-cols-4 gap-2">
-            <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Início</p>
-              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{formatDatePt(activity.inicioPlanejado)}</p>
-            </div>
-            <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Término</p>
-              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{formatDatePt(activity.terminoPlanejado)}</p>
-            </div>
-            <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Projeto</p>
-              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{extractProjectType(activity.osNome) || 'Básico'}</p>
-            </div>
-            <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.7px] text-[#94A3B8]">Licitação</p>
-              <p className="mt-1 text-[12px] font-bold text-[#2D2D2D]">{tipoLicitacao || ''}</p>
-            </div>
-          </div>
-        </div>
-      </button>
-    </div>
-  );
 }
 
 type OsActivityGroup = { key: string; osCodigo: string; osNome: string; disciplina?: string; edificio?: string; activities: EngineeringActivity[] };
@@ -2843,6 +2687,7 @@ export default function Atividades({
   autoSelectUserDisciplineFilter = false,
   splitOsCardsByDiscipline = false,
   notes = [],
+  cronogramaPlaceholder = false,
 }: AtividadesProps) {
   const sourceActivities = useMemo(() => buildActivitiesFromEap(preloadedData, currentUser), [preloadedData, currentUser]);
   const eapRegistry = useMemo(() => getUnifiedEapRegistry(preloadedData), [preloadedData]);
@@ -3102,7 +2947,23 @@ export default function Atividades({
 
   // O agrupamento por setor ja junta o que antes era LINKED_DISCIPLINE_GROUPS: Estrutura
   // Metalica e de Concreto caem as duas em "Estrutural", entao marcar uma marca as duas.
-  const handleFilterDisciplinasChange = (next: string[]) => setFilterDisciplinas(next);
+  // "Ver todas as disciplinas": primeira opcao do dropdown, so aparece quando o auto-filtro
+  // por disciplina do usuario esta ativo. Selecao exclusiva (limpa as demais); escolher uma
+  // disciplina especifica desliga o "ver todas".
+  const disciplinaFilterOptions = useMemo(
+    () => (autoSelectUserDisciplineFilter && !showAllDisciplines ? [VER_TODAS_DISCIPLINAS_OPTION, ...setoresDisponiveis] : setoresDisponiveis),
+    [autoSelectUserDisciplineFilter, showAllDisciplines, setoresDisponiveis]
+  );
+  const disciplinaFilterValue = verTodasDisciplinas ? [VER_TODAS_DISCIPLINAS_OPTION] : filterDisciplinas;
+  const handleFilterDisciplinasChange = (next: string[]) => {
+    if (next.includes(VER_TODAS_DISCIPLINAS_OPTION) && !verTodasDisciplinas) {
+      setVerTodasDisciplinas(true);
+      setFilterDisciplinas([]);
+      return;
+    }
+    setVerTodasDisciplinas(false);
+    setFilterDisciplinas(next.filter((item) => item !== VER_TODAS_DISCIPLINAS_OPTION));
+  };
 
   const disciplineAutoMatchedRef = useRef(false);
   useEffect(() => {
@@ -3508,21 +3369,10 @@ export default function Atividades({
         {disciplineFilterEnabled && (
           <FilterMultiSelectDropdown
             label="Disciplina"
-            value={filterDisciplinas}
-            options={setoresDisponiveis}
+            value={disciplinaFilterValue}
+            options={disciplinaFilterOptions}
             placeholder="Selecionar..."
             onChange={handleFilterDisciplinasChange}
-            headerAction={autoSelectUserDisciplineFilter && !showAllDisciplines ? (
-              <label className="flex cursor-pointer items-center gap-1 text-[10px] font-semibold normal-case tracking-normal text-[#64748B]">
-                <input
-                  type="checkbox"
-                  checked={verTodasDisciplinas}
-                  onChange={(event) => setVerTodasDisciplinas(event.target.checked)}
-                  className="h-3 w-3 accent-[#F05D28] cursor-pointer"
-                />
-                Ver todas as disciplinas
-              </label>
-            ) : undefined}
           />
         )}
         {/* Mesma altura e mesmo formato dos campos ao lado, logo a direita da Disciplina. */}
@@ -3713,7 +3563,8 @@ export default function Atividades({
                         Sem atividade posicionada para este dia na semana filtrada.
                       </p>
                     </div>
-                  ) : showAllDisciplines ? (
+                  ) : (
+                    // Área Técnica e Coordenação usam o mesmo fullscreen master-detail (selectedOsGroup) ao clicar num card.
                     buildOsGroupsForColumn(column.activities, splitOsCardsByDiscipline).map((group) => (
                       <React.Fragment key={group.key}>
                         <OsGroupCard
@@ -3721,12 +3572,6 @@ export default function Atividades({
                           tipoLicitacao={osSettingsMap[group.osCodigo] || ''}
                           onClick={() => setSelectedOsGroup(group)}
                         />
-                      </React.Fragment>
-                    ))
-                  ) : (
-                    column.activities.map((activity) => (
-                      <React.Fragment key={activity.id}>
-                        <ProductionCard activity={activity} tipoLicitacao={osSettingsMap[activity.osCodigo] || ''} onClick={() => setSelectedActivityId(activity.id)} />
                       </React.Fragment>
                     ))
                   )}
@@ -4120,7 +3965,9 @@ export default function Atividades({
                 {stripLodFromTitle(selectedOsGroup.osNome, extractVisualOsCode(selectedOsGroup.activities[0]) || selectedOsGroup.osCodigo) || selectedOsGroup.osNome}
               </h3>
               <p className="mt-1 text-[12px] text-[#64748B]">
-                {cardInlineActivity
+                {cronogramaPlaceholder
+                  ? `Card de ${getDisciplineDisplayName(selectedOsGroup.activities[0].disciplina || selectedOsGroup.activities[0].disciplinas?.[0] || '')}`
+                  : cardInlineActivity
                   ? `Card de ${getDisciplineDisplayName(cardInlineActivity.disciplina || cardInlineActivity.disciplinas?.[0] || '')}`
                   : selectedGroupDiscipline
                   ? `Nota de ${getDisciplineDisplayName(selectedGroupDiscipline.disciplina)}`
@@ -4140,7 +3987,10 @@ export default function Atividades({
           <div className="flex min-h-0 flex-1 overflow-hidden">
             {/* Esquerda: disciplinas do card, ou a nota da disciplina selecionada (espelha o editor +Nota). */}
             <div className="min-w-0 flex-1 overflow-y-auto px-6 py-4">
-              {cardInlineActivity ? (
+              {/* Área Técnica: 1 disciplina por card -> abre o card direto, sem lista de disciplinas nem anotações. */}
+              {cronogramaPlaceholder ? (
+                <ActivityDetailFields activity={selectedOsGroup.activities[0]} />
+              ) : cardInlineActivity ? (
                       <div>
                         <button
                           type="button"
@@ -4255,11 +4105,19 @@ export default function Atividades({
 
             {/* Direita: cronograma da OS, ou da disciplina selecionada (espelha o editor +Nota). */}
             <div className="flex w-[32%] flex-shrink-0 flex-col overflow-y-auto border-l border-[#E5E7EB] p-5">
-              <p className="mb-3 text-[11px] font-extrabold uppercase tracking-[0.8px] text-[#F05D28]">Cronograma</p>
-              <CronogramaResumo
-                activities={cardInlineDiscGroup ? cardInlineDiscGroup.activities : selectedGroupDiscipline ? selectedGroupDiscipline.activities : selectedOsGroup.activities}
-                contextLabel={cardInlineDiscGroup || selectedGroupDiscipline ? 'os' : 'disciplina'}
-              />
+              {!cronogramaPlaceholder && (
+                <p className="mb-3 text-[11px] font-extrabold uppercase tracking-[0.8px] text-[#F05D28]">Cronograma</p>
+              )}
+              {cronogramaPlaceholder ? (
+                <div className="flex flex-1 min-h-[200px] items-center justify-center rounded-[16px] border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-6 text-center">
+                  <p className="text-[12px] font-semibold text-[#94A3B8]">Área de preenchimento futuro</p>
+                </div>
+              ) : (
+                <CronogramaResumo
+                  activities={cardInlineDiscGroup ? cardInlineDiscGroup.activities : selectedGroupDiscipline ? selectedGroupDiscipline.activities : selectedOsGroup.activities}
+                  contextLabel={cardInlineDiscGroup || selectedGroupDiscipline ? 'os' : 'disciplina'}
+                />
+              )}
             </div>
           </div>
         </div>,

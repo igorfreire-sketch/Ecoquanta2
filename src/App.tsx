@@ -3273,7 +3273,6 @@ export default function App() {
                     itens={notificacoesSetor}
                     naoLidos={naoLidosSetor}
                     onAbrir={abrirNotaNotificada}
-                    onVisualizar={() => marcarNotificacoesVistas('setor')}
                   />
                   <Notificacoes
                     variante="rail"
@@ -3283,7 +3282,6 @@ export default function App() {
                     itens={notificacoesDiretas}
                     naoLidos={naoLidosDiretas}
                     onAbrir={abrirNotaNotificada}
-                    onVisualizar={() => marcarNotificacoesVistas('direta')}
                   />
                   <button
                     type="button"
@@ -3411,7 +3409,7 @@ export default function App() {
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'disciplinas'
                   ? notesPage
-                  : <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} autoSelectUserDisciplineFilter disciplineFilterEnabled notes={notes} />
+                  : <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} autoSelectUserDisciplineFilter disciplineFilterEnabled notes={notes} splitOsCardsByDiscipline cronogramaPlaceholder />
               )}
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && (
                 subTab === 'disciplinas'

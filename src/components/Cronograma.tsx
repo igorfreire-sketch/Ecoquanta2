@@ -862,7 +862,7 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
 
   const baseBounds = buildGanttTimelineBounds(orderedTasks);
   const bounds = getGanttScaleBounds(baseBounds, scaleMode);
-  const unitCount = getGanttSpanUnits(
+  const rawUnitCount = getGanttSpanUnits(
     {
       scaleMode,
       timelineStart: bounds.start,
@@ -876,6 +876,15 @@ function buildGanttModel(rows: CronogramaRow[], treeNodes: TreeNode[], scaleMode
     bounds.start,
     bounds.end,
   );
+  // ponytail: so um teto ANTI-FREEZE contra data patologica (typo de ano -> centenas de
+  // milhares de unidades trava o Array.from de cada render). 20000 nunca corta um cronograma
+  // real (20000 dias ~ 54 anos), so barra o lixo. Um teto baixo (3000) truncava cronogramas
+  // grandes legitimos e quebrava o Gantt — por isso e alto de proposito.
+  const MAX_GANTT_UNITS = 20000;
+  const unitCount = Number.isFinite(rawUnitCount) ? Math.min(Math.max(1, rawUnitCount), MAX_GANTT_UNITS) : 1;
+  if (rawUnitCount > MAX_GANTT_UNITS) {
+    issues.push('Intervalo de datas do cronograma é grande demais para exibir por completo; verifique datas incorretas.');
+  }
   const timelineStart = bounds.start;
   const timelineEnd = bounds.end;
   const unitPx = getGanttScaleUnitPx(scaleMode, unitCount);

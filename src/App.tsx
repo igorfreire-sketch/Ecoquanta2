@@ -27,6 +27,7 @@ import {
   Sun,
   ClipboardPaste,
   CalendarClock,
+  Cpu,
 } from 'lucide-react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import type {
@@ -103,6 +104,7 @@ const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEnge
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
+const SolucoesDigitais = React.lazy(() => import('./components/SolucoesDigitais'));
 const Notes = React.lazy(() => import('./components/CoordenacaoEngenharia/Notes'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
 const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
@@ -146,7 +148,7 @@ function shouldLockUserToContract(user?: AuthUser | null) {
   return Boolean(String(user.contrato || '').trim());
 }
 
-type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'administracao';
+type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'solucoes' | 'administracao';
 type AreaTecnicaSubTab = 'atividades' | 'disciplinas';
 type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas';
 type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas' | 'importar';
@@ -1026,6 +1028,11 @@ function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleT
   if (tab === 'contrato') {
     return userTabs.includes('contrato') || userTabs.includes('contratos');
   }
+  if (tab === 'solucoes') {
+    if (userTabs.includes('solucoes')) return true;
+    const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    return getUserDisciplineList(user).some((d) => norm(d).includes('solucoes digitais'));
+  }
   return userTabs.includes(tab);
 }
 
@@ -1594,6 +1601,7 @@ export default function App() {
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('atividades');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [cronogramaSubTab, setCronogramaSubTab] = React.useState<'cronograma' | 'disciplinas'>('cronograma');
+  const [solucoesSubTab, setSolucoesSubTab] = React.useState<'notas' | 'cronograma'>('notas');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [globalData, setGlobalData] = useState<GlobalData>({});
 
@@ -2510,6 +2518,9 @@ export default function App() {
     if (!rascunhoPendente) return;
     removerRascunho(rascunhoPendente.sheet.id || 'nova');
     setRascunhoPendente(null);
+    // Se um "Continuar" anterior deixou essa mesma nota marcada pra reabrir, limpa tambem -
+    // senao o proximo mount de Notes reabre no editor a nota que acabou de ser abandonada.
+    setNotaParaAbrir((atual) => (atual && atual.id === rascunhoPendente.sheet.id ? null : atual));
   };
 
   useEffect(() => {
@@ -3137,6 +3148,13 @@ export default function App() {
     // Cronograma nao tem subaba: e um botao unico no menu.
     if (activeTab === 'cronograma') return [];
 
+    if (activeTab === 'solucoes') {
+      return [
+        { key: 'notas', label: 'Notas', icon: <Layers size={16} />, active: solucoesSubTab === 'notas', onClick: () => setSolucoesSubTab('notas') },
+        { key: 'cronograma', label: 'Project', icon: <Calendar size={16} />, active: solucoesSubTab === 'cronograma', onClick: () => setSolucoesSubTab('cronograma') },
+      ];
+    }
+
     if (activeTab === 'administracao') {
 
       return [
@@ -3244,6 +3262,12 @@ export default function App() {
                 <>
                   <NavItem icon={<Calendar size={20} />} label="Cronograma" active={activeTab === 'cronograma'} onClick={() => setActiveTab('cronograma')} />
                   {activeTab === 'cronograma' && subNav}
+                </>
+              )}
+              {currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions) && (
+                <>
+                  <NavItem icon={<Cpu size={20} />} label="Soluções digitais" active={activeTab === 'solucoes'} onClick={() => setActiveTab('solucoes')} />
+                  {activeTab === 'solucoes' && subNav}
                 </>
               )}
               {currentUser && currentUser.isAdmin && (
@@ -3369,7 +3393,7 @@ export default function App() {
         )}
 
         <main className="relative z-10 flex-1 overflow-y-auto px-8 pb-8 pt-2">
-          <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}:${cronogramaSubTab}`}>
+          <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}:${cronogramaSubTab}:${solucoesSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
             {/* Troca de pagina = fade out + fade in (~0.5s no total) pra suavizar e cobrir o load.
                 mode="wait": a tela antiga some antes da nova entrar; sem deslize (y), so opacidade. */}
@@ -3441,6 +3465,11 @@ export default function App() {
                 userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)
                     ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
                     : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+              )}
+              {activeTab === 'solucoes' && currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions) && (
+                solucoesSubTab === 'cronograma'
+                  ? <SolucoesDigitais currentUser={currentUser} usuarios={usuarios} />
+                  : notesPage
               )}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
                 nc2SubTab === 'disciplinas'

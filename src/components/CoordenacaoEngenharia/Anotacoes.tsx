@@ -283,7 +283,13 @@ function salvarRascunho(id: string, sheet: AnnotationSheet, autorEmail: string) 
   }
 }
 
+// ids cujo rascunho acabou de ser removido de proposito (abandonar/salvar/descartar). O autosave
+// abaixo consome essa marca uma unica vez pra nao regravar o rascunho que o editor ainda montado
+// (ou reaberto logo em seguida por "Continuar") ia escrever de volta no proximo debounce.
+const rascunhosAbandonados = new Set<string>();
+
 export function removerRascunho(id: string) {
+  rascunhosAbandonados.add(id);
   try { localStorage.removeItem(chaveRascunho(id)); } catch { /* ignore */ }
 }
 
@@ -397,7 +403,11 @@ export default function Anotacoes({
     const jaSalva = sheets.some((sheet) => sheet.id === editing.id);
     const podeSalvar = !jaSalva || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios);
     if (!podeSalvar) return;
-    const timer = setTimeout(() => salvarRascunho(editing.id || 'nova', editing, currentUser.email), 800);
+    const timer = setTimeout(() => {
+      const id = editing.id || 'nova';
+      if (rascunhosAbandonados.delete(id)) return; // acabou de ser abandonado - nao ressuscita
+      salvarRascunho(id, editing, currentUser.email);
+    }, 800);
     return () => clearTimeout(timer);
   }, [editing, sheets, currentUser]);
 

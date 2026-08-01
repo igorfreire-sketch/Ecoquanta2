@@ -1,5 +1,4 @@
 import React from 'react';
-import { Mail, LockKeyhole, User, KeyRound, ArrowRight } from 'lucide-react';
 
 export interface AuthUser {
   nome: string;
@@ -16,60 +15,22 @@ export interface AuthUser {
   sessionVersion?: string;
 }
 
-type AuthMode = 'login' | 'register' | 'reset';
-
 interface LoginScreenProps {
-  onLogin: (email: string, password: string, rememberMe: boolean) => Promise<void>;
-  onRegister: (name: string, email: string, password: string) => Promise<string>;
-  onForgotPassword: (email: string) => Promise<string>;
-  onResetPassword: (email: string, code: string, newPassword: string) => Promise<string>;
+  onGoogleLogin: (rememberMe: boolean) => Promise<void>;
 }
 
-export default function LoginScreen({
-  onLogin,
-  onRegister,
-  onForgotPassword,
-  onResetPassword,
-}: LoginScreenProps) {
-  const [mode, setMode] = React.useState<AuthMode>('login');
+export default function LoginScreen({ onGoogleLogin }: LoginScreenProps) {
   const [loading, setLoading] = React.useState(false);
-  const [message, setMessage] = React.useState('');
   const [error, setError] = React.useState('');
-
-  const [loginEmail, setLoginEmail] = React.useState('');
-  const [loginPassword, setLoginPassword] = React.useState('');
   const [rememberMe, setRememberMe] = React.useState(true);
 
-  const [registerName, setRegisterName] = React.useState('');
-  const [registerEmail, setRegisterEmail] = React.useState('');
-  const [registerPassword, setRegisterPassword] = React.useState('');
-
-  const [resetEmail, setResetEmail] = React.useState('');
-  const [resetCode, setResetCode] = React.useState('');
-  const [resetPassword, setResetPasswordValue] = React.useState('');
-  // Codigo e nova senha so destravam depois que o e-mail com o codigo sai.
-  const [codigoEnviado, setCodigoEnviado] = React.useState(false);
-
-  const clearFeedback = () => {
-    setMessage('');
-    setError('');
-  };
-
-  const switchMode = (nextMode: AuthMode) => {
-    clearFeedback();
-    setMode(nextMode);
-  };
-
-  const runAction = async (callback: () => Promise<void>) => {
+  const entrarComGoogle = async () => {
     setLoading(true);
-    clearFeedback();
-
+    setError('');
     try {
-      await callback();
+      await onGoogleLogin(rememberMe);
     } catch (err: unknown) {
-      const errorMessage =
-        err instanceof Error ? err.message : 'Ocorreu um erro ao processar a solicitação.';
-      setError(errorMessage);
+      setError(err instanceof Error ? err.message : 'Ocorreu um erro ao processar a solicitação.');
     } finally {
       setLoading(false);
     }
@@ -101,8 +62,8 @@ export default function LoginScreen({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-10 max-w-[560px]">
               <FeatureCard
-                title="E-mail corporativo"
-                text="Contas @quantaconsultoria.com têm acesso imediato. Demais domínios aguardam aprovação do administrador."
+                title="Conta Google corporativa"
+                text="Entre com a conta Google já cadastrada no EcoQuanta. Novo acesso é liberado por um administrador."
               />
               <FeatureCard
                 title="Sessão persistente"
@@ -118,215 +79,40 @@ export default function LoginScreen({
           </div>
         </div>
 
-        <div className="bg-[#F9FAFB] border-l border-[#E5E7EB] p-8 lg:p-10">
-          <div className="bg-white border border-[#E5E7EB] rounded-[24px] p-7 lg:p-8 shadow-sm">
-            <div className="flex flex-wrap gap-2 mb-8">
-              <ModeButton active={mode === 'login'} onClick={() => switchMode('login')}>
-                Entrar
-              </ModeButton>
-              <ModeButton active={mode === 'register'} onClick={() => switchMode('register')}>
-                Cadastrar
-              </ModeButton>
-              <ModeButton active={mode === 'reset'} onClick={() => switchMode('reset')}>
-                Esqueci a senha
-              </ModeButton>
-            </div>
-
-            {message && (
-              <div className="mb-5 rounded-xl border border-[#A7F3D0] bg-[#ECFDF5] px-4 py-3 text-[13px] font-medium text-[#047857]">
-                {message}
-              </div>
-            )}
+        <div className="bg-[#F9FAFB] border-l border-[#E5E7EB] p-8 lg:p-10 flex items-center">
+          <div className="w-full bg-white border border-[#E5E7EB] rounded-[24px] p-7 lg:p-8 shadow-sm space-y-5">
+            <HeaderTitle
+              title="Acessar plataforma"
+              subtitle="Entre com sua conta Google corporativa."
+            />
 
             {error && (
-              <div className="mb-5 rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">
+              <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">
                 {error}
               </div>
             )}
 
-            {mode === 'login' && (
-              <form
-                className="space-y-5"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void runAction(async () => {
-                    await onLogin(loginEmail, loginPassword, rememberMe);
-                  });
-                }}
-              >
-                <HeaderTitle
-                  title="Acessar plataforma"
-                  subtitle="Entre com seu e-mail e sua senha."
-                />
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="w-4 h-4 accent-[#F05D28]"
+              />
+              <span className="text-[13px] font-medium text-[#2D2D2D]">
+                Manter logado até o logout
+              </span>
+            </label>
 
-                <InputGroup label="E-mail" icon={<Mail size={18} className="text-[#757575]" />}>
-                  <input
-                    className="bentham-input !pl-11"
-                    type="email"
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="nome@empresa.com"
-                    required
-                  />
-                </InputGroup>
-
-                <InputGroup label="Senha" icon={<LockKeyhole size={18} className="text-[#757575]" />}>
-                  <input
-                    className="bentham-input !pl-11"
-                    type="password"
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="Digite sua senha"
-                    required
-                  />
-                </InputGroup>
-
-                <label className="flex items-center gap-3 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(e) => setRememberMe(e.target.checked)}
-                    className="w-4 h-4 accent-[#F05D28]"
-                  />
-                  <span className="text-[13px] font-medium text-[#2D2D2D]">
-                    Manter logado até o logout
-                  </span>
-                </label>
-
-                <PrimaryButton loading={loading}>Entrar no sistema</PrimaryButton>
-              </form>
-            )}
-
-            {mode === 'register' && (
-              <form
-                className="space-y-5"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void runAction(async () => {
-                    const msg = await onRegister(registerName, registerEmail, registerPassword);
-                    setMessage(msg);
-                    setRegisterName('');
-                    setRegisterEmail('');
-                    setRegisterPassword('');
-                  });
-                }}
-              >
-                <HeaderTitle
-                  title="Solicitar acesso"
-                  subtitle="Seu cadastro ficará pendente até aprovação de um administrador."
-                />
-
-                <InputGroup label="Nome completo" icon={<User size={18} className="text-[#757575]" />}>
-                  <input
-                    className="bentham-input !pl-11"
-                    type="text"
-                    value={registerName}
-                    onChange={(e) => setRegisterName(e.target.value)}
-                    placeholder="Nome completo"
-                    required
-                  />
-                </InputGroup>
-
-                <InputGroup label="E-mail" icon={<Mail size={18} className="text-[#757575]" />}>
-                  <input
-                    className="bentham-input !pl-11"
-                    type="email"
-                    value={registerEmail}
-                    onChange={(e) => setRegisterEmail(e.target.value)}
-                    placeholder="nome@empresa.com"
-                    required
-                  />
-                </InputGroup>
-
-                <InputGroup label="Senha" icon={<LockKeyhole size={18} className="text-[#757575]" />}>
-                  <input
-                    className="bentham-input !pl-11"
-                    type="password"
-                    value={registerPassword}
-                    onChange={(e) => setRegisterPassword(e.target.value)}
-                    placeholder="Mínimo de 6 caracteres"
-                    required
-                  />
-                </InputGroup>
-
-                <PrimaryButton loading={loading}>Enviar cadastro</PrimaryButton>
-              </form>
-            )}
-
-            {mode === 'reset' && (
-              <form
-                className="space-y-5"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void runAction(async () => {
-                    if (!codigoEnviado) {
-                      const msg = await onForgotPassword(resetEmail);
-                      setCodigoEnviado(true);
-                      setMessage(msg);
-                      return;
-                    }
-                    const msg = await onResetPassword(resetEmail, resetCode, resetPassword);
-                    setMessage(msg);
-                    setResetEmail('');
-                    setResetCode('');
-                    setResetPasswordValue('');
-                    setCodigoEnviado(false);
-                    setMode('login');
-                  });
-                }}
-              >
-                <HeaderTitle
-                  title="Esqueci a senha"
-                  subtitle={codigoEnviado
-                    ? 'Informe o código que enviamos e defina uma nova senha.'
-                    : 'Informe seu e-mail para receber o código de verificação.'}
-                />
-
-                <InputGroup label="E-mail" icon={<Mail size={18} className="text-[#757575]" />}>
-                  <input
-                    className="bentham-input !pl-11"
-                    type="email"
-                    value={resetEmail}
-                    onChange={(e) => { setResetEmail(e.target.value); setCodigoEnviado(false); }}
-                    placeholder="nome@empresa.com"
-                    required
-                  />
-                </InputGroup>
-
-                <InputGroup label="Código" icon={<KeyRound size={18} className="text-[#757575]" />}>
-                  <input
-                    className="bentham-input !pl-11 disabled:cursor-not-allowed disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF]"
-                    type="text"
-                    value={resetCode}
-                    onChange={(e) => setResetCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder={codigoEnviado ? 'Código de 6 dígitos' : 'Envie o código primeiro'}
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    pattern="[0-9]{6}"
-                    disabled={!codigoEnviado}
-                    required={codigoEnviado}
-                  />
-                </InputGroup>
-
-                <InputGroup label="Nova senha" icon={<LockKeyhole size={18} className="text-[#757575]" />}>
-                  <input
-                    className="bentham-input !pl-11 disabled:cursor-not-allowed disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF]"
-                    type="password"
-                    value={resetPassword}
-                    onChange={(e) => setResetPasswordValue(e.target.value)}
-                    placeholder={codigoEnviado ? 'Nova senha' : 'Envie o código primeiro'}
-                    minLength={6}
-                    autoComplete="new-password"
-                    disabled={!codigoEnviado}
-                    required={codigoEnviado}
-                  />
-                </InputGroup>
-
-                <PrimaryButton loading={loading}>
-                  {codigoEnviado ? 'Salvar nova senha' : 'Enviar código para o e-mail'}
-                </PrimaryButton>
-              </form>
-            )}
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => void entrarComGoogle()}
+              className="w-full flex items-center justify-center gap-3 rounded-xl border border-[#E5E7EB] bg-white py-3 text-[14px] font-semibold text-[#2D2D2D] hover:bg-[#F9FAFB] disabled:opacity-60"
+            >
+              <GoogleIcon />
+              Entrar com Google
+            </button>
           </div>
         </div>
       </div>
@@ -343,68 +129,14 @@ function HeaderTitle({ title, subtitle }: { title: string; subtitle: string }) {
   );
 }
 
-function InputGroup({
-  label,
-  icon,
-  children,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  children: React.ReactNode;
-}) {
+function GoogleIcon() {
   return (
-    <div className="flex flex-col gap-1.5">
-      <label className="bentham-label">{label}</label>
-      <div className="relative">
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
-          {icon}
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function ModeButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`h-10 px-4 rounded-xl text-[13px] transition-colors ${
-        active
-          ? 'bg-[#F05D28] text-white font-bold'
-          : 'bg-[#F9FAFB] text-[#757575] border border-[#E5E7EB] font-medium hover:text-[#2D2D2D]'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function PrimaryButton({
-  children,
-  loading,
-}: {
-  children: React.ReactNode;
-  loading?: boolean;
-}) {
-  return (
-    <button
-      type="submit"
-      disabled={loading}
-      className="w-full h-12 rounded-xl bg-[#F05D28] text-white text-[14px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-    >
-      {children}
-      {!loading && <ArrowRight size={17} />}
-    </button>
+    <svg width="18" height="18" viewBox="0 0 18 18">
+      <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.68-3.88 2.68-6.62z" />
+      <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.9v2.33A9 9 0 0 0 9 18z" />
+      <path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.16.28-1.7V4.97H.9A9 9 0 0 0 0 9c0 1.45.35 2.83.9 4.03z" />
+      <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .9 4.97L3.95 7.3C4.66 5.17 6.65 3.58 9 3.58z" />
+    </svg>
   );
 }
 

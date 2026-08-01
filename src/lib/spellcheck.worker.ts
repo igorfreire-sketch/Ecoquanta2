@@ -25,8 +25,10 @@ self.onmessage = async (event: MessageEvent<{ id: number; texto: string; maxPala
   for (const palavra of palavras) {
     if (resultado.length >= maxPalavras) break;
     if (dicionario.check(palavra)) continue;
+    // Sinaliza a palavra errada mesmo sem sugestao do dicionario - senao ela some da lista
+    // e parece que o corretor nao pegou o erro.
     const opcoes = dicionario.suggest(palavra).slice(0, 5);
-    if (opcoes.length) resultado.push({ palavra, opcoes });
+    resultado.push({ palavra, opcoes });
   }
 
   (self as any).postMessage({ id, resultado });

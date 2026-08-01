@@ -46,10 +46,15 @@ function formatDateBRLocal(value?: string) {
 }
 
 export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] = []) {
-  const doc = new jsPDF();
+  // Banco com muitas colunas nao cabe legivel em retrato (210mm) - vira paisagem (297mm) a
+  // partir de um limiar empirico de colunas. Todas as paginas do doc saem na mesma orientacao
+  // (jsPDF fixa isso na criacao); paginar dentro da mesma nota so cria paginas extras, nao troca.
+  const maxColCount = Math.max(0, ...getSheetBancos(sheet).map((banco) => banco.colCount));
+  const paisagem = maxColCount > 6;
+  const doc = new jsPDF({ orientation: paisagem ? 'landscape' : 'portrait' });
   const marginX = 14;
-  const pageWidth = 210;
-  const pageBottom = 280;
+  const pageWidth = paisagem ? 297 : 210;
+  const pageBottom = paisagem ? 190 : 280;
   let y = 16;
 
   const ensureSpace = (needed: number) => {

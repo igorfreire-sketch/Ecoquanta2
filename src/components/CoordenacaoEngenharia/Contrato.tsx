@@ -17,7 +17,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import Atividades from '../Atividades';
+import Atividades, { buildActivitiesFromEap } from '../Atividades';
 import type { AuthUser } from '../LoginScreen';
 import Cronograma from '../Cronograma';
 import { deleteFirebaseDocument, isFirebaseConfigured, setFirebaseDocument } from '../../lib/firebaseDb';
@@ -605,8 +605,15 @@ export default function Contrato({
 }: ContratoProps) {
   const activities = useMemo(() => buildActivities(preloadedData), [preloadedData]);
   const contracts = useMemo(() => getContracts(preloadedData, activities), [preloadedData, activities]);
+  // So pra achar a edificacao de cada atividade por itemCodigo - ver padrão.md "Filtro de Edificação".
+  const eapActivitiesParaEdificio = useMemo(() => buildActivitiesFromEap(preloadedData, _currentUser), [preloadedData, _currentUser]);
+  const edificioPorItemCodigo = useMemo(
+    () => new Map(eapActivitiesParaEdificio.filter((a) => a.edificio).map((a) => [a.itemCodigo, a.edificio as string])),
+    [eapActivitiesParaEdificio]
+  );
   const [selectedContract, setSelectedContract] = useState(() => getContractInitialValue(activeContractCode, lockedContractCode));
   const [selectedOs, setSelectedOs] = useState('Todas');
+  const [selectedEdificacao, setSelectedEdificacao] = useState('');
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
@@ -671,6 +678,7 @@ export default function Contrato({
       const matchOs = selectedOs === 'Todas'
         || normalizeText(activity.osCodigo) === normalizeText(selectedOs)
         || normalizeText(activity.osNome) === normalizeText(selectedOs);
+      const matchEdificacao = !selectedEdificacao || edificioPorItemCodigo.get(activity.itemCodigo) === selectedEdificacao;
       const matchSearch = !termo || normalizeText([
         activity.osCodigo,
         activity.osNome,
@@ -678,9 +686,17 @@ export default function Contrato({
         activity.descricao,
         ...activity.profissionais,
       ].join(' ')).includes(termo);
-      return matchContract && matchOs && matchSearch;
+      return matchContract && matchOs && matchEdificacao && matchSearch;
     });
-  }, [activities, deferredSearch, selectedContract, selectedOs]);
+  }, [activities, deferredSearch, selectedContract, selectedOs, selectedEdificacao, edificioPorItemCodigo]);
+
+  // Edificacoes da OS escolhida - ver padrão.md "Filtro de Edificação".
+  const edificacoesDaOsAtual = useMemo<string[]>(() => {
+    if (selectedOs === 'Todas') return [];
+    const nomes = new Set<string>();
+    eapActivitiesParaEdificio.forEach((a) => { if (a.osCodigo === selectedOs && a.edificio) nomes.add(a.edificio); });
+    return Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [eapActivitiesParaEdificio, selectedOs]);
 
   const selectedActivity = filteredActivities.find((activity) => activity.id === selectedActivityId) || filteredActivities[0] || null;
   const selectedOsActivities = selectedActivity
@@ -813,7 +829,7 @@ export default function Contrato({
               <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">OS</label>
               <SearchableSelect
                 value={selectedOs}
-                onChange={(event) => setSelectedOs(event.target.value)}
+                onChange={(event) => { setSelectedOs(event.target.value); setSelectedEdificacao(''); }}
                 className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none"
               >
                 <option value="Todas">Todas as OS</option>
@@ -823,6 +839,22 @@ export default function Contrato({
                   </option>
                 ))}
               </SearchableSelect>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Edificação</label>
+              <select
+                disabled={edificacoesDaOsAtual.length === 0}
+                value={selectedEdificacao}
+                onChange={(event) => setSelectedEdificacao(event.target.value)}
+                title={edificacoesDaOsAtual.length === 0 ? 'Escolha uma OS com edificação cadastrada' : undefined}
+                className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none disabled:bg-[#F8FAFC] disabled:text-[#94A3B8]"
+              >
+                <option value="">{edificacoesDaOsAtual.length === 0 ? 'Sem edificação nesta OS' : 'Todas as edificações'}</option>
+                {edificacoesDaOsAtual.map((edificio) => (
+                  <option key={edificio} value={edificio}>{edificio}</option>
+                ))}
+              </select>
             </div>
 
             <div>

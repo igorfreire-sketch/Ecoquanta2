@@ -42,7 +42,7 @@ import type {
 } from './components/Administracao';
 import { ProjectVbaConfigCard } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
-import { encontrarRascunhoRecente, getSheetDisciplinas, removerRascunho, type AnnotationBanco, type AnnotationSheet, type NotaRascunho } from './components/CoordenacaoEngenharia/Anotacoes';
+import { getSheetDisciplinas, type AnnotationBanco, type AnnotationSheet } from './components/CoordenacaoEngenharia/Anotacoes';
 import Notificacoes from './components/Notificacoes';
 import FirebaseExplorer from './components/FirebaseExplorer';
 import Principal from './components/Principal';
@@ -97,6 +97,7 @@ import {
   replaceFirebaseAppData,
   canDeleteNote,
   canEditNote,
+  signInWithGooglePopup,
 } from './lib/firebaseDb';
 
 const Atividades = React.lazy(() => import('./components/Atividades'));
@@ -2269,9 +2270,10 @@ export default function App() {
       }
     } catch (error) {
       console.error('Falha ao salvar alteracoes administrativas:', error);
-      if (!options?.silent) {
-        window.alert(error instanceof Error ? error.message : 'Falha ao salvar alteracoes administrativas.');
-      }
+      // "silent" so suprime o spinner de sucesso - uma falha real (ex: disciplina/cargo que
+      // "nao entra") tem que aparecer sempre, senao o usuario nao tem como saber que a
+      // gravacao caiu e o item nunca foi salvo.
+      window.alert(error instanceof Error ? error.message : 'Falha ao salvar alteracoes administrativas.');
     } finally {
       if (!options?.silent) {
         setIsSavingAdminChanges(false);
@@ -2421,6 +2423,28 @@ export default function App() {
     try { localStorage.setItem(chaveNotif, JSON.stringify(proximo)); } catch { /* modo privado: so nao persiste */ }
   };
 
+  // Dispensa individual: some so da SUA lista (localStorage), a nota e o vinculo continuam intactos
+  // pros outros usuarios. Separado do "Limpar" (marcarNotificacoesVistas), que so zera o contador.
+  const chaveNotifDispensadas = currentUser ? `ecoquanta:notif-dispensadas:${currentUser.email}` : '';
+  const [notifDispensadas, setNotifDispensadas] = useState<{ setor: string[]; direta: string[] }>({ setor: [], direta: [] });
+
+  useEffect(() => {
+    if (!chaveNotifDispensadas) return;
+    try {
+      const salvo = localStorage.getItem(chaveNotifDispensadas);
+      setNotifDispensadas(salvo ? JSON.parse(salvo) : { setor: [], direta: [] });
+    } catch {
+      setNotifDispensadas({ setor: [], direta: [] });
+    }
+  }, [chaveNotifDispensadas]);
+
+  const dispensarNotificacao = (tipo: 'setor' | 'direta', id: string) => {
+    if (!chaveNotifDispensadas) return;
+    const proximo = { ...notifDispensadas, [tipo]: [...notifDispensadas[tipo], id] };
+    setNotifDispensadas(proximo);
+    try { localStorage.setItem(chaveNotifDispensadas, JSON.stringify(proximo)); } catch { /* modo privado: so nao persiste */ }
+  };
+
   const { notificacoesSetor, notificacoesDiretas, naoLidosSetor, naoLidosDiretas } = React.useMemo(() => {
     const vazio = { notificacoesSetor: [], notificacoesDiretas: [], naoLidosSetor: 0, naoLidosDiretas: 0 };
     if (!currentUser) return vazio;
@@ -2441,9 +2465,12 @@ export default function App() {
     // Setor: nota pública de alguém da mesma disciplina que você.
     const setor = deOutros.filter((nota) => (
       nota.publica !== false && getSheetDisciplinas(nota).some((item) => minhasDisciplinas.has(item))
+      && !notifDispensadas.setor.includes(nota.id)
     ));
     // Direta: você foi citado (vinculado) na nota.
-    const direta = deOutros.filter((nota) => (nota.marcadosUsuarios || []).includes(currentUser.email));
+    const direta = deOutros.filter((nota) => (
+      (nota.marcadosUsuarios || []).includes(currentUser.email) && !notifDispensadas.direta.includes(nota.id)
+    ));
 
     const contarNovas = (lista: AnnotationSheet[], desde: string) => (
       desde ? lista.filter((nota) => (nota.updatedAt || '') > desde).length : lista.length
@@ -2455,7 +2482,7 @@ export default function App() {
       naoLidosSetor: contarNovas(setor, notifVistas.setor),
       naoLidosDiretas: contarNovas(direta, notifVistas.direta),
     };
-  }, [notes, currentUser, notifVistas]);
+  }, [notes, currentUser, notifVistas, notifDispensadas]);
 
   // --- Notificacao de desktop ---
   // Dispara quando chega nota nova que cita voce ou que e da sua disciplina. A primeira
@@ -2503,26 +2530,19 @@ export default function App() {
     setNotaParaAbrir(nota);
   };
 
-  // Rascunho anti-F5 (ver Anotacoes.tsx): indicador "Continuar nota" na Principal quando
-  // sobrou algum rascunho nao salvo do usuario. Reconferido ao trocar de aba (localStorage
-  // nao dispara re-render sozinho) - suficiente pra esse uso, sem listener de storage.
-  const [rascunhoPendente, setRascunhoPendente] = useState<NotaRascunho | null>(null);
+  // Link direto de uma nota (?nota=<id> na URL, ex: colado na descricao do evento do Google
+  // Agenda - ver linkNoteToEvent). So tenta depois que as notas carregaram; limpa o parametro
+  // da URL logo em seguida pra nao reabrir de novo num F5 ou trocar de aba.
   useEffect(() => {
-    setRascunhoPendente(currentUser ? encontrarRascunhoRecente(currentUser.email) : null);
-  }, [currentUser, activeTab]);
-  const continuarRascunhoPendente = () => {
-    if (!rascunhoPendente) return;
-    irParaNotas();
-    setNotaParaAbrir(rascunhoPendente.sheet);
-  };
-  const abandonarRascunhoPendente = () => {
-    if (!rascunhoPendente) return;
-    removerRascunho(rascunhoPendente.sheet.id || 'nova');
-    setRascunhoPendente(null);
-    // Se um "Continuar" anterior deixou essa mesma nota marcada pra reabrir, limpa tambem -
-    // senao o proximo mount de Notes reabre no editor a nota que acabou de ser abandonada.
-    setNotaParaAbrir((atual) => (atual && atual.id === rascunhoPendente.sheet.id ? null : atual));
-  };
+    if (!currentUser || notes.length === 0) return;
+    const idNaUrl = new URLSearchParams(window.location.search).get('nota');
+    if (!idNaUrl) return;
+    abrirNotaNotificada(idNaUrl);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('nota');
+    window.history.replaceState({}, '', url.toString());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser, notes]);
 
   useEffect(() => {
     // As notas alimentam a pagina de Notas, os dois sinos e os contadores da Principal,
@@ -2695,6 +2715,46 @@ export default function App() {
     });
     adminAutoLoadAttemptRef.current = false;
     saveSession(user, rememberMe);
+    setCurrentUser(user);
+    await loadGlobalEnvironment(user, false);
+
+    const firstTab = getFirstAccessibleTab(user, roleTabPermissions);
+    if (firstTab) setActiveTab(firstTab);
+  };
+
+  // Login com Google (Firebase Auth) - aditivo, nao substitui o login por senha. So verifica
+  // se o e-mail da conta Google ja e um usuario cadastrado no sistema (mesmo registro/`auth`
+  // usado pelo login por senha) - nao cria usuario novo aqui, isso continua pelo Cadastrar.
+  const handleGoogleLogin = async (rememberMode: boolean) => {
+    if (!isFirebaseConfigured()) {
+      throw new Error('Firebase indisponivel para autenticar. Verifique a configuracao do ambiente.');
+    }
+
+    const email = await signInWithGooglePopup();
+    const normalizedEmail = normalizeUserText(email);
+    const authData = await fetchFirebaseAppData<any>('auth');
+    const matchedUser: any = getAuthUsersList(authData).find(
+      (item: any) => normalizeUserText(item?.email) === normalizedEmail,
+    ) || null;
+
+    if (!matchedUser) {
+      throw new Error('Esta conta Google nao esta cadastrada no EcoQuanta. Peca a um administrador ou use "Cadastrar".');
+    }
+
+    const status = normalizeUserText(matchedUser.status || '');
+    if (status === 'pending') throw new Error('Seu cadastro ainda esta aguardando aprovacao do administrador.');
+    if (status === 'blocked') throw new Error('Seu acesso esta bloqueado. Procure um administrador.');
+
+    const user = normalizeUser({
+      ...matchedUser,
+      abas: matchedUser.allowedTabs || matchedUser.abas || [],
+      cargo: matchedUser.role || matchedUser.cargo || '',
+      role: matchedUser.role || matchedUser.cargo || '',
+      disciplinas: matchedUser.disciplinas || matchedUser.disciplina || '',
+      disciplina: matchedUser.disciplina || '',
+    });
+    adminAutoLoadAttemptRef.current = false;
+    saveSession(user, rememberMode);
     setCurrentUser(user);
     await loadGlobalEnvironment(user, false);
 
@@ -3183,7 +3243,9 @@ export default function App() {
   ) : null;
 
   if (!currentUser && !preloading) {
-    return <LoginScreen onLogin={handleLogin} onRegister={handleRegister} onForgotPassword={handleForgotPassword} onResetPassword={handleResetPassword} />;
+    return (
+      <LoginScreen onGoogleLogin={handleGoogleLogin} />
+    );
   }
 
   if (preloading) {
@@ -3416,6 +3478,7 @@ export default function App() {
                   notificacoesDiretas={notificacoesDiretas}
                   onAbrirNota={abrirNotaNotificada}
                   onLimpar={marcarNotificacoesVistas}
+                  onExcluirNota={dispensarNotificacao}
                   acessibilidade={acessibilidade}
                   onAlternarAcessibilidade={() => setAcessibilidade((prev) => (prev === 'daltonico' ? 'padrao' : 'daltonico'))}
                   versaoLabel={APP_VERSION_LABEL}
@@ -3426,9 +3489,6 @@ export default function App() {
                   minhasDisciplinas={getUserDisciplineList(currentUser)}
                   pedidoPendente={disciplinaRequests.find((item) => item.userEmail === currentUser.email)?.disciplinas || null}
                   onDefinirDisciplinas={(lista) => { void definirDisciplinasDoUsuario(lista); }}
-                  rascunhoPendente={Boolean(rascunhoPendente)}
-                  onContinuarRascunho={continuarRascunhoPendente}
-                  onAbandonarRascunho={abandonarRascunhoPendente}
                 />
               )}
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
@@ -3469,7 +3529,7 @@ export default function App() {
               )}
               {activeTab === 'solucoes' && currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions) && (
                 solucoesSubTab === 'cronograma'
-                  ? <SolucoesDigitais currentUser={currentUser} usuarios={usuarios} />
+                  ? <SolucoesDigitais currentUser={currentUser} usuarios={usuarios} notes={notes} />
                   : notesPage
               )}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (

@@ -54,6 +54,11 @@ service cloud.firestore {
       allow delete: if isSignedIn();
     }
 
+    match /solucoesDigitaisCronograma/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
     match /emergencies/{document} {
       allow read, create, update: if isSignedIn();
       allow delete: if false;

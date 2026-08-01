@@ -22,7 +22,7 @@ import {
   Download,
 } from 'lucide-react';
 import TerceirizadasCadastro from './TerceirizadasCadastro';
-import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups } from '../lib/disciplineCatalog';
+import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups, expandEngenhariaNaSelecao } from '../lib/disciplineCatalog';
 import { downloadSystemBackup } from '../lib/systemBackup';
 import { downloadProjectVbaConfig } from '../lib/projectVbaAssets';
 
@@ -1307,10 +1307,13 @@ export default function Administracao({
                   <DisciplineMultiSelect
                     value={user.disciplinas || (user.disciplina ? [user.disciplina] : [])}
                     options={getDisciplineGroups()}
-                    onChange={(nextValue) => onUpdateUsuario(user.id, {
-                      disciplina: nextValue[0] || '',
-                      disciplinas: nextValue,
-                    })}
+                    onChange={(nextValue) => {
+                      const expandido = expandEngenhariaNaSelecao(nextValue);
+                      onUpdateUsuario(user.id, {
+                        disciplina: expandido[0] || '',
+                        disciplinas: expandido,
+                      });
+                    }}
                   />
                   <p className="text-[11px] text-[#757575] leading-relaxed">
                     {Array.isArray(user.disciplinas) && user.disciplinas.length > 0

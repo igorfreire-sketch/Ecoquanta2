@@ -36,6 +36,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
   const [criarAberto, setCriarAberto] = React.useState(false);
   const [filtroContrato, setFiltroContrato] = React.useState('');
   const [filtroOs, setFiltroOs] = React.useState('');
+  const [filtroEdificacao, setFiltroEdificacao] = React.useState('');
   const [filtroDisciplina, setFiltroDisciplina] = React.useState('');
   const [filtroAutor, setFiltroAutor] = React.useState('');
 
@@ -82,6 +83,14 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
     [usuarios, currentUser.email]
   );
 
+  // Edificacoes da OS escolhida no filtro - ver padrão.md "Filtro de Edificação".
+  const edificacoesFiltradas = React.useMemo<string[]>(() => {
+    if (!filtroOs) return [];
+    const nomes = new Set<string>();
+    allActivities.forEach((a) => { if (a.osCodigo === filtroOs && a.edificio) nomes.add(a.edificio); });
+    return Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [allActivities, filtroOs]);
+
   // Janela de criacao: minhas notas (publicas e particulares) + todas as publicas dos outros.
   const minhasNotas = React.useMemo(() => {
     const codigosDoContrato = new Set(osFiltradas.map((os) => os.codigo));
@@ -90,13 +99,15 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
       .filter((nota) => !filtroAutor || nota.autorEmail === filtroAutor)
       .filter((nota) => !filtroContrato || (nota.osCodigo ? codigosDoContrato.has(nota.osCodigo) : false))
       .filter((nota) => !filtroOs || nota.osCodigo === filtroOs)
+      .filter((nota) => !filtroEdificacao || nota.edificacao === filtroEdificacao)
       .filter((nota) => !filtroDisciplina || getSheetDisciplinas(nota).some((item) => disciplineMatchesSector(item, filtroDisciplina)))
       .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-  }, [notes, currentUser.email, filtroAutor, filtroContrato, filtroOs, filtroDisciplina, osFiltradas]);
+  }, [notes, currentUser.email, filtroAutor, filtroContrato, filtroOs, filtroEdificacao, filtroDisciplina, osFiltradas]);
 
   const abrirCriacao = () => {
     setFiltroContrato('');
     setFiltroOs('');
+    setFiltroEdificacao('');
     setFiltroDisciplina('');
     setFiltroAutor('');
     setCriarAberto(true);
@@ -217,7 +228,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
               </SearchableSelect>
               <SearchableSelect
                 value={filtroOs}
-                onChange={(event) => setFiltroOs(event.target.value)}
+                onChange={(event) => { setFiltroOs(event.target.value); setFiltroEdificacao(''); }}
                 searchPlaceholder="Pesquisar OS..."
                 className="h-11 w-[240px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
               >
@@ -226,6 +237,18 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
                   <option key={os.codigo} value={os.codigo}>{os.codigo} - {os.nome}</option>
                 ))}
               </SearchableSelect>
+              <select
+                disabled={edificacoesFiltradas.length === 0}
+                value={filtroEdificacao}
+                onChange={(event) => setFiltroEdificacao(event.target.value)}
+                title={edificacoesFiltradas.length === 0 ? 'Escolha uma OS com edificação cadastrada' : undefined}
+                className="h-11 w-[240px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="">{edificacoesFiltradas.length === 0 ? 'Sem edificação nesta OS' : 'Edificação'}</option>
+                {edificacoesFiltradas.map((edificio) => (
+                  <option key={edificio} value={edificio}>{edificio}</option>
+                ))}
+              </select>
               <SearchableSelect
                 value={filtroDisciplina}
                 onChange={(event) => setFiltroDisciplina(event.target.value)}

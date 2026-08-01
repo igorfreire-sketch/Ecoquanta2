@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
-import { DEFAULT_DISCIPLINES, disciplineMatchesSector, getDisciplineSector, getSectorOptions, getUserDisciplineList, resolveDisciplineEntry } from '../lib/disciplineCatalog';
+import { DEFAULT_DISCIPLINES, DISCIPLINAS_FILHAS_DE_ENGENHARIA, disciplineMatchesSector, expandEngenhariaNaSelecao, getDisciplineSector, getSectorOptions, getUserDisciplineList, resolveDisciplineEntry } from '../lib/disciplineCatalog';
 import CronogramaResumo from './CoordenacaoEngenharia/CronogramaResumo';
 import { getSheetDisciplinas, getSheetTextos, type AnnotationSheet } from './CoordenacaoEngenharia/Anotacoes';
 
@@ -2055,15 +2055,15 @@ const BUILDING_COLOR_PALETTE = [
   '#14B8A6', '#F43F5E', '#EAB308', '#6366F1', '#22C55E'
 ];
 
-const getBuildingAccentColor = (edificio: string): string => {
-  const n = parseInt(edificio, 10);
-  if (Number.isFinite(n) && n > 0) return BUILDING_COLOR_PALETTE[(n - 1) % BUILDING_COLOR_PALETTE.length];
-  let hash = 0;
-  for (let i = 0; i < edificio.length; i++) {
-    hash = (hash * 31 + edificio.charCodeAt(i)) & 0x7fffffff;
-  }
-  return BUILDING_COLOR_PALETTE[hash % BUILDING_COLOR_PALETTE.length];
-};
+// Cor por POSICAO (nao por hash do nome): garante zero repeticao dentro do mesmo grupo de
+// edificacoes visiveis, funciona igual pra numero ("1","2"...) ou nome ("Cafeteria", "Ed 01 - CT").
+// Ordem estavel (alfabetica) pra a mesma edificacao sempre cair na mesma cor entre renderizacoes.
+function buildEdificioColorMap(edificios: string[]): Map<string, string> {
+  const ordenados = [...edificios].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
+  const mapa = new Map<string, string>();
+  ordenados.forEach((nome, i) => mapa.set(nome, BUILDING_COLOR_PALETTE[i % BUILDING_COLOR_PALETTE.length]));
+  return mapa;
+}
 
 const getUniqueEdificios = (activities: EngineeringActivity[]): string[] =>
   Array.from(new Set(activities.map((a) => a.edificio).filter((value): value is string => Boolean(value))));
@@ -2073,6 +2073,7 @@ function BuildingFlagStack({ edificios, compact = false }: { edificios: string[]
   const width = compact ? 10 : 16;
   const height = compact ? 18 : 28;
   const triangle = compact ? 5 : 8;
+  const cores = buildEdificioColorMap(edificios);
 
   return (
     <div className="flex items-start" aria-hidden="true">
@@ -2083,14 +2084,14 @@ function BuildingFlagStack({ edificios, compact = false }: { edificios: string[]
           style={{ position: 'relative', marginLeft: index === 0 ? 0 : -Math.round(width / 2), zIndex: edificios.length - index }}
           title={`Edifício ${edificio}`}
         >
-          <div style={{ height, width, backgroundColor: getBuildingAccentColor(edificio) }} />
+          <div style={{ height, width, backgroundColor: cores.get(edificio) }} />
           <div
             style={{
               width: 0,
               height: 0,
               borderLeft: `${triangle}px solid transparent`,
               borderRight: `${triangle}px solid transparent`,
-              borderTop: `${triangle}px solid ${getBuildingAccentColor(edificio)}`,
+              borderTop: `${triangle}px solid ${cores.get(edificio)}`,
             }}
           />
         </div>
@@ -2714,6 +2715,7 @@ export default function Atividades({
   const [filterSemana, setFilterSemana] = useState(getCurrentWeekKey());
   const [filterContrato, setFilterContrato] = useState('Todos');
   const [filterOs, setFilterOs] = useState('Todos');
+  const [filterEdificacao, setFilterEdificacao] = useState('Todos');
   const [filterDisciplinas, setFilterDisciplinas] = useState<string[]>([]);
   // Opt-in do usuario pra ignorar o auto-filtro por disciplina (evita board vazio quando a
   // disciplina do usuario nao tem atividades).
@@ -2815,11 +2817,17 @@ export default function Atividades({
     [selectedActivity]
   );
 
+  // Com o filtro de disciplina habilitado, quem escolhe o que aparece e o checkbox
+  // (filterDisciplinas, aplicado la embaixo em filteredActivities) - auto-selecionado pra
+  // disciplina do usuario ao entrar, mas o usuario PODE trocar (ex: marcar Engenharia mesmo
+  // sendo de outra area). Escopar aqui TAMBEM pela disciplina do usuario travava isso: marcar
+  // Engenharia so filtrava dentro de um conjunto que ja tinha sido reduzido so a disciplina
+  // propria, sempre dando zero resultado quando a disciplina marcada nao era a sua.
   const disciplineScopedActivities = useMemo(
-    () => (showAllDisciplines || verTodasDisciplinas
+    () => (showAllDisciplines || verTodasDisciplinas || disciplineFilterEnabled
       ? activitiesWithDiscipline
       : activitiesWithDiscipline.filter((activity) => matchesUserDiscipline(activity, [currentUser?.disciplina, ...(currentUser?.disciplinas || [])].filter(Boolean).join(' | ')))),
-    [activitiesWithDiscipline, currentUser?.disciplina, currentUser?.disciplinas, showAllDisciplines, verTodasDisciplinas]
+    [activitiesWithDiscipline, currentUser?.disciplina, currentUser?.disciplinas, showAllDisciplines, verTodasDisciplinas, disciplineFilterEnabled]
   );
 
   useEffect(() => {
@@ -2920,6 +2928,18 @@ export default function Atividades({
     return ['Todos', ...options];
   }, [activitiesWithDiscipline, eapRegistry.osOptions, filterContrato]);
 
+  // Edificacoes da OS escolhida - ver padrão.md "Filtro de Edificação". Disabled (so "Todos")
+  // ate a OS ter alguma edificacao cadastrada.
+  const edificacoesDisponiveis = useMemo<string[]>(() => {
+    if (filterOs === 'Todos') return ['Todos'];
+    const nomes = new Set<string>();
+    activitiesWithDiscipline.forEach((activity) => {
+      if (activity.osCodigo === filterOs && activity.edificio) nomes.add(activity.edificio);
+    });
+    if (nomes.size === 0) return ['Todos'];
+    return ['Todos', ...Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }))];
+  }, [activitiesWithDiscipline, filterOs]);
+
   const disciplinasDisponiveis = useMemo(() => {
     const adminData = preloadedData?.admin;
     if (adminData) {
@@ -2943,7 +2963,11 @@ export default function Atividades({
   }, [preloadedData?.admin, activitiesWithDiscipline]);
 
   // O filtro exibe setores, nao disciplinas soltas: hoje um time responde por varias.
-  const setoresDisponiveis = useMemo(() => getSectorOptions(disciplinasDisponiveis), [disciplinasDisponiveis]);
+  // "Engenharia" fixada primeiro - ver padrão.md, mesmo destaque que no picker de disciplina da nota.
+  const setoresDisponiveis = useMemo(
+    () => getSectorOptions(disciplinasDisponiveis).sort((a, b) => (a === 'Engenharia' ? -1 : b === 'Engenharia' ? 1 : 0)),
+    [disciplinasDisponiveis]
+  );
 
   // O agrupamento por setor ja junta o que antes era LINKED_DISCIPLINE_GROUPS: Estrutura
   // Metalica e de Concreto caem as duas em "Estrutural", entao marcar uma marca as duas.
@@ -2962,7 +2986,12 @@ export default function Atividades({
       return;
     }
     setVerTodasDisciplinas(false);
-    setFilterDisciplinas(next.filter((item) => item !== VER_TODAS_DISCIPLINAS_OPTION));
+    let limpo = next.filter((item) => item !== VER_TODAS_DISCIPLINAS_OPTION);
+    // Desmarcou Engenharia: some com todas as filhas que ela tinha marcado junto.
+    if (filterDisciplinas.includes('Engenharia') && !limpo.includes('Engenharia')) {
+      limpo = limpo.filter((item) => !DISCIPLINAS_FILHAS_DE_ENGENHARIA.includes(item));
+    }
+    setFilterDisciplinas(expandEngenhariaNaSelecao(limpo));
   };
 
   const disciplineAutoMatchedRef = useRef(false);
@@ -3031,6 +3060,7 @@ export default function Atividades({
 
         const matchesContrato = filterContrato === 'Todos' || sameContractCode(getActivityContractCode(activity), filterContrato);
         const matchesOs = filterOs === 'Todos' || activity.osCodigo === filterOs;
+        const matchesEdificacao = filterEdificacao === 'Todos' || activity.edificio === filterEdificacao;
         const activityDisciplinas = splitDisciplinas(activity.disciplinas || activity.disciplina);
         const matchesDisciplina = !disciplineFilterEnabled
           || filterDisciplinas.length === 0
@@ -3050,6 +3080,7 @@ export default function Atividades({
           matchesSearch &&
           matchesContrato &&
           matchesOs &&
+          matchesEdificacao &&
           matchesDisciplina &&
           matchesEtapa &&
           matchesLod &&
@@ -3066,6 +3097,7 @@ export default function Atividades({
     filterEtapa,
     filterLod,
     filterOs,
+    filterEdificacao,
     filterPrioridade,
     filterStatus,
     filterDisciplinas,
@@ -3365,7 +3397,8 @@ export default function Atividades({
 
         <FilterSelect label="Semana" value={filterSemana} onChange={setFilterSemana} options={weekOptions} />
         <FilterSelect label="Contrato" value={filterContrato} onChange={setFilterContrato} options={contratosDisponiveis} />
-        <FilterSelect label="OS" value={filterOs} onChange={setFilterOs} options={osDisponiveis} />
+        <FilterSelect label="OS" value={filterOs} onChange={(value) => { setFilterOs(value); setFilterEdificacao('Todos'); }} options={osDisponiveis} />
+        <FilterSelect label="Edificação" value={filterEdificacao} onChange={setFilterEdificacao} options={edificacoesDisponiveis} />
         {disciplineFilterEnabled && (
           <FilterMultiSelectDropdown
             label="Disciplina"
@@ -3430,8 +3463,8 @@ export default function Atividades({
       )}
 
       <section className="overflow-hidden rounded-[34px] bg-[linear-gradient(180deg,rgba(255,255,255,0.6)_0%,rgba(248,250,252,0.6)_100%)] p-2.5 shadow-sm backdrop-blur-[2px]">
-        <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-          <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 md:grid-cols-3 xl:max-w-[980px] xl:grid-cols-[0.8fr_1.35fr_0.75fr_0.75fr_0.75fr_0.75fr_0.95fr]">
+        <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 md:grid-cols-3 xl:max-w-[1140px] xl:grid-cols-[0.8fr_1.35fr_0.75fr_1.05fr_0.75fr_0.75fr_0.95fr_0.7fr]">
             {/* Mesmo formato de chip dos CompactStat ao lado, e primeiro da fila. */}
             {!filtersAlwaysVisible && (
               <button
@@ -3497,6 +3530,20 @@ export default function Atividades({
                 </div>
               </div>
             </div>
+            <button
+              type="button"
+              disabled={filterSemana === getCurrentWeekKey()}
+              onClick={() => setFilterSemana(getCurrentWeekKey())}
+              className="inline-flex min-w-0 items-center gap-2 rounded-[20px] bg-white px-2 py-1.5 text-left shadow-sm transition-colors hover:bg-[#F7C7B7] disabled:cursor-default disabled:opacity-60 disabled:hover:bg-white"
+            >
+              <div className={filterSemana === getCurrentWeekKey() ? 'text-[#94A3B8]' : 'text-[#F05D28]'}>
+                <Calendar size={14} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[9px] font-extrabold uppercase tracking-[0.7px] text-[#94A3B8]">Semana</p>
+                <p className="text-[13px] font-black text-[#2D2D2D]">Atual</p>
+              </div>
+            </button>
           </div>
         </div>
 

@@ -5,6 +5,8 @@ import {
   setFirebaseDocument,
   deleteFirebaseDocument,
 } from '../lib/firebaseDb';
+import SearchableSelect from './SearchableSelect';
+import type { AnnotationSheet } from './CoordenacaoEngenharia/Anotacoes';
 
 const COLLECTION = 'solucoesDigitaisCronograma';
 const DISCIPLINA_ALVO = 'bi - solucoes digitais';
@@ -17,12 +19,15 @@ interface CronoRow {
   duracaoDias: number | null;
   dataFim: string;
   responsavelEmail: string;
+  percentualConcluido: number | null;
+  noteId: string;
   ordem?: number;
 }
 
 interface SolucoesDigitaisProps {
   currentUser: { nome: string; email: string; role?: string; isAdmin?: boolean; disciplinas?: string[] };
   usuarios?: Array<{ nome: string; email: string; disciplinas?: string[] }>;
+  notes?: AnnotationSheet[];
 }
 
 function normalizar(valor: string) {
@@ -59,8 +64,10 @@ function addDias(inicio: string, dias: number): string {
   return formatarDataLocal(resultado);
 }
 
-export default function SolucoesDigitais({ currentUser, usuarios = [] }: SolucoesDigitaisProps) {
+export default function SolucoesDigitais({ currentUser, usuarios = [], notes = [] }: SolucoesDigitaisProps) {
   const [rows, setRows] = useState<CronoRow[]>([]);
+  // Filtro por usuário: so lista quem de fato tem linha no cronograma (evita opcao que sempre da zero).
+  const [filtroResponsavel, setFiltroResponsavel] = useState('');
 
   // ponytail: sem gate de loading — a planilha aparece na hora. Se houver linhas salvas no
   // Firebase, elas entram quando chegarem; se a busca falhar/travar, a grade continua usável.
@@ -85,6 +92,13 @@ export default function SolucoesDigitais({ currentUser, usuarios = [] }: Solucoe
       return n === DISCIPLINA_ALVO || n.includes('solucoes digitais');
     }),
   );
+
+  const emailsComLinha: string[] = Array.from(new Set(rows.map((r) => r.responsavelEmail).filter(Boolean)));
+  const opcoesFiltroResponsavel = emailsComLinha
+    .map((email) => ({ email, nome: usuarios.find((u) => u.email === email)?.nome || email }))
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+
+  const linhasFiltradas = filtroResponsavel ? rows.filter((r) => r.responsavelEmail === filtroResponsavel) : rows;
 
   function persistir(row: CronoRow) {
     if (!isFirebaseConfigured()) return;
@@ -116,6 +130,8 @@ export default function SolucoesDigitais({ currentUser, usuarios = [] }: Solucoe
       duracaoDias: null,
       dataFim: '',
       responsavelEmail: '',
+      percentualConcluido: null,
+      noteId: '',
       ordem: rows.length,
     };
     setRows((prev) => [...prev, nova]);
@@ -181,15 +197,27 @@ export default function SolucoesDigitais({ currentUser, usuarios = [] }: Solucoe
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold text-[#2D2D2D]">Cronograma — Soluções digitais</h2>
-        <button
-          onClick={adicionarLinha}
-          className="px-3 py-2 rounded bg-[#F05D28] text-white text-sm font-medium hover:opacity-90"
-        >
-          + Atividade
-        </button>
+        <div className="flex items-center gap-2">
+          <select
+            value={filtroResponsavel}
+            onChange={(e) => setFiltroResponsavel(e.target.value)}
+            className="border border-[#E5E7EB] rounded px-2 py-2 text-sm text-[#2D2D2D] bg-white"
+          >
+            <option value="">Todos os usuários</option>
+            {opcoesFiltroResponsavel.map((o) => (
+              <option key={o.email} value={o.email}>{o.nome}</option>
+            ))}
+          </select>
+          <button
+            onClick={adicionarLinha}
+            className="px-3 py-2 rounded bg-[#F05D28] text-white text-sm font-medium hover:opacity-90"
+          >
+            + Atividade
+          </button>
+        </div>
       </div>
 
-      <div className="overflow-x-auto border border-[#E5E7EB] rounded">
+      <div className="overflow-x-auto border border-[#E5E7EB] rounded-2xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
         <table className="min-w-full text-sm text-[#2D2D2D]">
           <thead className="bg-gray-50 border-b border-[#E5E7EB]">
             <tr>
@@ -199,11 +227,13 @@ export default function SolucoesDigitais({ currentUser, usuarios = [] }: Solucoe
               <th className="px-3 py-2 text-left font-medium">Duração (dias)</th>
               <th className="px-3 py-2 text-left font-medium">Fim</th>
               <th className="px-3 py-2 text-left font-medium">Responsável</th>
+              <th className="px-3 py-2 text-left font-medium">% Concluído</th>
+              <th className="px-3 py-2 text-left font-medium">Nota</th>
               <th className="px-3 py-2 text-left font-medium"></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {linhasFiltradas.map((row) => (
               <tr key={row.id} className="border-b border-[#E5E7EB] last:border-b-0">
                 <td className="px-3 py-1">
                   <input
@@ -263,6 +293,31 @@ export default function SolucoesDigitais({ currentUser, usuarios = [] }: Solucoe
                     ))}
                   </select>
                 </td>
+                <td className="px-3 py-1">
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={row.percentualConcluido ?? ''}
+                    onChange={(e) => atualizarLinha(row.id, { percentualConcluido: e.target.value === '' ? null : Number(e.target.value) })}
+                    onBlur={() => onBlurSalvar(row.id)}
+                    className="w-20 border border-[#E5E7EB] rounded px-2 py-1"
+                    placeholder="%"
+                  />
+                </td>
+                <td className="px-3 py-1">
+                  <SearchableSelect
+                    value={row.noteId}
+                    onChange={(e) => atualizarLinha(row.id, { noteId: e.target.value }, true)}
+                    className="w-full border border-[#E5E7EB] rounded px-2 py-1 bg-white"
+                    searchPlaceholder="Sem nota"
+                  >
+                    <option value="">Sem nota</option>
+                    {notes.map((n) => (
+                      <option key={n.id} value={n.id}>{n.titulo || '(sem título)'}</option>
+                    ))}
+                  </SearchableSelect>
+                </td>
                 <td className="px-3 py-1 text-center">
                   <button
                     onClick={() => removerLinha(row.id)}
@@ -274,9 +329,11 @@ export default function SolucoesDigitais({ currentUser, usuarios = [] }: Solucoe
                 </td>
               </tr>
             ))}
-            {rows.length === 0 && (
+            {linhasFiltradas.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-3 py-4 text-center text-gray-400">Nenhuma atividade. Clique em "+ Atividade" para começar.</td>
+                <td colSpan={9} className="px-3 py-4 text-center text-gray-400">
+                  {rows.length === 0 ? 'Nenhuma atividade. Clique em "+ Atividade" para começar.' : 'Nenhuma atividade para esse usuário.'}
+                </td>
               </tr>
             )}
           </tbody>

@@ -1,5 +1,5 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
-import { getAuth, signInAnonymously } from 'firebase/auth';
+import { getAuth, signInAnonymously, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -182,6 +182,46 @@ async function ensureFirebaseAuth() {
       });
   }
   await authPromise;
+}
+
+// Escopo extra (alem do login basico) pra ler a Agenda do Google e vincular reuniao em
+// andamento numa nota. Google NAO devolve refresh token pro client-side (SPA) - o token
+// obtido aqui expira em ~1h e so renova chamando signInWithGooglePopup de novo (gesto real
+// do usuario, ex: botao "Vincular Agenda" na nota - nunca popup automatico em background).
+// calendar.events (leitura + escrita de eventos) - precisa de escrita pra deixar um link da
+// nota na descricao do evento (ver linkNoteToEvent em googleCalendar.ts). documents.readonly -
+// ler o CONTEUDO da ata do Gemini (Google Doc anexado ao evento), nao so o link.
+const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+const GOOGLE_DOCS_SCOPE = 'https://www.googleapis.com/auth/documents.readonly';
+let googleCalendarToken: { token: string; expiresAt: number } | null = null;
+
+// Login social (Google) via Firebase Auth. Precisa do provider "Google" habilitado em
+// Firebase Console > Authentication > Sign-in method - se nao estiver, o popup falha com
+// auth/operation-not-allowed. Sobrescreve a sessao anonima do ensureFirebaseAuth (ok - so
+// isSignedIn() e checado nas rules, nao importa se e anonimo ou nao).
+export async function signInWithGooglePopup(): Promise<string> {
+  const config = readFirebaseConfig();
+  if (!config) throw new Error('Firebase indisponivel para autenticar. Verifique a configuracao do ambiente.');
+  if (!app) app = initializeApp(config);
+  const provider = new GoogleAuthProvider();
+  provider.addScope(GOOGLE_CALENDAR_SCOPE);
+  provider.addScope(GOOGLE_DOCS_SCOPE);
+  const result = await signInWithPopup(getAuth(app), provider);
+  const email = result.user.email;
+  if (!email) throw new Error('Conta Google sem e-mail associado.');
+  const credential = GoogleAuthProvider.credentialFromResult(result);
+  if (credential?.accessToken) {
+    googleCalendarToken = { token: credential.accessToken, expiresAt: Date.now() + 55 * 60 * 1000 };
+  }
+  return email;
+}
+
+// Token OAuth do Google (escopo Agenda) em cache - null quando nunca logou ou quando expirou
+// (~1h). Sem popup silencioso: se der null, quem chamou precisa pedir pro usuario clicar de
+// novo em "Entrar com Google"/"Vincular Agenda".
+export function getGoogleCalendarToken(): string | null {
+  if (!googleCalendarToken || googleCalendarToken.expiresAt < Date.now()) return null;
+  return googleCalendarToken.token;
 }
 
 function nowPtBr() {

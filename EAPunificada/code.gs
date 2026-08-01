@@ -1385,7 +1385,9 @@ function getRawEapRows_(sheet) {
     var plannedStart = normalizeSheetDate_(values[i][11]) || normalizeSheetDate_(values[i][6]);
     var plannedEnd = normalizeSheetDate_(values[i][12]) || normalizeSheetDate_(values[i][7]);
     if (!plannedStart || !plannedEnd || plannedStart > plannedEnd) continue;
-    if (isGeneralLod) continue;
+    // Item que E uma OS (ex: "OS 046 - CEPT (LOD 200)") nunca descarta por LOD-sem-disciplina -
+    // senao a OS inteira, com toda a subarvore, some do site (casos reais: 2.20, 2.23).
+    if (isGeneralLod && !isOsHeaderName_(nome)) continue;
 
     rows.push({
       progress: toNumberSafe_(values[i][2]),
@@ -1407,6 +1409,18 @@ function getRawEapRows_(sheet) {
   }
 
   return rows;
+}
+
+// Deteccao ESTRITA de OS pra hierarquia (contrato/os/item) e pro resgate do filtro de LOD.
+// Diferente de isOsItemName_ (mais solta, usada so no menu): exige "OS" maiusculo seguido de
+// numero (com ou sem espaco/hifen), igual todo nome real de OS na planilha ("OS 046", "OS034",
+// "IM01-OS034"). Sem isso, "os" minusculo (artigo comum do portugues, ex: "para os cargos",
+// "todos os perfis") virava falso-positivo de OS em qualquer frase da planilha - validado contra
+// o Arquivo Modelo_unificado.xlsx real: 91 falsos positivos com regex solta, 0 com essa.
+function isOsHeaderName_(value) {
+  var text = String(value || '').trim();
+  if (!text) return false;
+  return /(^|[^A-Za-z0-9À-ÿ])_?OS[\s_-]*\d/.test(text);
 }
 
 function hasExplicitDiscipline_(disciplinas) {
@@ -1545,31 +1559,42 @@ function buildEapHierarchyPayloadFromRows_(rows) {
 
   var nodes = [];
   var rootCodes = [];
+  // Mapa codigo->node: como rawNodes esta ordenado por dotCount crescente, todo ancestral de um
+  // no ja foi processado e esta aqui antes dele - permite herdar o osCodigo do pai numa passada so.
+  var nodeMap = {};
 
   for (var j = 0; j < rawNodes.length; j++) {
     var raw = rawNodes[j];
     var parts = String(raw.codigo || '').trim().split('.');
     var level = parts.length - 1;
     var parentCodigo = level > 0 ? parts.slice(0, parts.length - 1).join('.') : '';
-    var contratoCodigo = '';
+    var contratoCodigo = parts[0] || '';
     var osCodigo = '';
     var tipo = 'item';
 
     if (level === 0) {
       tipo = 'contrato';
-      contratoCodigo = raw.codigo;
       rootCodes.push(raw.codigo);
-    } else if (level === 1) {
+    } else if (isOsHeaderName_(raw.nome)) {
+      // OS de verdade e reconhecida pelo NOME (ex: "OS 046 - CEPT", "IM01-OS034 CRECHE"), em
+      // qualquer profundidade - contar pontos deixava 76% das OS reais invisiveis (documentado
+      // no vault, validado contra o Excel real: 31 OS por nivel=1 vs 75 por nome).
       tipo = 'os';
-      contratoCodigo = parts[0] || '';
       osCodigo = raw.codigo;
     } else {
+      // Sobe pela cadeia de codigos (nao so o pai imediato) ate achar o ancestral OS mais
+      // proximo - a planilha as vezes pula um nivel intermediario sem linha propria
+      // (ex: existe "2.13.2.1" mas nunca existiu uma linha soh "2.13.2"), e o pai imediato
+      // nesse caso nao esta no nodeMap.
       tipo = 'item';
-      contratoCodigo = parts[0] || '';
-      osCodigo = parentCodigo;
+      osCodigo = '';
+      for (var k = parts.length - 1; k > 0; k -= 1) {
+        var ancestorNode = nodeMap[parts.slice(0, k).join('.')];
+        if (ancestorNode && ancestorNode.tipo === 'os') { osCodigo = ancestorNode.codigo; break; }
+      }
     }
 
-    nodes.push({
+    var node = {
       codigo: raw.codigo,
       nome: raw.nome,
       tipo: tipo,
@@ -1581,7 +1606,10 @@ function buildEapHierarchyPayloadFromRows_(rows) {
       disciplinas: raw.disciplinas,
       isLod: raw.isLod,
       filterable: raw.filterable
-    });
+    };
+
+    nodeMap[node.codigo] = node;
+    nodes.push(node);
   }
 
   return {

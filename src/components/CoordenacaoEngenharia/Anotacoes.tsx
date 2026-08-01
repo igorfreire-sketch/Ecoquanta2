@@ -1,11 +1,12 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, Calendar, Check, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, Check, ChevronLeft, ChevronRight, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
 import SearchableSelect from '../SearchableSelect';
 import { getDisciplineDisplayName, getDisciplineIconInfo, type EngineeringActivity } from '../Atividades';
-import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups } from '../../lib/disciplineCatalog';
+import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups, expandEngenhariaNaSelecao } from '../../lib/disciplineCatalog';
 import { exportNoteToCsv, exportNoteToPdf, exportNotesToMarkdown } from '../../lib/noteExport';
-import { canDeleteNote, canEditNote } from '../../lib/firebaseDb';
+import { canDeleteNote, canEditNote, signInWithGooglePopup, getGoogleCalendarToken } from '../../lib/firebaseDb';
+import { listTodayCalendarEvents, linkNoteToEvent, fetchGoogleDocText, type CalendarEventOption } from '../../lib/googleCalendar';
 import {
   alturaParaLinhas, BANCO_COL_WIDTH, BANCO_ROW_HEIGHT, cellCss, cellKey, fonteCss, isCovered,
   LARGURA_QUEBRA_PX, mergeAt, mergeIntersects, PADDING_CELULA_X, quebrarTexto, remapMerges,
@@ -71,6 +72,9 @@ export interface AnnotationSheet {
   checklists?: AnnotationChecklist[];
   // Link colado do evento do Google Agenda (sem OAuth). Ausente = nota sem vinculo.
   googleEventUrl?: string;
+  // Link da ata/nota do Gemini anexada ao evento (Google Doc). Preenchido automatico ao
+  // "Vincular Agenda" (ver findCurrentCalendarEvent) ou colado a mao. Ausente = sem ata.
+  geminiNotesUrl?: string;
   updatedAt: string;
   // Campos abaixo podem faltar em anotacoes salvas antes desta feature.
   // publica ausente = tratado como publica (nao muda a visibilidade de notas antigas).
@@ -83,6 +87,9 @@ export interface AnnotationSheet {
   marcadosUsuarios?: string[];
   // Coluna do Kanban de "Minhas Notas". Ausente = tratado como 'criado' (nota antiga sem o campo).
   status?: 'criado' | 'iniciado' | 'concluido';
+  // Edificacao especifica dentro da OS vinculada (ver activities[].edificio, populado via
+  // eap.edificioPorItem). Opcional - so faz sentido quando a OS em osCodigo tem edificacoes.
+  edificacao?: string;
   // Legado: antes de suportar varios blocos de notas, o texto livre unico ficava aqui. Migrado por getSheetTextos.
   texto?: string;
   // Legado: antes de suportar varios bancos, a tabela unica ficava aqui. Migrada por getSheetBancos.
@@ -237,6 +244,17 @@ function formatOsLabel(os: { codigo: string; nome: string }) {
   return `${os.codigo} - ${os.nome}`;
 }
 
+function GoogleIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 18 18">
+      <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.68-3.88 2.68-6.62z" />
+      <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.9v2.33A9 9 0 0 0 9 18z" />
+      <path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.16.28-1.7V4.97H.9A9 9 0 0 0 0 9c0 1.45.35 2.83.9 4.03z" />
+      <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .9 4.97L3.95 7.3C4.66 5.17 6.65 3.58 9 3.58z" />
+    </svg>
+  );
+}
+
 function makeId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -245,6 +263,24 @@ function formatDateBR(value?: string) {
   if (!value) return '';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('pt-BR');
+}
+
+// 1o link (markdown [label](url) ou URL solta) achado no texto da celula. Usado pro icone de
+// abrir a landando dentro da propria celula, sem precisar entrar em modo de edicao.
+const REGEX_LINK_MARKDOWN = /\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/;
+const REGEX_URL_SOLTA = /(https?:\/\/[^\s)]+)/;
+function extrairLinkDaCelula(texto: string): string | null {
+  const viaMarkdown = REGEX_LINK_MARKDOWN.exec(texto || '');
+  if (viaMarkdown) return viaMarkdown[2];
+  const viaUrl = REGEX_URL_SOLTA.exec(texto || '');
+  return viaUrl ? viaUrl[1] : null;
+}
+
+// Rotulo do link markdown "[rotulo](url)" - so existe pra esse formato (URL solta nao tem
+// rotulo proprio, mostra ela mesma). Usado pra exibir a celula em modo "visualizacao".
+function extrairLabelDoLink(texto: string): string | null {
+  const viaMarkdown = REGEX_LINK_MARKDOWN.exec(texto || '');
+  return viaMarkdown ? viaMarkdown[1] : null;
 }
 
 function normalizeText(value: string) {
@@ -309,24 +345,25 @@ export function encontrarRascunhoOrfao(email: string, sheets: AnnotationSheet[],
   return melhor;
 }
 
-// Pro menu Principal (item 5): qualquer rascunho nao salvo do usuario, o mais recente primeiro.
-export function encontrarRascunhoRecente(email: string): NotaRascunho | null {
-  let melhor: NotaRascunho | null = null;
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const chave = localStorage.key(i);
-    if (!chave || !chave.startsWith(RASCUNHO_PREFIXO)) continue;
-    const rascunho = lerRascunho(chave.slice(RASCUNHO_PREFIXO.length));
-    if (rascunho && rascunho.autorEmail === email && (!melhor || rascunho.ts > melhor.ts)) melhor = rascunho;
-  }
-  return melhor;
-}
-
 export default function Anotacoes({
   filter, sheets, osOptions, disciplinaOptions, contractOptions = [], currentUser, activities = [], usuarios = [], onSave, onDelete, controlledSheet, onCloseControlled,
 }: AnotacoesProps) {
   const normalizeForEditing = (sheet: AnnotationSheet): AnnotationSheet => ({ ...sheet, bancos: getSheetBancos(sheet), textos: getSheetTextos(sheet) });
   const [editing, setEditing] = React.useState<AnnotationSheet | null>(() => (controlledSheet ? normalizeForEditing(controlledSheet) : null));
   const [contextMenu, setContextMenu] = React.useState<ContextMenuState>(null);
+  // Posicao/altura reais do menu de contexto, medidas apos montar (a altura varia com o
+  // conteudo - secoes de formatacao + coluna de ortografia opcional - um valor fixo chutado
+  // cortava o menu quando o clique era perto do fim da tela).
+  const [contextMenuPos, setContextMenuPos] = React.useState<{ top: number; maxHeight: number } | null>(null);
+  const contextMenuRef = React.useRef<HTMLDivElement>(null);
+  React.useLayoutEffect(() => {
+    if (!contextMenu) { setContextMenuPos(null); return; }
+    const el = contextMenuRef.current;
+    const altura = el ? el.offsetHeight : 0;
+    const top = Math.max(8, Math.min(contextMenu.y, window.innerHeight - altura - 8));
+    setContextMenuPos({ top, maxHeight: window.innerHeight - top - 8 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextMenu]);
   const [sugestoesOrtografia, setSugestoesOrtografia] = React.useState<SugestaoOrtografica[]>([]);
   const [saving, setSaving] = React.useState(false);
   const [configOpen, setConfigOpen] = React.useState(false);
@@ -362,6 +399,7 @@ export default function Anotacoes({
   // Chip selecionado dentro das abas OS/Disciplina, quando ha mais de um vinculo.
   const [sidebarOsCodigo, setSidebarOsCodigo] = React.useState<string | null>(null);
   const [sidebarDisciplina, setSidebarDisciplina] = React.useState<string | null>(null);
+  const [sidebarRecolhida, setSidebarRecolhida] = React.useState(false);
   const [contratoFiltro, setContratoFiltro] = React.useState('');
   // Filtro da lista de notas (Autor > Contrato > OS > Disciplina), independente do filtro do editor.
   const [listaAutor, setListaAutor] = React.useState('');
@@ -369,13 +407,28 @@ export default function Anotacoes({
   const [listaOs, setListaOs] = React.useState('');
   const [listaDisciplina, setListaDisciplina] = React.useState('');
   const [listaVinculo, setListaVinculo] = React.useState('');
+  const [listaEdificacao, setListaEdificacao] = React.useState('');
   // Aba ativa da lista de notas: minhas (Kanban), publicas de outros, ou concluidas ha 10+ dias.
   const [notasTab, setNotasTab] = React.useState<'minhas' | 'publicas' | 'concluidas'>('minhas');
   // Menu do card em posicao FIXED (calculada do botao) para nao ser recortado pelo overflow-hidden do card.
   const [cardMenuPos, setCardMenuPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const textoRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const celulaRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
+  // Celula com foco no momento: enquanto nao focada, celula com link markdown mostra so o
+  // rotulo em azul sublinhado (em vez do "[rotulo](url)" cru); ao focar, volta a mostrar o
+  // texto bruto pra poder editar.
+  const [celulaFocada, setCelulaFocada] = React.useState<string | null>(null);
   // Rascunho anti-F5 encontrado ao abrir a nota (mais novo que o que esta salvo). null = nenhum.
   const [rascunhoDisponivel, setRascunhoDisponivel] = React.useState<NotaRascunho | null>(null);
+  // Foto do estado no instante em que a nota foi aberta (nova ou salva) - autosave so grava
+  // rascunho quando `editing` se afasta disto, senao so abrir e fechar uma nota nova ja virava
+  // "rascunho pendente" (nao havia savedSheet pra comparar).
+  const initialEditingSnapshotRef = React.useRef<string | null>(null);
+  const lastEditingIdRef = React.useRef<string | undefined>(undefined);
+  // "Vincular Agenda": lista os eventos de hoje pro usuario escolher qual vincula na nota.
+  const [sincronizandoAgenda, setSincronizandoAgenda] = React.useState(false);
+  const [agendaPickerOpen, setAgendaPickerOpen] = React.useState(false);
+  const [agendaEventos, setAgendaEventos] = React.useState<CalendarEventOption[]>([]);
 
   // Fecha o menu do card ao rolar, redimensionar ou apertar Escape (menu fixed nao acompanha o scroll do card).
   React.useEffect(() => {
@@ -398,11 +451,25 @@ export default function Anotacoes({
 
   // Autosave anti-F5: grava `editing` no localStorage com debounce a cada mudanca, enquanto
   // o editor estiver aberto e a pessoa puder editar (leitura nunca escreve rascunho por cima).
+  // A checagem "acabou de abrir" e o snapshot inicial vivem NO MESMO effect (nao em dois
+  // effects separados) de proposito: com dois effects, a ordem de execucao entre eles nao e
+  // garantida no mesmo commit e o autosave podia ler o snapshot ainda desatualizado do effect
+  // anterior e agendar um rascunho fantasma so por ter aberto a nota (bug reapareceu quando o
+  // snapshot morava num effect `[editing?.id]` separado).
   React.useEffect(() => {
     if (!editing) return;
-    const jaSalva = sheets.some((sheet) => sheet.id === editing.id);
-    const podeSalvar = !jaSalva || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios);
+    const acabouDeAbrir = lastEditingIdRef.current !== editing.id;
+    lastEditingIdRef.current = editing.id;
+    if (acabouDeAbrir) {
+      initialEditingSnapshotRef.current = JSON.stringify(editing);
+      return;
+    }
+    const savedSheet = sheets.find((sheet) => sheet.id === editing.id);
+    const podeSalvar = !savedSheet || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios);
     if (!podeSalvar) return;
+    // So abrir a nota (sem editar nada, nova ou salva) nao pode virar rascunho "pendente" -
+    // senao o aviso "continuar de onde parou" reaparece so por ter dado uma olhada na nota.
+    if (initialEditingSnapshotRef.current === JSON.stringify(editing)) return;
     const timer = setTimeout(() => {
       const id = editing.id || 'nova';
       if (rascunhosAbandonados.delete(id)) return; // acabou de ser abandonado - nao ressuscita
@@ -411,17 +478,14 @@ export default function Anotacoes({
     return () => clearTimeout(timer);
   }, [editing, sheets, currentUser]);
 
-  // Ao abrir uma nota (ou uma nova), procura um rascunho pra oferecer "continuar de onde parou".
-  // So roda quando o id muda (abrir/trocar de nota) - nao a cada tecla, senao o autosave que
-  // acabou de gravar reapareceria como "rascunho encontrado" a cada digitacao.
+  // Oferece "continuar de onde parou" SO no fluxo de nota nova (+ Nota) - nota ja salva
+  // reaberta nunca mostra esse aviso, mesmo que tenha um rascunho proprio pendente (pedido
+  // explicito: o aviso so deve existir nesse um lugar, em nenhum outro).
   React.useEffect(() => {
     if (!editing) { setRascunhoDisponivel(null); return; }
     const jaSalva = sheets.some((sheet) => sheet.id === editing.id);
-    const rascunho = jaSalva
-      ? lerRascunho(editing.id)
-      : encontrarRascunhoOrfao(currentUser.email, sheets, editing.id);
-    const valeAPena = rascunho && (!jaSalva || rascunho.ts > new Date(editing.updatedAt || 0).getTime());
-    setRascunhoDisponivel(valeAPena ? rascunho : null);
+    if (jaSalva) { setRascunhoDisponivel(null); return; }
+    setRascunhoDisponivel(encontrarRascunhoOrfao(currentUser.email, sheets, editing.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing?.id]);
 
@@ -663,6 +727,50 @@ export default function Anotacoes({
     for (let r = rMin; r <= rMax; r += 1) for (let c = cMin; c <= cMax; c += 1) lista.push({ r, c });
     return lista;
   };
+
+  // Copiar/colar igual Excel: com uma faixa de celulas marcada, Ctrl+C/Ctrl+V move TSV pro
+  // clipboard do sistema (cola em WhatsApp/Excel/etc). Selecao de 1 celula em edicao (cursor
+  // dentro do textarea) nao intercepta - deixa o copy/paste nativo de texto parcial funcionar.
+  React.useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!selecao || !editing) return;
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const tecla = event.key.toLowerCase();
+      if (tecla !== 'c' && tecla !== 'v') return;
+      const banco = (editing.bancos ?? [])[selecao.bancoIndex];
+      if (!banco) return;
+      const { rMin, rMax, cMin, cMax } = selRect(selecao);
+      const faixaTemVariasCelulas = rMin !== rMax || cMin !== cMax;
+      const focoEmCampoDeTexto = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName || '');
+      if (!faixaTemVariasCelulas && focoEmCampoDeTexto) return; // deixa o copy/paste de texto nativo agir
+
+      if (tecla === 'c') {
+        event.preventDefault();
+        const tsv = Array.from({ length: rMax - rMin + 1 }, (_, ri) => (
+          Array.from({ length: cMax - cMin + 1 }, (_, ci) => banco.rows[rMin + ri]?.[cMin + ci] ?? '').join('\t')
+        )).join('\n');
+        void navigator.clipboard.writeText(tsv).catch(() => {});
+      } else {
+        event.preventDefault();
+        navigator.clipboard.readText().then((texto) => {
+          const linhas = texto.replace(/\r/g, '').split('\n').filter((linha, i, arr) => !(i === arr.length - 1 && linha === '' && arr.length > 1));
+          updateBanco(selecao.bancoIndex, (b) => {
+            const rows = b.rows.map((row) => [...row]);
+            linhas.forEach((linha, ri) => {
+              linha.split('\t').forEach((valor, ci) => {
+                const r = rMin + ri;
+                const c = cMin + ci;
+                if (rows[r] && c < b.colCount) rows[r][c] = valor;
+              });
+            });
+            return { ...b, rows };
+          });
+        }).catch(() => {});
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selecao, editing]);
   const aplicarEstilo = (patch: Partial<CellStyle>, substituir = false) => {
     if (!selecao) return;
     const alvo = selecao;
@@ -838,6 +946,11 @@ export default function Anotacoes({
     ? uniqueOsOptions.filter((os) => os.contratoCodigo === listaContrato)
     : uniqueOsOptions;
   const codigosDoContrato = new Set(osDaLista.map((os) => os.codigo));
+  // Edificacoes da OS escolhida no filtro - ver padrão.md "Filtro de Edificação".
+  const edificacoesDaListaOs = listaOs
+    ? Array.from(new Set((activities || []).filter((a) => a.osCodigo === listaOs && a.edificio).map((a) => a.edificio as string)))
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'))
+    : [];
   const listaFiltrada = visiveis
     .filter((sheet) => {
       if (!listaAutor) return true;
@@ -846,11 +959,14 @@ export default function Anotacoes({
     })
     .filter((sheet) => !listaContrato || getSheetOsCodigos(sheet).some((codigo) => codigosDoContrato.has(codigo)))
     .filter((sheet) => !listaOs || getSheetOsCodigos(sheet).includes(listaOs))
+    .filter((sheet) => !listaEdificacao || sheet.edificacao === listaEdificacao)
     // Filtro fala em setor: escolher 'Arquitetura' traz URB, LAY, LUM...
     .filter((sheet) => !listaDisciplina || getSheetDisciplinas(sheet).some((item) => disciplineMatchesSector(item, listaDisciplina)))
-    .filter((sheet) => listaVinculo !== 'vinculado' || (sheet.marcadosUsuarios || []).includes(currentUser.email));
-  const temFiltroLista = Boolean(listaAutor || listaContrato || listaOs || listaDisciplina || listaVinculo);
-  const limparFiltroLista = () => { setListaAutor(''); setListaContrato(''); setListaOs(''); setListaDisciplina(''); setListaVinculo(''); };
+    .filter((sheet) => listaVinculo !== 'vinculado' || (sheet.marcadosUsuarios || []).includes(currentUser.email))
+    // Mais recente primeiro; nota sem criadoEm (registro antigo) vai pro fim, nao pro topo.
+    .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+  const temFiltroLista = Boolean(listaAutor || listaContrato || listaOs || listaEdificacao || listaDisciplina || listaVinculo);
+  const limparFiltroLista = () => { setListaAutor(''); setListaContrato(''); setListaOs(''); setListaEdificacao(''); setListaDisciplina(''); setListaVinculo(''); };
   // Autores que aparecem no seletor: os cadastrados no sistema, sem o proprio usuario
   // (ele ja tem a opcao "Criado por mim").
   const autoresDisponiveis = usuarios
@@ -876,7 +992,61 @@ export default function Anotacoes({
     const podeEditar = !notaJaSalva || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios);
 
     const updateTitulo = (titulo: string) => setEditing((prev) => (prev ? { ...prev, titulo } : prev));
-    const updateGoogleEventUrl = (googleEventUrl: string) => setEditing((prev) => (prev ? { ...prev, googleEventUrl } : prev));
+    // Pede (de novo) o login Google com escopo de Agenda - gesto real do usuario, popup nao
+    // e bloqueado - busca os eventos de hoje e abre o popup pra escolher qual vincular.
+    const vincularAgenda = async () => {
+      setSincronizandoAgenda(true);
+      try {
+        let token = getGoogleCalendarToken();
+        if (!token) {
+          await signInWithGooglePopup();
+          token = getGoogleCalendarToken();
+        }
+        if (!token) throw new Error('Não foi possível obter acesso à Agenda do Google.');
+        const eventos = await listTodayCalendarEvents(token);
+        if (eventos.length === 0) { window.alert('Nenhum evento com horário na sua Agenda hoje.'); return; }
+        setAgendaEventos(eventos);
+        setAgendaPickerOpen(true);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : 'Falha ao vincular a Agenda do Google.');
+      } finally {
+        setSincronizandoAgenda(false);
+      }
+    };
+    const escolherEventoAgenda = async (evento: CalendarEventOption) => {
+      const tituloNota = editing.titulo || evento.title;
+      setEditing((prev) => (prev ? {
+        ...prev,
+        googleEventUrl: evento.htmlLink,
+        geminiNotesUrl: evento.geminiNotesUrl || prev.geminiNotesUrl,
+        titulo: prev.titulo || evento.title,
+      } : prev));
+      setAgendaPickerOpen(false);
+      // Deixa uma linha de referencia na descricao do EVENTO tambem (nao so na nota) - quem
+      // abre o evento no Google Agenda ve que existe nota da EcoQuanta vinculada.
+      const token = getGoogleCalendarToken();
+      if (!token) return;
+      try {
+        await linkNoteToEvent(token, evento.id, tituloNota, `https://ecoquanta2.pages.dev/?nota=${editing.id}`);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : 'Nota vinculada aqui, mas não consegui escrever no evento do Google.');
+      }
+      // Traz o CONTEUDO da ata do Gemini pra dentro da nota (nao so o link), num bloco de
+      // texto novo - so quando o evento tinha mesmo uma ata anexada.
+      if (evento.geminiNotesUrl) {
+        try {
+          const textoAta = await fetchGoogleDocText(token, evento.geminiNotesUrl);
+          if (textoAta) {
+            setEditing((prev) => (prev ? {
+              ...prev,
+              textos: [...(prev.textos ?? []), { id: makeId('nota'), nome: 'Ata do Gemini', texto: textoAta }],
+            } : prev));
+          }
+        } catch (err) {
+          window.alert(err instanceof Error ? err.message : 'Não consegui trazer o conteúdo da ata do Gemini.');
+        }
+      }
+    };
     const toggleOs = (codigo: string) => setEditing((prev) => {
       if (!prev) return prev;
       const current = getSheetOsCodigos(prev);
@@ -887,7 +1057,9 @@ export default function Anotacoes({
     const toggleDisciplina = (disciplina: string) => setEditing((prev) => {
       if (!prev) return prev;
       const current = getSheetDisciplinas(prev);
-      const next = current.includes(disciplina) ? current.filter((item) => item !== disciplina) : [...current, disciplina];
+      const next = current.includes(disciplina)
+        ? current.filter((item) => item !== disciplina)
+        : expandEngenhariaNaSelecao([...current, disciplina]);
       return { ...prev, disciplinas: next, disciplina: next[0] || '' };
     });
     const markAllDisciplinas = () => setEditing((prev) => (
@@ -933,22 +1105,35 @@ export default function Anotacoes({
       const end = textarea?.selectionEnd ?? textoAtual.length;
       updateTextoBlock(index, `${textoAtual.slice(0, start)}${markdown}${textoAtual.slice(end)}`);
     };
+    // Hiperlink numa celula da planilha: seleciona a palavra/trecho, botao direito > Hiperlink.
+    // Mesmo padrao do "+ Link" dos blocos de texto - guarda como markdown [label](url) e o icone
+    // de link (extrairLinkDaCelula, mais abaixo) abre em nova aba sem precisar entrar em edicao.
+    const insertLinkIntoCelula = (bancoIndex: number, r: number, c: number, textoAtual: string) => {
+      const url = window.prompt('Endereço do link (URL):');
+      if (!url || !url.trim()) return;
+      const chave = `${bancoIndex}:${r}:${c}`;
+      const textarea = celulaRefs.current[chave];
+      // Sem referencia real do textarea (menu de contexto pode abrir sem foco vivo nele) -
+      // insere no FINAL, nunca assume "selecionou tudo" (isso já apagou o conteudo da celula
+      // inteira uma vez - bug real reportado).
+      const start = textarea ? textarea.selectionStart : textoAtual.length;
+      const end = textarea ? textarea.selectionEnd : textoAtual.length;
+      const selecionado = textoAtual.slice(start, end);
+      const label = window.prompt('Texto do link:', selecionado || url) || selecionado || url;
+      const markdown = `[${label}](${url.trim()})`;
+      updateCell(bancoIndex, r, c, `${textoAtual.slice(0, start)}${markdown}${textoAtual.slice(end)}`);
+    };
     // OS do contrato escolhido (ou todas). A busca por texto fica a cargo do SearchableSelect.
     const osFiltradas = contratoFiltro
       ? uniqueOsOptions.filter((os) => os.contratoCodigo === contratoFiltro)
       : uniqueOsOptions;
 
-    // OS e disciplina agora se vinculam so pelos botoes do rodape (Vincular OS/Disciplina) -
-    // OS opcional, disciplina obrigatoria (pelo menos uma).
-    const disciplinaPendente = selectedDisciplinas.length === 0;
-
     const handleSave = async () => {
-      if (!editing.titulo.trim() || disciplinaPendente) return;
       setSaving(true);
       try {
+        // Salvar so persiste - fica na nota. Sair e o botao "Fechar" (closeEditing), separado.
         await onSave({ ...editing, updatedAt: new Date().toISOString() });
         removerRascunho(editing.id || 'nova');
-        closeEditing();
       } finally {
         setSaving(false);
       }
@@ -992,15 +1177,26 @@ export default function Anotacoes({
     });
     // Picker "Vincular Disciplina" oferece os GRUPOS (nao mais as disciplinas finas de disciplinaOptions).
     const disciplinaGroupOptions = getDisciplineGroups();
-    const disciplinaPickerResults = disciplinaGroupOptions.filter((disciplina) => {
-      const query = normalizeText(disciplinaPickerSearch);
-      return !query || normalizeText(getDisciplineDisplayName(disciplina)).includes(query);
-    });
+    const disciplinaPickerResults = disciplinaGroupOptions
+      .filter((disciplina) => {
+        const query = normalizeText(disciplinaPickerSearch);
+        return !query || normalizeText(getDisciplineDisplayName(disciplina)).includes(query);
+      })
+      // "Engenharia" fixa logo apos "Marcar todas" - marca-la ja seleciona as 10 disciplinas
+      // dela junto (expandEngenhariaNaSelecao em toggleDisciplina), entao fica em destaque.
+      .sort((a, b) => (a === 'Engenharia' ? -1 : b === 'Engenharia' ? 1 : 0));
 
     // Painel direito: cronograma da OS, cronograma da disciplina, ou o mapa mental.
     // As duas primeiras abas so existem depois que o usuario vincula OS / disciplina.
     // Com varios vinculos, um chip escolhe qual OS/disciplina o cronograma mostra.
     const editingOsCodigos = getSheetOsCodigos(editing);
+    // Edificacoes da(s) OS vinculada(s) - ver padrão.md "Filtro de Edificação". So preenche
+    // quando a OS ja tem edificacao (eap.edificioPorItem); planilha real ainda nao tem dado.
+    const edificacoesDisponiveis = editingOsCodigos.length === 0 ? [] : Array.from(new Set(
+      (activities || [])
+        .filter((a) => editingOsCodigos.includes(a.osCodigo) && a.edificio)
+        .map((a) => a.edificio as string)
+    )).sort((a, b) => a.localeCompare(b, 'pt-BR'));
     const osCodigoAtivo = (sidebarOsCodigo && editingOsCodigos.includes(sidebarOsCodigo)) ? sidebarOsCodigo : editingOsCodigos[0];
     const disciplinaAtiva = (sidebarDisciplina && selectedDisciplinas.includes(sidebarDisciplina)) ? sidebarDisciplina : selectedDisciplinas[0];
     const osActivities = osCodigoAtivo
@@ -1145,7 +1341,7 @@ export default function Anotacoes({
               <button
                 type="button"
                 onClick={() => void handleSave()}
-                disabled={saving || !editing.titulo.trim() || disciplinaPendente}
+                disabled={saving}
                 className="h-11 rounded-xl bg-[#F05D28] px-5 text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F] disabled:opacity-60"
               >
                 {saving ? 'Salvando...' : 'Salvar'}
@@ -1154,27 +1350,32 @@ export default function Anotacoes({
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[#64748B]">
-            <Calendar size={12} />
-            <span className="font-bold">Google Agenda</span>
-            {podeEditar && (
-              <input
-                type="url"
-                value={editing.googleEventUrl || ''}
-                onChange={(event) => updateGoogleEventUrl(event.target.value)}
-                placeholder="Colar link do evento do Google Agenda"
-                className="h-7 min-w-[220px] flex-1 rounded-lg border border-[#E5E7EB] bg-white px-2 text-[12px] text-[#2D2D2D] outline-none focus:border-[#F05D28]"
-              />
-            )}
-            {editing.googleEventUrl && /^https?:\/\//.test(editing.googleEventUrl) && (
-              <a
-                href={editing.googleEventUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 font-bold text-[#F05D28] hover:underline"
-              >
-                <Link2 size={12} />
-                Abrir evento
+            <GoogleIcon size={14} />
+            {editing.googleEventUrl ? (
+              <a href={editing.googleEventUrl} target="_blank" rel="noopener noreferrer" className="font-bold text-[#F05D28] hover:underline">
+                Agenda
               </a>
+            ) : (
+              <span className="font-bold">Agenda</span>
+            )}
+            {podeEditar && (
+              <button
+                type="button"
+                onClick={() => void vincularAgenda()}
+                disabled={sincronizandoAgenda}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#E5E7EB] px-2 py-1 font-bold text-[#2D2D2D] hover:bg-[#F9FAFB] disabled:opacity-60"
+              >
+                {sincronizandoAgenda ? 'Buscando...' : 'Vincular'}
+              </button>
+            )}
+            {podeEditar && editing.googleEventUrl && (
+              <button
+                type="button"
+                onClick={() => setEditing((prev) => (prev ? { ...prev, googleEventUrl: undefined } : prev))}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#E5E7EB] px-2 py-1 font-bold text-[#2D2D2D] hover:bg-[#F9FAFB]"
+              >
+                Desvincular
+              </button>
             )}
           </div>
 
@@ -1327,6 +1528,7 @@ export default function Anotacoes({
                                         className="h-4 w-4 flex-shrink-0 accent-[#F05D28] cursor-pointer"
                                       />
                                       <textarea
+                                        ref={(el) => { celulaRefs.current[`${bancoIndex}:${r}:${c}`] = el; }}
                                         value={cell}
                                         onChange={(event) => updateCell(bancoIndex, r, c, event.target.value)}
                                         readOnly={!podeEditar}
@@ -1336,17 +1538,52 @@ export default function Anotacoes({
                                         className="h-full flex-1 resize-none overflow-auto bg-transparent py-1.5 leading-[1.4] outline-none text-[#374151]"
                                       />
                                     </div>
-                                  ) : (
-                                    // textarea (nao input) pra que o texto quebre em varias linhas.
-                                    <textarea
-                                      value={cell}
-                                      onChange={(event) => updateCell(bancoIndex, r, c, event.target.value)}
-                                      readOnly={!podeEditar}
-                                      spellCheck
-                                      lang="pt-BR"
-                                      style={cellCss(estilo)}
-                                      className={`h-full w-full resize-none overflow-auto bg-transparent px-2 py-1.5 leading-[1.4] outline-none ${r === 0 && !estilo ? 'font-bold text-[#2D2D2D]' : 'text-[#374151]'}`}
-                                    />
+                                  ) : (() => {
+                                    const chaveCelula = `${bancoIndex}:${r}:${c}`;
+                                    const rotuloLink = extrairLabelDoLink(cell);
+                                    if (rotuloLink !== null && celulaFocada !== chaveCelula) {
+                                      return (
+                                        <div
+                                          onClick={() => { if (podeEditar) setCelulaFocada(chaveCelula); }}
+                                          className={`h-full w-full overflow-auto px-2 py-1.5 leading-[1.4] text-[#2563EB] underline ${podeEditar ? 'cursor-text' : ''}`}
+                                          style={cellCss(estilo)}
+                                        >
+                                          {rotuloLink}
+                                        </div>
+                                      );
+                                    }
+                                    return (
+                                      // textarea (nao input) pra que o texto quebre em varias linhas.
+                                      <textarea
+                                        ref={(el) => {
+                                          celulaRefs.current[chaveCelula] = el;
+                                          if (el && celulaFocada === chaveCelula && document.activeElement !== el) el.focus();
+                                        }}
+                                        value={cell}
+                                        onChange={(event) => updateCell(bancoIndex, r, c, event.target.value)}
+                                        onFocus={() => setCelulaFocada(chaveCelula)}
+                                        onBlur={() => setCelulaFocada((prev) => (prev === chaveCelula ? null : prev))}
+                                        readOnly={!podeEditar}
+                                        spellCheck
+                                        lang="pt-BR"
+                                        style={cellCss(estilo)}
+                                        className={`h-full w-full resize-none overflow-auto bg-transparent px-2 py-1.5 leading-[1.4] outline-none ${r === 0 && !estilo ? 'font-bold text-[#2D2D2D]' : 'text-[#374151]'}`}
+                                      />
+                                    );
+                                  })()}
+                                  {extrairLinkDaCelula(cell) && (
+                                    <button
+                                      type="button"
+                                      title="Abrir link"
+                                      onMouseDown={(event) => event.stopPropagation()}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        window.open(extrairLinkDaCelula(cell)!, '_blank', 'noopener');
+                                      }}
+                                      className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded text-[#2563EB] hover:bg-[#DBEAFE]"
+                                    >
+                                      <Link2 size={11} />
+                                    </button>
                                   )}
                                   {/* Alcas de redimensionamento: coluna na 1a linha, linha na 1a coluna. */}
                                   {podeEditar && r === 0 && (
@@ -1381,8 +1618,12 @@ export default function Anotacoes({
                                   {podeEditar && c === 0 && (
                                     <div
                                       draggable
-                                      title="Arrastar para reordenar a linha"
+                                      title="Clique para selecionar a linha, arraste para reordenar"
                                       onMouseDown={(event) => event.stopPropagation()}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        setSelecao({ bancoIndex, r1: r, c1: 0, r2: r, c2: banco.colCount - 1 });
+                                      }}
                                       onDragStart={(event) => {
                                         event.stopPropagation();
                                         event.dataTransfer.effectAllowed = 'move';
@@ -1612,6 +1853,25 @@ export default function Anotacoes({
                 >
                   Vincular Disciplina
                 </button>
+                {editing.geminiNotesUrl ? (
+                  <a
+                    href={editing.geminiNotesUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[12px] font-bold text-[#F05D28] hover:underline"
+                  >
+                    Ata do Gemini
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void vincularAgenda()}
+                    disabled={sincronizandoAgenda}
+                    className="text-[12px] font-bold text-[#F05D28] hover:underline disabled:opacity-60"
+                  >
+                    {sincronizandoAgenda ? 'Buscando...' : 'Vincular Gemini'}
+                  </button>
+                )}
               </div>
             )}
             {editingOsCodigos.length > 0 && (
@@ -1633,6 +1893,24 @@ export default function Anotacoes({
                     </span>
                   );
                 })}
+              </div>
+            )}
+
+            {editingOsCodigos.length > 0 && (
+              <div className="mt-3 flex items-center gap-2">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-[#94A3B8]">Edificação</label>
+                <select
+                  disabled={!podeEditar || edificacoesDisponiveis.length === 0}
+                  value={editing.edificacao || ''}
+                  onChange={(event) => setEditing((prev) => (prev ? { ...prev, edificacao: event.target.value } : prev))}
+                  title={edificacoesDisponiveis.length === 0 ? 'Esta OS ainda não tem edificação cadastrada' : undefined}
+                  className="h-8 rounded-lg border border-[#E5E7EB] bg-white px-2 text-[12px] text-[#2D2D2D] outline-none focus:border-[#F05D28] disabled:cursor-not-allowed disabled:bg-[#F3F4F6] disabled:text-[#94A3B8]"
+                >
+                  <option value="">{edificacoesDisponiveis.length === 0 ? 'Sem edificação nesta OS' : 'Todas as edificações'}</option>
+                  {edificacoesDisponiveis.map((edificio) => (
+                    <option key={edificio} value={edificio}>{edificio}</option>
+                  ))}
+                </select>
               </div>
             )}
 
@@ -1714,8 +1992,18 @@ export default function Anotacoes({
           </div>
         </div>
 
-        <div className="flex w-[30%] flex-shrink-0 flex-col overflow-hidden border-l border-[#E5E7EB] p-5">
-          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        <div className={`relative flex flex-shrink-0 flex-col overflow-hidden border-l border-[#E5E7EB] transition-[width] duration-150 ${sidebarRecolhida ? 'w-10 p-2' : 'w-[30%] p-5'}`}>
+          <button
+            type="button"
+            onClick={() => setSidebarRecolhida((prev) => !prev)}
+            title={sidebarRecolhida ? 'Expandir painel' : 'Recolher painel'}
+            className={`absolute top-3 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#64748B] hover:border-[#F7C7B7] hover:text-[#F05D28] ${sidebarRecolhida ? 'left-1/2 -translate-x-1/2' : 'right-3'}`}
+          >
+            {sidebarRecolhida ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+          </button>
+          {sidebarRecolhida ? null : (
+          <>
+          <div className="mb-3 flex flex-wrap items-center gap-1.5 pr-8">
             {sidebarTabs.map((tab) => (
               <button
                 key={tab.key}
@@ -1774,6 +2062,8 @@ export default function Anotacoes({
               <CronogramaResumo activities={disciplinaActivities} contextLabel="os" />
             )}
           </div>
+          </>
+          )}
         </div>
         </div>
 
@@ -1785,14 +2075,15 @@ export default function Anotacoes({
               onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); }}
             />
             <div
+              ref={contextMenuRef}
               className="fixed z-[211] flex items-start gap-2"
               style={{
                 left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - (sugestoesOrtografia.length ? 540 : 272) - 8)),
-                top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 430)),
-                maxHeight: 'calc(100vh - 16px)',
+                top: contextMenuPos ? contextMenuPos.top : contextMenu.y,
+                visibility: contextMenuPos ? 'visible' : 'hidden',
               }}
             >
-            <div className="w-64 max-h-[90vh] overflow-y-auto rounded-xl bg-white p-2 shadow-xl">
+            <div className="w-64 overflow-y-auto rounded-xl bg-white p-2 shadow-xl" style={{ maxHeight: contextMenuPos?.maxHeight }}>
               <div className="flex items-center gap-1">
                 {([['bold', 'N', 'font-black'], ['italic', 'I', 'italic'], ['strike', 'S', 'line-through']] as const).map(([chave, rotulo, classe]) => (
                   <button
@@ -1901,6 +2192,19 @@ export default function Anotacoes({
                 )}
                 <button
                   type="button"
+                  onClick={() => {
+                    const banco = (editing.bancos ?? [])[contextMenu.bancoIndex];
+                    const textoAtual = banco?.rows?.[contextMenu.row]?.[contextMenu.col] || '';
+                    insertLinkIntoCelula(contextMenu.bancoIndex, contextMenu.row, contextMenu.col, textoAtual);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                >
+                  <Link2 size={14} />
+                  Hiperlink
+                </button>
+                <button
+                  type="button"
                   onClick={() => { limparConteudoSelecao(); setContextMenu(null); }}
                   className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
                 >
@@ -1982,11 +2286,14 @@ export default function Anotacoes({
 
             {/* Segunda coluna: so aparece quando o corretor achou erro na celula. */}
             {sugestoesOrtografia.length > 0 && (
-              <div className="w-64 max-h-[90vh] overflow-y-auto rounded-xl bg-white p-2 shadow-xl">
+              <div className="w-64 overflow-y-auto rounded-xl bg-white p-2 shadow-xl" style={{ maxHeight: contextMenuPos?.maxHeight }}>
                 <p className="text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">Ortografia</p>
                 {sugestoesOrtografia.map((item) => (
                   <div key={item.palavra} className="mt-1.5 border-t border-[#F1F5F9] pt-1.5 first:border-t-0 first:pt-0">
                     <p className="px-1 text-[11px] font-bold text-[#DC2626] line-through">{item.palavra}</p>
+                    {item.opcoes.length === 0 && (
+                      <p className="px-1 text-[11px] text-[#94A3B8]">Sem sugestão</p>
+                    )}
                     {item.opcoes.map((opcao) => (
                       <button
                         key={opcao}
@@ -2132,6 +2439,37 @@ export default function Anotacoes({
           </div>
         )}
 
+        {agendaPickerOpen && (
+          <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setAgendaPickerOpen(false)}>
+            <div className="flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-xl bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
+              <p className="mb-2 text-[13px] font-bold text-[#2D2D2D]">Escolha o evento de hoje pra vincular</p>
+              <div className="flex-1 overflow-auto">
+                {agendaEventos.map((evento) => (
+                  <button
+                    key={evento.id}
+                    type="button"
+                    onClick={() => void escolherEventoAgenda(evento)}
+                    className="flex w-full flex-col rounded-lg px-3 py-2 text-left text-[13px] text-[#2D2D2D] hover:bg-[#F9FAFB]"
+                  >
+                    <span className="font-bold">{evento.title}</span>
+                    <span className="text-[11px] text-[#94A3B8]">
+                      {new Date(evento.start).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      {evento.geminiNotesUrl ? ' • com ata do Gemini' : ''}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setAgendaPickerOpen(false)}
+                className="mt-3 h-9 rounded-lg bg-[#F05D28] px-4 text-[12px] font-bold text-white hover:bg-[#D94E1F]"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+
         {disciplinaPickerOpen && (
           <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setDisciplinaPickerOpen(false)}>
             <div className="flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-xl bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
@@ -2249,6 +2587,16 @@ export default function Anotacoes({
             {isPublica
               ? <Globe size={12} className="flex-shrink-0 text-[#10B981]" />
               : <Lock size={12} className="flex-shrink-0 text-[#B45309]" />}
+            {sheet.googleEventUrl && (
+              <button
+                type="button"
+                title="Abrir evento na Agenda do Google"
+                onClick={(event) => { event.stopPropagation(); window.open(sheet.googleEventUrl, '_blank', 'noopener'); }}
+                className="flex-shrink-0"
+              >
+                <GoogleIcon size={12} />
+              </button>
+            )}
           </div>
           <p className="mt-1 text-[11px] font-medium text-[#94A3B8]">{subtitulo}</p>
           {autorData && <p className="mt-0.5 text-[11px] text-[#94A3B8]">{autorData}</p>}
@@ -2342,7 +2690,7 @@ export default function Anotacoes({
           </SearchableSelect>
           <SearchableSelect
             value={listaOs}
-            onChange={(event) => setListaOs(event.target.value)}
+            onChange={(event) => { setListaOs(event.target.value); setListaEdificacao(''); }}
             searchPlaceholder="Pesquisar OS..."
             className={filtroClass}
           >
@@ -2351,6 +2699,18 @@ export default function Anotacoes({
               <option key={os.codigo} value={os.codigo}>{formatOsLabel(os)}</option>
             ))}
           </SearchableSelect>
+          <select
+            disabled={edificacoesDaListaOs.length === 0}
+            value={listaEdificacao}
+            onChange={(event) => setListaEdificacao(event.target.value)}
+            title={edificacoesDaListaOs.length === 0 ? 'Escolha uma OS com edificação cadastrada' : undefined}
+            className={`${filtroClass} disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            <option value="">{edificacoesDaListaOs.length === 0 ? 'Sem edificação nesta OS' : 'Todas as edificações'}</option>
+            {edificacoesDaListaOs.map((edificio) => (
+              <option key={edificio} value={edificio}>{edificio}</option>
+            ))}
+          </select>
           <SearchableSelect
             value={listaDisciplina}
             onChange={(event) => setListaDisciplina(event.target.value)}

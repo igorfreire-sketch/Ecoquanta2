@@ -67,6 +67,7 @@ const DISCIPLINE_SOURCE: Array<[string, string]> = [
   ['GECO', 'Gest\u00e3o do Contrato'],
   ['CONF', 'Conformidade'],
   ['DEV', 'Desenvolvimento'],
+  ['BISD', 'BI e Soluções Digitais'],
 ];
 
 function normalizeText(value?: string) {
@@ -92,11 +93,6 @@ export const DEFAULT_DISCIPLINES: DisciplineCatalogEntry[] = DISCIPLINE_SOURCE.m
   name,
   label: `${code} - ${name}`,
   aliases: buildAliases(code, name),
-}));
-
-export const DEFAULT_DISCIPLINE_SETTINGS: DisciplineSettingRecord[] = DEFAULT_DISCIPLINES.map((item) => ({
-  nome: item.label,
-  showInCharts: true,
 }));
 
 const DISCIPLINE_LOOKUP = (() => {
@@ -187,7 +183,24 @@ const SETOR_POR_CODIGO: Record<string, string> = {
 };
 
 // Marcadas como "Excluir": somem das listas de filtro. Os dados antigos continuam intactos.
-const SETORES_OCULTOS = new Set(['ECON', 'GEO', 'CLSH', 'GER']);
+// DEV/MULT saíram por pedido do Igor em 2026-07-31 - a empresa passou a trabalhar só com o
+// conjunto de setores abaixo (ver getDisciplineGroups).
+const SETORES_OCULTOS = new Set(['ECON', 'GEO', 'CLSH', 'GER', 'DEV', 'MULT']);
+
+// Disciplinas de Engenharia: ao marcar o grupo-mae "Engenharia" numa selecao, essas entram
+// juntas. Pedido explicito do Igor em 2026-07-31 - lista fechada, nao deriva de codigo algum.
+export const DISCIPLINAS_FILHAS_DE_ENGENHARIA = [
+  'Estrutural', 'Hidrossanitário', 'PCI/Gás', 'Elétrico', 'AVAC',
+  'Terraplanagem/Pavimentação', 'Mecânica / Caldeiraria', 'Ambiental',
+  'Compatibilização', 'Orçamento',
+];
+
+// Expande "Engenharia" pras filhas quando ela estiver na selecao (idempotente - repetir nao duplica).
+export function expandEngenhariaNaSelecao(disciplinas: string[]): string[] {
+  if (!disciplinas.includes('Engenharia')) return disciplinas;
+  const conjunto = new Set([...disciplinas, ...DISCIPLINAS_FILHAS_DE_ENGENHARIA]);
+  return Array.from(conjunto);
+}
 
 const CODIGO_POR_ALIAS = (() => {
   const map = new Map<string, string>();
@@ -229,9 +242,16 @@ export function getSectorOptions(disciplinas: string[]) {
   return Array.from(setores).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
+// "Engenharia" no filtro tem que trazer junto as disciplinas filhas (Estrutural, Hidrossanitario
+// etc. sao setores PROPRIOS, distintos de "Engenharia") - senao filtrar por Engenharia so pega
+// quem estiver literalmente cadastrado como "Engenharia", nunca as filhas. Vale pra qualquer
+// filtro do app que compare disciplina x setor, porque a checagem mora aqui, na raiz.
 export function disciplineMatchesSector(disciplina: string, setor: string) {
   if (!setor) return true;
-  return getDisciplineSector(disciplina) === setor;
+  const setorDaDisciplina = getDisciplineSector(disciplina);
+  if (setorDaDisciplina === setor) return true;
+  if (setor === 'Engenharia') return DISCIPLINAS_FILHAS_DE_ENGENHARIA.includes(setorDaDisciplina);
+  return false;
 }
 
 export function buildDisciplineRecordsFromValues(values: any) {
@@ -256,6 +276,14 @@ export function getDisciplineGroups(): string[] {
   return groups;
 }
 
+// Catalogo oficial exposto no admin (Gerenciar Disciplinas): so os grupos curados, nunca mais
+// os 55 codigos finos do DEFAULT_DISCIPLINES cru - esses continuam existindo so como alias
+// interno pra reconhecer sigla da EAP (HIDS, ELET...) e resolver disciplina antiga ja gravada.
+export const DEFAULT_DISCIPLINE_SETTINGS: DisciplineSettingRecord[] = getDisciplineGroups().map((nome) => ({
+  nome,
+  showInCharts: true,
+}));
+
 // Auto-teste leve (sem framework): chame manualmente se mexer neste arquivo.
 export function _selfTestDisciplineGroups() {
   console.assert(getDisciplineSector('ELET') === 'Elétrico', 'ELET deveria mapear pra Elétrico');
@@ -265,7 +293,21 @@ export function _selfTestDisciplineGroups() {
   console.assert(disciplineMatchesSector('ELET', 'Elétrico') === true, 'ELET deveria bater com o setor Elétrico');
   const groups = getDisciplineGroups();
   console.assert(groups[0] === 'Arquitetura', 'primeiro grupo deveria ser Arquitetura');
-  console.assert(groups.includes('Desenvolvimento'), 'deveria conter Desenvolvimento');
+  console.assert(groups.includes('Engenharia') && groups.includes('BI e Soluções Digitais'), 'deveria conter Engenharia e BISD');
+  console.assert(!groups.includes('Desenvolvimento') && !groups.includes('Multidisciplinar'), 'DEV/MULT saíram do catalogo oficial');
   console.assert(!groups.includes('Gerenciamento'), 'Gerenciamento e oculto, nao deveria aparecer');
+  console.assert(groups.length === 19, `esperado 19 grupos oficiais, veio ${groups.length}`);
+  console.assert(
+    expandEngenhariaNaSelecao(['Engenharia']).includes('Hidrossanitário'),
+    'marcar Engenharia deveria trazer as filhas junto'
+  );
+  console.assert(
+    disciplineMatchesSector('ELET', 'Engenharia') === true,
+    'filtro Engenharia deveria pegar disciplina de setor filho (Elétrico)'
+  );
+  console.assert(
+    disciplineMatchesSector('ELET', 'Hidrossanitário') === false,
+    'filtro Hidrossanitário nao deveria pegar disciplina de outro setor filho (Elétrico)'
+  );
   return true;
 }

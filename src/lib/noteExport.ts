@@ -11,7 +11,7 @@ function hexToRgb(value?: string): [number, number, number] | null {
   return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16)];
 }
 
-function safeFileName(titulo: string) {
+export function safeFileName(titulo: string) {
   return (titulo || 'anotacao')
     .normalize('NFD')
     .replace(new RegExp('[\\u0300-\\u036f]', 'g'), '')
@@ -19,7 +19,7 @@ function safeFileName(titulo: string) {
     .slice(0, 60) || 'anotacao';
 }
 
-function downloadBlob(filename: string, blob: Blob) {
+export function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

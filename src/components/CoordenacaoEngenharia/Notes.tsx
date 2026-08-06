@@ -26,9 +26,11 @@ interface NotesProps {
   onNotaAberta?: () => void;
   onSaveNote: (sheet: AnnotationSheet) => Promise<void>;
   onDeleteNote: (id: string) => Promise<void>;
+  // noteId de toda linha de todo cronograma - so repassado pro icone de relogio no card (ver App.tsx).
+  noteIdsComCronograma?: Set<string>;
 }
 
-export default function Notes({ disciplinas, notes, osOptions, currentUser, preloadedData, usuarios = [], abrirNota, onNotaAberta, onSaveNote, onDeleteNote }: NotesProps) {
+export default function Notes({ disciplinas, notes, osOptions, currentUser, preloadedData, usuarios = [], abrirNota, onNotaAberta, onSaveNote, onDeleteNote, noteIdsComCronograma }: NotesProps) {
   const [mapaAberto, setMapaAberto] = React.useState(false);
   // Nota aberta no editor por um botao daqui (Nova nota) ou por um no do Mapa Mental.
   const [sheetAberta, setSheetAberta] = React.useState<AnnotationSheet | null>(null);
@@ -137,6 +139,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
       onDelete={onDeleteNote}
       controlledSheet={sheetAberta}
       onCloseControlled={() => setSheetAberta(null)}
+      noteIdsComCronograma={noteIdsComCronograma}
     />
   );
 

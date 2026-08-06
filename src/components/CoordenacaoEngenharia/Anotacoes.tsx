@@ -1,7 +1,8 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, Check, ChevronLeft, ChevronRight, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, Check, ChevronLeft, ChevronRight, Clock, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
 import SearchableSelect from '../SearchableSelect';
+import CampoDialog from '../CampoDialog';
 import { getDisciplineDisplayName, getDisciplineIconInfo, type EngineeringActivity } from '../Atividades';
 import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups, expandEngenhariaNaSelecao } from '../../lib/disciplineCatalog';
 import { exportNoteToCsv, exportNoteToPdf, exportNotesToMarkdown } from '../../lib/noteExport';
@@ -153,6 +154,8 @@ interface AnotacoesProps {
   // Usados quando a nota e aberta de fora do fluxo normal (ex: clique num no do Mapa Mental).
   controlledSheet?: AnnotationSheet | null;
   onCloseControlled?: () => void;
+  // noteId de toda linha de todo cronograma (App.tsx) - so pro icone de relogio no card da lista.
+  noteIdsComCronograma?: Set<string>;
 }
 
 type ContextMenuState = { bancoIndex: number; row: number; col: number; x: number; y: number } | null;
@@ -267,9 +270,9 @@ function formatDateBR(value?: string) {
 
 // 1o link (markdown [label](url) ou URL solta) achado no texto da celula. Usado pro icone de
 // abrir a landando dentro da propria celula, sem precisar entrar em modo de edicao.
-const REGEX_LINK_MARKDOWN = /\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/;
-const REGEX_URL_SOLTA = /(https?:\/\/[^\s)]+)/;
-function extrairLinkDaCelula(texto: string): string | null {
+export const REGEX_LINK_MARKDOWN = /\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/;
+export const REGEX_URL_SOLTA = /(https?:\/\/[^\s)]+)/;
+export function extrairLinkDaCelula(texto: string): string | null {
   const viaMarkdown = REGEX_LINK_MARKDOWN.exec(texto || '');
   if (viaMarkdown) return viaMarkdown[2];
   const viaUrl = REGEX_URL_SOLTA.exec(texto || '');
@@ -278,7 +281,7 @@ function extrairLinkDaCelula(texto: string): string | null {
 
 // Rotulo do link markdown "[rotulo](url)" - so existe pra esse formato (URL solta nao tem
 // rotulo proprio, mostra ela mesma). Usado pra exibir a celula em modo "visualizacao".
-function extrairLabelDoLink(texto: string): string | null {
+export function extrairLabelDoLink(texto: string): string | null {
   const viaMarkdown = REGEX_LINK_MARKDOWN.exec(texto || '');
   return viaMarkdown ? viaMarkdown[1] : null;
 }
@@ -346,7 +349,7 @@ export function encontrarRascunhoOrfao(email: string, sheets: AnnotationSheet[],
 }
 
 export default function Anotacoes({
-  filter, sheets, osOptions, disciplinaOptions, contractOptions = [], currentUser, activities = [], usuarios = [], onSave, onDelete, controlledSheet, onCloseControlled,
+  filter, sheets, osOptions, disciplinaOptions, contractOptions = [], currentUser, activities = [], usuarios = [], onSave, onDelete, controlledSheet, onCloseControlled, noteIdsComCronograma,
 }: AnotacoesProps) {
   const normalizeForEditing = (sheet: AnnotationSheet): AnnotationSheet => ({ ...sheet, bancos: getSheetBancos(sheet), textos: getSheetTextos(sheet) });
   const [editing, setEditing] = React.useState<AnnotationSheet | null>(() => (controlledSheet ? normalizeForEditing(controlledSheet) : null));
@@ -418,6 +421,14 @@ export default function Anotacoes({
   // rotulo em azul sublinhado (em vez do "[rotulo](url)" cru); ao focar, volta a mostrar o
   // texto bruto pra poder editar.
   const [celulaFocada, setCelulaFocada] = React.useState<string | null>(null);
+  // Alvo do dialogo de hiperlink (texto/celula), com a selecao JA CAPTURADA no clique do menu -
+  // abrir o CampoDialog rouba o foco/selecao do textarea, entao start/end tem que vir daqui, nunca
+  // ler `textarea.selectionStart` de novo depois que o dialogo abriu (ver comentario no confirmarLink).
+  const [linkAlvo, setLinkAlvo] = React.useState<
+    | { tipo: 'texto'; index: number; textoAtual: string; start: number; end: number }
+    | { tipo: 'celula'; bancoIndex: number; row: number; col: number; textoAtual: string; start: number; end: number }
+    | null
+  >(null);
   // Rascunho anti-F5 encontrado ao abrir a nota (mais novo que o que esta salvo). null = nenhum.
   const [rascunhoDisponivel, setRascunhoDisponivel] = React.useState<NotaRascunho | null>(null);
   // Foto do estado no instante em que a nota foi aberta (nova ou salva) - autosave so grava
@@ -1095,22 +1106,19 @@ export default function Anotacoes({
     const removeTextoBlock = (index: number) => setEditing((prev) => (
       prev ? { ...prev, textos: (prev.textos ?? []).filter((_, i) => i !== index) } : prev
     ));
+    // Captura start/end AGORA (clique do botao/menu) — abrir o CampoDialog rouba o foco do
+    // textarea, entao a selecao tem que estar congelada num state antes disso, nunca lida de
+    // novo depois que o dialogo esta aberto (ver confirmarLink).
     const insertLinkIntoTexto = (index: number, blocoId: string, textoAtual: string) => {
-      const url = window.prompt('Endereço do link (URL):');
-      if (!url || !url.trim()) return;
-      const label = window.prompt('Texto do link:', url) || url;
-      const markdown = `[${label}](${url.trim()})`;
       const textarea = textoRefs.current[blocoId];
       const start = textarea?.selectionStart ?? textoAtual.length;
       const end = textarea?.selectionEnd ?? textoAtual.length;
-      updateTextoBlock(index, `${textoAtual.slice(0, start)}${markdown}${textoAtual.slice(end)}`);
+      setLinkAlvo({ tipo: 'texto', index, textoAtual, start, end });
     };
     // Hiperlink numa celula da planilha: seleciona a palavra/trecho, botao direito > Hiperlink.
     // Mesmo padrao do "+ Link" dos blocos de texto - guarda como markdown [label](url) e o icone
     // de link (extrairLinkDaCelula, mais abaixo) abre em nova aba sem precisar entrar em edicao.
     const insertLinkIntoCelula = (bancoIndex: number, r: number, c: number, textoAtual: string) => {
-      const url = window.prompt('Endereço do link (URL):');
-      if (!url || !url.trim()) return;
       const chave = `${bancoIndex}:${r}:${c}`;
       const textarea = celulaRefs.current[chave];
       // Sem referencia real do textarea (menu de contexto pode abrir sem foco vivo nele) -
@@ -1118,10 +1126,21 @@ export default function Anotacoes({
       // inteira uma vez - bug real reportado).
       const start = textarea ? textarea.selectionStart : textoAtual.length;
       const end = textarea ? textarea.selectionEnd : textoAtual.length;
-      const selecionado = textoAtual.slice(start, end);
-      const label = window.prompt('Texto do link:', selecionado || url) || selecionado || url;
-      const markdown = `[${label}](${url.trim()})`;
-      updateCell(bancoIndex, r, c, `${textoAtual.slice(0, start)}${markdown}${textoAtual.slice(end)}`);
+      setLinkAlvo({ tipo: 'celula', bancoIndex, row: r, col: c, textoAtual, start, end });
+    };
+    // Confirmacao do CampoDialog: usa SO os valores congelados em linkAlvo (nunca re-le o
+    // textarea aqui — a esta altura ele pode nem ter foco/selecao viva mais).
+    const confirmarLink = (values: Record<string, string>) => {
+      if (!linkAlvo) return;
+      const url = (values.url || '').trim();
+      if (!url) { setLinkAlvo(null); return; }
+      const selecionado = linkAlvo.textoAtual.slice(linkAlvo.start, linkAlvo.end);
+      const label = (values.label || '').trim() || selecionado || url;
+      const markdown = `[${label}](${url})`;
+      const novoTexto = `${linkAlvo.textoAtual.slice(0, linkAlvo.start)}${markdown}${linkAlvo.textoAtual.slice(linkAlvo.end)}`;
+      if (linkAlvo.tipo === 'texto') updateTextoBlock(linkAlvo.index, novoTexto);
+      else updateCell(linkAlvo.bancoIndex, linkAlvo.row, linkAlvo.col, novoTexto);
+      setLinkAlvo(null);
     };
     // OS do contrato escolhido (ou todas). A busca por texto fica a cargo do SearchableSelect.
     const osFiltradas = contratoFiltro
@@ -2519,6 +2538,18 @@ export default function Anotacoes({
             </div>
           </div>
         )}
+
+        {linkAlvo && (
+          <CampoDialog
+            title="Inserir link"
+            fields={[
+              { id: 'url', label: 'Endereço do link (URL)', placeholder: 'https://...' },
+              { id: 'label', label: 'Texto do link', valorInicial: linkAlvo.textoAtual.slice(linkAlvo.start, linkAlvo.end) },
+            ]}
+            onConfirm={confirmarLink}
+            onCancel={() => setLinkAlvo(null)}
+          />
+        )}
       </div>,
       document.body,
     );
@@ -2596,6 +2627,9 @@ export default function Anotacoes({
               >
                 <GoogleIcon size={12} />
               </button>
+            )}
+            {noteIdsComCronograma?.has(sheet.id) && (
+              <Clock size={12} className="flex-shrink-0 text-[#64748B]" title="Vinculada a um cronograma" />
             )}
           </div>
           <p className="mt-1 text-[11px] font-medium text-[#94A3B8]">{subtitulo}</p>

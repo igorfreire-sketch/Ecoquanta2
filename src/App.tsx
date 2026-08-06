@@ -43,6 +43,12 @@ import type {
 import { ProjectVbaConfigCard } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
 import { getSheetDisciplinas, type AnnotationBanco, type AnnotationSheet } from './components/CoordenacaoEngenharia/Anotacoes';
+import type { CronogramaDoc } from './components/SolucoesDigitais';
+// ponytail: string literal em vez de importar CRONOGRAMAS_COLLECTION (runtime, nao so tipo) de
+// SolucoesDigitais.tsx — esse import puxaria o modulo inteiro (Atividades.tsx, CampoDialog etc.)
+// pro bundle principal em vez de ficar so no chunk lazy de <Cronogramas/>. O `import type` acima
+// e livre disso: tipos somem na compilacao, nao geram import real.
+const CRONOGRAMAS_COLLECTION = 'cronogramas';
 import Notificacoes from './components/Notificacoes';
 import FirebaseExplorer from './components/FirebaseExplorer';
 import Principal from './components/Principal';
@@ -105,7 +111,7 @@ const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEnge
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
-const SolucoesDigitais = React.lazy(() => import('./components/SolucoesDigitais'));
+const Cronogramas = React.lazy(() => import('./components/Cronogramas'));
 const Notes = React.lazy(() => import('./components/CoordenacaoEngenharia/Notes'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
 const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
@@ -1654,6 +1660,14 @@ export default function App() {
   // ANOTACOES (Disciplinas)
   const [notes, setNotes] = useState<AnnotationSheet[]>([]);
   const notesLoadAttemptRef = React.useRef(false);
+  // noteId de toda linha de todo cronograma - so pro icone de relogio no card da nota (ela "sabe"
+  // que um cronograma aponta pra ela). Mesmo padrao 1x-por-sessao das notas.
+  // ponytail: Cronogramas.tsx faz sua PROPRIA leitura da colecao (dona da migracao da colecao
+  // legada) - essa aqui e uma leitura duplicada, de proposito: e mais barato reler uma colecao
+  // pequena do que arriscar mexer no fluxo de criar/migrar que ja funciona. Se um dia incomodar,
+  // o upgrade e subir o load pro App e passar pros dois lugares.
+  const [noteIdsComCronograma, setNoteIdsComCronograma] = useState<Set<string>>(new Set());
+  const cronogramasLoadAttemptRef = React.useRef(false);
 
   // Aba do usuario: pedido de outras disciplinas, aprovado/negado pelo admin.
   const [disciplinaRequests, setDisciplinaRequests] = useState<DisciplinaRequest[]>([]);
@@ -2557,6 +2571,25 @@ export default function App() {
   }, [currentUser, notesPageOpen]);
 
   useEffect(() => {
+    // So pro icone de relogio no card da nota (ver comentario no state) — carrega 1x por sessao,
+    // igual as notas, e nao trava nada se falhar (regra do Firestore de `cronogramas` ainda nao
+    // publicada em produção: fica com o Set vazio, sem icone, sem erro visivel).
+    if (!currentUser) return;
+    if (cronogramasLoadAttemptRef.current) return;
+    cronogramasLoadAttemptRef.current = true;
+    (async () => {
+      try {
+        const cronogramas = await fetchFirebaseCollection<CronogramaDoc>(CRONOGRAMAS_COLLECTION);
+        const ids = new Set<string>();
+        cronogramas.forEach((c) => (c.rows || []).forEach((r) => { if (r.noteId) ids.add(r.noteId); }));
+        setNoteIdsComCronograma(ids);
+      } catch {
+        // sem persistencia/regra ainda: segue sem icone, nao trava a tela
+      }
+    })();
+  }, [currentUser]);
+
+  useEffect(() => {
     if (!currentUser) return;
     if (disciplinaRequestsLoadAttemptRef.current) return;
     disciplinaRequestsLoadAttemptRef.current = true;
@@ -3159,6 +3192,7 @@ export default function App() {
       onNotaAberta={() => setNotaParaAbrir(null)}
       onSaveNote={saveAnnotationSheet}
       onDeleteNote={deleteAnnotationSheet}
+      noteIdsComCronograma={noteIdsComCronograma}
     />
   ) : null;
 
@@ -3529,7 +3563,7 @@ export default function App() {
               )}
               {activeTab === 'solucoes' && currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions) && (
                 solucoesSubTab === 'cronograma'
-                  ? <SolucoesDigitais currentUser={currentUser} usuarios={usuarios} notes={notes} />
+                  ? <Cronogramas currentUser={currentUser} usuarios={usuarios} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} preloadedData={effectiveGlobalData} />
                   : notesPage
               )}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (

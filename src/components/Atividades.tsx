@@ -130,6 +130,7 @@ interface AtividadesProps {
   filtersAlwaysVisible?: boolean;
   disciplineFilterEnabled?: boolean;
   autoSelectUserDisciplineFilter?: boolean;
+  fixedContractCode?: string;
   // Área Técnica: divide os cards de OS por disciplina (1 card por disciplina, OS repete).
   splitOsCardsByDiscipline?: boolean;
   // Notas (AnnotationSheet) do app: usadas para mostrar a nota da disciplina no painel esquerdo do card de OS.
@@ -1384,6 +1385,14 @@ export const buildActivitiesFromEap = (preloadedData: any, currentUser?: Ativida
     .sort(compareActivities);
 };
 
+export const selectActivitiesForDiscipline = (activities: EngineeringActivity[], discipline: string): EngineeringActivity[] => {
+  if (!String(discipline || '').trim()) return [];
+  return activities.filter((activity) => {
+    const disciplinas = activity.disciplinas?.length ? activity.disciplinas : splitDisciplinas(activity.disciplina);
+    return disciplinas.some((item) => disciplineMatchesSector(item, discipline));
+  });
+};
+
 const normalizeLegacyStatus = (value?: string): ProductionStatus => {
   switch (value) {
     case 'Entrada':
@@ -1585,12 +1594,14 @@ function FilterSelect({
   label,
   value,
   onChange,
-  options
+  options,
+  disabled = false
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: Array<string | { label: string; value: string }>;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
@@ -1598,7 +1609,8 @@ function FilterSelect({
       <SearchableSelect
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-11 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none transition-colors focus:border-[#F05D28]"
+        disabled={disabled}
+        className="h-11 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none transition-colors focus:border-[#F05D28] disabled:bg-[#F8FAFC] disabled:text-[#94A3B8]"
       >
         {options.map((option) => (
           <option key={typeof option === 'string' ? option : option.value} value={typeof option === 'string' ? option : option.value}>
@@ -2686,15 +2698,18 @@ export default function Atividades({
   filtersAlwaysVisible = false,
   disciplineFilterEnabled = true,
   autoSelectUserDisciplineFilter = false,
+  fixedContractCode = '',
   splitOsCardsByDiscipline = false,
   notes = [],
   cronogramaPlaceholder = false,
 }: AtividadesProps) {
   const sourceActivities = useMemo(() => buildActivitiesFromEap(preloadedData, currentUser), [preloadedData, currentUser]);
   const eapRegistry = useMemo(() => getUnifiedEapRegistry(preloadedData), [preloadedData]);
+  const fixedContractFilter = String(fixedContractCode || '').trim();
   const boardScrollRef = useRef<HTMLDivElement | null>(null);
   const boardTrackRef = useRef<HTMLDivElement | null>(null);
   const scrollbarDragRef = useRef(false);
+  const previousFixedContractFilterRef = useRef(fixedContractFilter);
   const autoScrolledToTodayRef = useRef(false);
   const [boardScrollLeft, setBoardScrollLeft] = useState(0);
   const [boardScrollMax, setBoardScrollMax] = useState(0);
@@ -2713,7 +2728,7 @@ export default function Atividades({
   });
   const [searchText, setSearchText] = useState('');
   const [filterSemana, setFilterSemana] = useState(getCurrentWeekKey());
-  const [filterContrato, setFilterContrato] = useState('Todos');
+  const [filterContrato, setFilterContrato] = useState(() => (fixedContractFilter && !sameContractCode(fixedContractFilter, 'Todos') ? fixedContractFilter : 'Todos'));
   const [filterOs, setFilterOs] = useState('Todos');
   const [filterEdificacao, setFilterEdificacao] = useState('Todos');
   const [filterDisciplinas, setFilterDisciplinas] = useState<string[]>([]);
@@ -2833,6 +2848,17 @@ export default function Atividades({
   useEffect(() => {
     setActivities(sourceActivities);
   }, [sourceActivities]);
+
+  useEffect(() => {
+    if (fixedContractFilter && !sameContractCode(fixedContractFilter, 'Todos') && !sameContractCode(filterContrato, fixedContractFilter)) {
+      setFilterContrato(fixedContractFilter);
+      setFilterOs('Todos');
+    } else if (!fixedContractFilter && previousFixedContractFilterRef.current && !sameContractCode(previousFixedContractFilterRef.current, 'Todos')) {
+      setFilterContrato('Todos');
+      setFilterOs('Todos');
+    }
+    previousFixedContractFilterRef.current = fixedContractFilter;
+  }, [filterContrato, fixedContractFilter]);
 
   useEffect(() => {
     if (filterContrato !== 'Todos' && filterOs !== 'Todos') {
@@ -3396,7 +3422,7 @@ export default function Atividades({
         </div>
 
         <FilterSelect label="Semana" value={filterSemana} onChange={setFilterSemana} options={weekOptions} />
-        <FilterSelect label="Contrato" value={filterContrato} onChange={setFilterContrato} options={contratosDisponiveis} />
+        <FilterSelect label="Contrato" value={filterContrato} onChange={setFilterContrato} options={contratosDisponiveis} disabled={Boolean(fixedContractFilter && !sameContractCode(fixedContractFilter, 'Todos'))} />
         <FilterSelect label="OS" value={filterOs} onChange={(value) => { setFilterOs(value); setFilterEdificacao('Todos'); }} options={osDisponiveis} />
         <FilterSelect label="Edificação" value={filterEdificacao} onChange={setFilterEdificacao} options={edificacoesDisponiveis} />
         {disciplineFilterEnabled && (
@@ -4173,4 +4199,3 @@ export default function Atividades({
     </div>
   );
 }
-

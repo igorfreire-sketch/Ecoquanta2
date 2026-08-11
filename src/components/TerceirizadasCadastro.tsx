@@ -1,4 +1,3 @@
-import SearchableSelect from './SearchableSelect';
 import React from 'react';
 import { ChevronRight, Plus, Trash2, Users } from 'lucide-react';
 import type { TerceirizadaRecord } from './Administracao';
@@ -10,6 +9,13 @@ function getInitials(nome: string) {
     .slice(0, 2)
     .map((parte) => parte[0]?.toUpperCase() || '')
     .join('');
+}
+
+function getDisciplines(item: TerceirizadaRecord) {
+  const values = Array.isArray(item.disciplinas) && item.disciplinas.length > 0
+    ? item.disciplinas
+    : String(item.disciplina || '').split(',');
+  return Array.from(new Set(values.map((value) => String(value).trim()).filter(Boolean)));
 }
 
 export default function TerceirizadasCadastro({
@@ -26,20 +32,20 @@ export default function TerceirizadasCadastro({
   onDelete: (id: string) => Promise<void>;
 }) {
   const [nome, setNome] = React.useState('');
-  const [disciplina, setDisciplina] = React.useState('');
+  const [disciplinasSelecionadas, setDisciplinasSelecionadas] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = nome.trim();
-    const cleanDisciplina = disciplina.trim();
-    if (!cleanName || !cleanDisciplina) return;
+    const cleanDisciplinas = Array.from(new Set<string>(disciplinasSelecionadas.map((item) => item.trim()).filter(Boolean)));
+    if (!cleanName || cleanDisciplinas.length === 0) return;
 
     setLoading(true);
     try {
-      await onSave({ nome: cleanName, disciplina: cleanDisciplina });
+      await onSave({ nome: cleanName, disciplina: cleanDisciplinas.join(', '), disciplinas: cleanDisciplinas });
       setNome('');
-      setDisciplina('');
+      setDisciplinasSelecionadas([]);
     } finally {
       setLoading(false);
     }
@@ -56,7 +62,7 @@ export default function TerceirizadasCadastro({
       </div>
 
       <div className="bg-white rounded-2xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6 space-y-5">
-        <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-[minmax(220px,1fr)_minmax(180px,260px)_auto] gap-4 items-end">
+        <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,360px)_auto] gap-4 items-end">
           <div>
             <label className="bentham-label">Nome da terceirizada</label>
             <input
@@ -67,25 +73,29 @@ export default function TerceirizadasCadastro({
             />
           </div>
 
-          <div>
-            <label className="bentham-label">Disciplina</label>
-            <SearchableSelect
-              value={disciplina}
-              onChange={(e) => setDisciplina(e.target.value)}
-              className="bentham-select"
-            >
-              <option value="">Selecionar</option>
+          <fieldset className="min-w-0">
+            <legend className="bentham-label">Setores / disciplinas atendidos</legend>
+            <div className="max-h-28 overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white p-2">
               {disciplinas.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
+                <label key={item} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] font-medium text-[#374151] hover:bg-[#FFF7F2]">
+                  <input
+                    type="checkbox"
+                    checked={disciplinasSelecionadas.includes(item)}
+                    onChange={() => setDisciplinasSelecionadas((prev) => prev.includes(item) ? prev.filter((value) => value !== item) : [...prev, item])}
+                    className="h-4 w-4 accent-[#F05D28]"
+                  />
+                  <span className="truncate">{item}</span>
+                </label>
               ))}
-            </SearchableSelect>
-          </div>
+            </div>
+            <p className="mt-1 text-[11px] font-medium text-[#64748B]">
+              {disciplinasSelecionadas.length > 0 ? `${disciplinasSelecionadas.length} selecionado(s)` : 'Selecione ao menos um setor'}
+            </p>
+          </fieldset>
 
           <button
             type="submit"
-            disabled={loading || !nome.trim() || !disciplina.trim()}
+            disabled={loading || !nome.trim() || disciplinasSelecionadas.length === 0}
             className="h-11 px-5 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-70"
           >
             <Plus size={16} />
@@ -107,7 +117,7 @@ export default function TerceirizadasCadastro({
 
                 <div className="min-w-0 flex-1">
                   <p className="text-[14px] font-bold text-[#2D2D2D] truncate">{item.nome}</p>
-                  <p className="text-[12px] text-[#757575] truncate">{item.disciplina}</p>
+                  <p className="text-[12px] text-[#757575] truncate">{getDisciplines(item).join(' · ')}</p>
                 </div>
 
                 <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#F9FAFB] text-[#757575] text-[11px] font-bold shrink-0">
@@ -127,7 +137,7 @@ export default function TerceirizadasCadastro({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                   <div className="flex flex-col gap-1.5">
                     <label className="bentham-label">Disciplina</label>
-                    <p className="text-[13px] font-medium text-[#2D2D2D]">{item.disciplina}</p>
+                    <p className="text-[13px] font-medium text-[#2D2D2D]">{getDisciplines(item).join(' · ')}</p>
                   </div>
 
                   <div className="flex flex-col gap-2">

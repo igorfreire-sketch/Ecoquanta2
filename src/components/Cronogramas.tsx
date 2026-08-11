@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Copy, FileSpreadsheet, FileText, Globe, Lock, MoreVertical, Plus, Trash2 } from 'lucide-react';
 import { isFirebaseConfigured, fetchFirebaseCollection, setFirebaseDocument, deleteFirebaseDocument, canDeleteNote } from '../lib/firebaseDb';
 import { exportCronogramaToCsv, exportCronogramaToPdf, exportCronogramasToMarkdown } from '../lib/cronogramaExport';
+import PdfExportDialog from './PdfExportDialog';
 import SearchableSelect from './SearchableSelect';
 import SolucoesDigitais, { CRONOGRAMAS_COLLECTION, type CronogramaDoc, type CronoRow } from './SolucoesDigitais';
 import type { AnnotationSheet } from './CoordenacaoEngenharia/Anotacoes';
@@ -62,6 +63,7 @@ export default function Cronogramas({ currentUser, usuarios = [], notes = [], on
   const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
   const [cardMenuPos, setCardMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [erroAcao, setErroAcao] = useState<string | null>(null);
+  const [pdfTarget, setPdfTarget] = useState<CronogramaDoc | null>(null);
 
   async function carregar() {
     if (!isFirebaseConfigured()) { setCarregado(true); return; }
@@ -211,7 +213,7 @@ export default function Cronogramas({ currentUser, usuarios = [], notes = [], on
             </button>
             <button
               type="button"
-              onClick={() => { setOpenCardMenuId(null); exportCronogramaToPdf(c); }}
+              onClick={() => { setOpenCardMenuId(null); setPdfTarget(c); }}
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
             >
               <FileText size={14} />
@@ -354,6 +356,18 @@ export default function Cronogramas({ currentUser, usuarios = [], notes = [], on
           onSaveNote={onSaveNote}
           onDeleteNote={onDeleteNote}
           preloadedData={preloadedData}
+        />
+      )}
+
+      {pdfTarget && (
+        <PdfExportDialog
+          title="Exportar PDF"
+          defaultOrientationLabel="Padrão do cronograma (paisagem)"
+          onCancel={() => setPdfTarget(null)}
+          onConfirm={(options) => {
+            exportCronogramaToPdf(pdfTarget, options);
+            setPdfTarget(null);
+          }}
         />
       )}
     </div>

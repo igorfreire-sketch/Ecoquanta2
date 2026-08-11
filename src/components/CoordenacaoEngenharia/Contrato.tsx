@@ -20,6 +20,7 @@ import {
 import Atividades, { buildActivitiesFromEap } from '../Atividades';
 import type { AuthUser } from '../LoginScreen';
 import Cronograma from '../Cronograma';
+import { getSheetOsCodigos, type AnnotationSheet } from './Anotacoes';
 import { deleteFirebaseDocument, isFirebaseConfigured, setFirebaseDocument } from '../../lib/firebaseDb';
 
 interface ContratoProps {
@@ -35,6 +36,7 @@ interface ContratoProps {
   activeContractCode?: string;
   lockedContractCode?: string;
   activeView?: 'os' | 'interferencias' | 'prioridades' | 'cronograma' | 'atividades';
+  notes?: AnnotationSheet[];
 }
 
 interface ActivityRow {
@@ -60,6 +62,8 @@ interface Interferencia {
   data: string;
   observacao: string;
   osImpactada: string;
+  activityId?: string;
+  noteId?: string;
   contratoCodigo?: string;
   contratoNome?: string;
   updatedAt?: string;
@@ -68,6 +72,7 @@ interface Interferencia {
 interface ContractPriorityRecord {
   id: string;
   activityId: string;
+  contratoCodigo?: string;
   monthlyCycle?: string;
   licitatoria?: boolean;
   updatedAt?: string;
@@ -83,6 +88,7 @@ interface StoredPrioritiesState {
 interface OsSettingRecord {
   id: string;
   osCodigo: string;
+  contratoCodigo?: string;
   tipoLicitacao: string;
   tipoProjeto: string;
   responsavel: string;
@@ -602,6 +608,7 @@ export default function Contrato({
   activeContractCode,
   lockedContractCode,
   activeView = 'os',
+  notes = [],
 }: ContratoProps) {
   const activities = useMemo(() => buildActivities(preloadedData), [preloadedData]);
   const contracts = useMemo(() => getContracts(preloadedData, activities), [preloadedData, activities]);
@@ -631,7 +638,7 @@ export default function Contrato({
   const [prioridadeLicitatoria, setPrioridadeLicitatoria] = useState<Record<string, boolean>>(storedPriorities.licitatoria);
   const [showInterferenciaForm, setShowInterferenciaForm] = useState(false);
   const [interferencias, setInterferencias] = useState<Interferencia[]>(() => readStoredInterferencias(preloadedData?.contractInterferences));
-  const [interferenciaDraft, setInterferenciaDraft] = useState({ nome: '', data: '', osImpactada: '', observacao: '' });
+  const [interferenciaDraft, setInterferenciaDraft] = useState({ nome: '', data: '', osImpactada: '', activityId: '', noteId: '', observacao: '' });
 
   const [osSettingsMap, setOsSettingsMap] = useState<Record<string, OsSettingRecord>>(
     () => buildOsSettingsMap(Array.isArray(preloadedData?.osSettings) ? preloadedData.osSettings : [])
@@ -670,6 +677,7 @@ export default function Contrato({
   }, [preloadedData?.osSettings]);
 
   const locked = Boolean(String(lockedContractCode || '').trim());
+  const interferenceContract = locked ? String(lockedContractCode || '').trim() : selectedContract;
 
   const filteredActivities = useMemo(() => {
     const termo = normalizeText(deferredSearch);
@@ -713,11 +721,30 @@ export default function Contrato({
     : null;
 
   const osOptions = useMemo(() => getOsOptions(preloadedData, activities, selectedContract), [preloadedData, activities, selectedContract]);
+  const selectedOsContract = osOptions.find((os) => normalizeText(os.codigo || os.nome) === normalizeText(selectedOsCodigo))?.contratoCodigo
+    || activities.find((activity) => normalizeText(activity.osCodigo || activity.osNome) === normalizeText(selectedOsCodigo))?.contratoCodigo
+    || '';
+  const interferenceOsOptions = useMemo(() => getOsOptions(preloadedData, activities, interferenceContract), [preloadedData, activities, interferenceContract]);
+  const interferenceActivities = useMemo(
+    () => activities.filter((activity) => matchesContract(activity, interferenceContract)
+      && normalizeText(activity.osCodigo || activity.osNome) === normalizeText(interferenciaDraft.osImpactada)),
+    [activities, interferenceContract, interferenciaDraft.osImpactada]
+  );
+  const interferenceNotes = useMemo(
+    () => notes.filter((note) => getSheetOsCodigos(note).some((osCodigo) => normalizeText(osCodigo) === normalizeText(interferenciaDraft.osImpactada))),
+    [interferenciaDraft.osImpactada, notes]
+  );
+  const filteredInterferencias = useMemo(
+    () => interferencias.filter((item) => matchesContract({ contratoCodigo: item.contratoCodigo || '', contratoNome: item.contratoNome || '' }, interferenceContract)),
+    [interferencias, interferenceContract]
+  );
   const observationMinLength = 35;
   const isInterferenciaValid = Boolean(
-    interferenciaDraft.nome.trim()
+    !isAllContract(interferenceContract)
+    && interferenciaDraft.nome.trim()
     && interferenciaDraft.data
     && interferenciaDraft.osImpactada
+    && interferenceOsOptions.some((os) => normalizeText(os.codigo || os.nome) === normalizeText(interferenciaDraft.osImpactada))
     && interferenciaDraft.observacao.trim().length >= observationMinLength
   );
 
@@ -729,6 +756,8 @@ export default function Contrato({
 
   const persistPriority = async (activityId: string, nextMonthly?: string, nextLicitatoria?: boolean) => {
     if (!isFirebaseConfigured()) return;
+    const activity = activities.find((item) => item.id === activityId);
+    if (!activity?.contratoCodigo) return;
     if (!nextMonthly && !nextLicitatoria) {
       await deleteFirebaseDocument('contractPriorities', activityId);
       return;
@@ -737,6 +766,7 @@ export default function Contrato({
     await setFirebaseDocument('contractPriorities', activityId, {
       id: activityId,
       activityId,
+      contratoCodigo: activity.contratoCodigo,
       monthlyCycle: nextMonthly || '',
       licitatoria: Boolean(nextLicitatoria),
       updatedAt: new Date().toISOString(),
@@ -757,12 +787,13 @@ export default function Contrato({
   };
 
   const handleEnviarOs = async () => {
-    if (!selectedOsCodigo || !osDraft) return;
+    if (!selectedOsCodigo || !osDraft || !selectedOsContract) return;
     setIsSavingOs(true);
     try {
       const record: OsSettingRecord = {
         id: selectedOsCodigo,
         osCodigo: selectedOsCodigo,
+        contratoCodigo: selectedOsContract,
         tipoLicitacao: osDraft.tipoLicitacao,
         tipoProjeto: osDraft.tipoProjeto,
         responsavel: osDraft.responsavel,
@@ -784,19 +815,23 @@ export default function Contrato({
   const handleAddInterferencia = async () => {
     if (!isInterferenciaValid) return;
     if (!isFirebaseConfigured()) return;
-    const contratoAtual = contracts.find((item) => normalizeText(item.id) === normalizeText(selectedContract));
-    const nextInterferencia = {
+    if (locked && normalizeText(interferenceContract) !== normalizeText(lockedContractCode)) return;
+    const contratoAtual = contracts.find((item) => normalizeText(item.id) === normalizeText(interferenceContract));
+    const nextInterferencia: Interferencia = {
       id: `${Date.now()}-${interferenciaDraft.osImpactada}`,
       nome: interferenciaDraft.nome.trim(),
       data: interferenciaDraft.data,
       osImpactada: interferenciaDraft.osImpactada,
+      activityId: interferenciaDraft.activityId || undefined,
+      noteId: interferenciaDraft.noteId || undefined,
       observacao: interferenciaDraft.observacao.trim(),
-      contratoCodigo: selectedContract,
-      contratoNome: contratoAtual?.nome || selectedContract,
+      contratoCodigo: interferenceContract,
+      contratoNome: contratoAtual?.nome || interferenceContract,
       updatedAt: new Date().toISOString(),
     };
     await setFirebaseDocument('contractInterferences', nextInterferencia.id, nextInterferencia);
-    setInterferenciaDraft({ nome: '', data: '', osImpactada: '', observacao: '' });
+    setInterferencias((prev) => [nextInterferencia, ...prev]);
+    setInterferenciaDraft({ nome: '', data: '', osImpactada: '', activityId: '', noteId: '', observacao: '' });
     setShowInterferenciaForm(false);
   };
 
@@ -885,7 +920,8 @@ export default function Contrato({
             preloadedData={preloadedData}
             showAllDisciplines
             disciplineFilterEnabled
-            notes={[]}
+            fixedContractCode={isAllContract(selectedContract) ? '' : selectedContract}
+            notes={notes}
           />
         </div>
       )}
@@ -1171,24 +1207,32 @@ export default function Contrato({
           </div>
 
           <div className="px-5 pb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {interferencias.length === 0 && (
+            {filteredInterferencias.length === 0 && (
               <div className="lg:col-span-2 py-8 text-center text-[13px] font-medium text-[#757575]">
                 Nenhuma interferência registrada nesta sessão.
               </div>
             )}
 
-            {interferencias.map((item) => (
-              <div key={item.id} className="rounded-xl bg-[#F9FAFB] p-4">
+            {filteredInterferencias.map((item) => {
+              const activity = activities.find((candidate) => candidate.id === item.activityId);
+              const note = notes.find((candidate) => candidate.id === item.noteId);
+              const os = interferenceOsOptions.find((candidate) => normalizeText(candidate.codigo || candidate.nome) === normalizeText(item.osImpactada));
+              return <div key={item.id} className="rounded-xl bg-[#F9FAFB] p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[14px] font-bold text-[#2D2D2D]">{item.nome}</p>
-                    <p className="text-[11px] font-semibold text-[#757575] mt-1">{formatDateBR(item.data)} - OS {item.osImpactada}</p>
+                    <p className="text-[11px] font-semibold text-[#757575] mt-1">{formatDateBR(item.data)} - {os?.nome || item.osImpactada}</p>
                   </div>
                   <AlertTriangle size={17} className="text-[#F59E0B] shrink-0" />
                 </div>
+                {(activity || note) && (
+                  <p className="mt-2 text-[11px] font-semibold text-[#64748B]">
+                    {[activity ? `Atividade: ${getActivityDisplayName(activity)}` : '', note ? `Nota: ${note.titulo}` : ''].filter(Boolean).join(' · ')}
+                  </p>
+                )}
                 <p className="mt-3 text-[13px] leading-relaxed text-[#4B5563]">{item.observacao}</p>
-              </div>
-            ))}
+              </div>;
+            })}
           </div>
         </section>
       )}
@@ -1238,16 +1282,47 @@ export default function Contrato({
                 <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">OS impactada</label>
                 <SearchableSelect
                   value={interferenciaDraft.osImpactada}
-                  onChange={(event) => setInterferenciaDraft((prev) => ({ ...prev, osImpactada: event.target.value }))}
+                  onChange={(event) => setInterferenciaDraft((prev) => ({ ...prev, osImpactada: event.target.value, activityId: '', noteId: '' }))}
                   className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] px-3 text-[13px] font-medium outline-none focus:border-[#F05D28]"
                 >
                   <option value="">Selecionar OS</option>
-                  {osOptions.map((os) => (
+                  {interferenceOsOptions.map((os) => (
                     <option key={os.codigo || os.nome} value={os.codigo || os.nome}>
-                      {os.codigo && os.nome && os.nome !== os.codigo ? `${os.codigo} - ${os.nome}` : os.nome || os.codigo}
+                      {os.codigo && os.nome && os.nome !== os.codigo ? `${os.nome} (${os.codigo})` : os.nome || os.codigo}
                     </option>
                   ))}
                 </SearchableSelect>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Atividade (opcional)</label>
+                  <SearchableSelect
+                    value={interferenciaDraft.activityId}
+                    disabled={!interferenciaDraft.osImpactada || interferenceActivities.length === 0}
+                    onChange={(event) => setInterferenciaDraft((prev) => ({ ...prev, activityId: event.target.value }))}
+                    className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] px-3 text-[13px] font-medium outline-none focus:border-[#F05D28] disabled:bg-[#F8FAFC] disabled:text-[#94A3B8]"
+                  >
+                    <option value="">{interferenceActivities.length ? 'Sem atividade específica' : 'Nenhuma atividade nesta OS'}</option>
+                    {interferenceActivities.map((activity) => (
+                      <option key={activity.id} value={activity.id}>{getActivityDisplayName(activity)}</option>
+                    ))}
+                  </SearchableSelect>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">Nota (opcional)</label>
+                  <SearchableSelect
+                    value={interferenciaDraft.noteId}
+                    disabled={!interferenciaDraft.osImpactada || interferenceNotes.length === 0}
+                    onChange={(event) => setInterferenciaDraft((prev) => ({ ...prev, noteId: event.target.value }))}
+                    className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] px-3 text-[13px] font-medium outline-none focus:border-[#F05D28] disabled:bg-[#F8FAFC] disabled:text-[#94A3B8]"
+                  >
+                    <option value="">{interferenceNotes.length ? 'Sem nota específica' : 'Nenhuma nota nesta OS'}</option>
+                    {interferenceNotes.map((note) => (
+                      <option key={note.id} value={note.id}>{note.titulo}</option>
+                    ))}
+                  </SearchableSelect>
+                </div>
               </div>
 
               <div>

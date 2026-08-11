@@ -25,6 +25,7 @@ import TerceirizadasCadastro from './TerceirizadasCadastro';
 import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups, expandEngenhariaNaSelecao } from '../lib/disciplineCatalog';
 import { downloadSystemBackup } from '../lib/systemBackup';
 import { downloadProjectVbaConfig } from '../lib/projectVbaAssets';
+import { getRoleTabs } from '../lib/adminAccess';
 
 export function ProjectVbaConfigCard() {
   return (
@@ -59,6 +60,7 @@ export type AppTabKey =
   | 'nc2'
   | 'cronograma'
   | 'solucoes'
+  | 'banco-links'
   | 'administracao';
 
 // Pedido de outras disciplinas feito pelo proprio usuario na Area do Usuario, aguardando o admin aprovar/negar.
@@ -112,12 +114,14 @@ export interface TerceirizadaRecord {
   id: string;
   nome: string;
   disciplina: string;
+  disciplinas?: string[];
 }
 
 export interface PreRegistrationRecord {
   email: string;
   cargo: string;
   disciplina: string;
+  disciplinas?: string[];
   alocacao: string;
   contrato: string;
   allowedTabs: AppTabKey[];
@@ -970,7 +974,7 @@ export default function Administracao({
 
   const [preRegEmail, setPreRegEmail] = React.useState('');
   const [preRegCargo, setPreRegCargo] = React.useState('');
-  const [preRegDisciplina, setPreRegDisciplina] = React.useState('');
+  const [preRegDisciplinas, setPreRegDisciplinas] = React.useState<string[]>([]);
   const [preRegAlocacao, setPreRegAlocacao] = React.useState('');
   const [preRegContrato, setPreRegContrato] = React.useState('');
   const [preRegAllowedTabs, setPreRegAllowedTabs] = React.useState<AppTabKey[]>([]);
@@ -1513,7 +1517,11 @@ export default function Administracao({
               <label className="text-[12px] font-medium text-[#757575]">Cargo</label>
               <SearchableSelect
                 value={preRegCargo}
-                onChange={(e) => setPreRegCargo(e.target.value)}
+                onChange={(e) => {
+                  const cargo = e.target.value;
+                  setPreRegCargo(cargo);
+                  setPreRegAllowedTabs(getRoleTabs(roleTabPermissions, cargo));
+                }}
                 className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
               >
                 <option value="">Selecionar cargo</option>
@@ -1521,16 +1529,21 @@ export default function Administracao({
               </SearchableSelect>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-[12px] font-medium text-[#757575]">Disciplina</label>
-              <SearchableSelect
-                value={preRegDisciplina}
-                onChange={(e) => setPreRegDisciplina(e.target.value)}
-                className="w-full h-11 px-3 rounded-xl border border-[#E5E7EB] bg-white text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28] transition-colors"
-              >
-                <option value="">Selecionar disciplina</option>
-                {getDisciplineGroups().map((d) => <option key={d} value={d}>{d}</option>)}
-              </SearchableSelect>
+            <div className="space-y-1 md:col-span-2">
+              <label className="text-[12px] font-medium text-[#757575]">Disciplinas</label>
+              <div className="flex min-h-11 flex-wrap gap-x-4 gap-y-2 rounded-xl border border-[#E5E7EB] bg-white px-3 py-2">
+                {getDisciplineGroups().map((disciplina) => (
+                  <label key={disciplina} className="flex items-center gap-2 text-[12px] font-medium text-[#2D2D2D] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={preRegDisciplinas.includes(disciplina)}
+                      onChange={() => setPreRegDisciplinas((prev) => prev.includes(disciplina) ? prev.filter((item) => item !== disciplina) : [...prev, disciplina])}
+                      className="h-4 w-4 accent-[#F05D28]"
+                    />
+                    {disciplina}
+                  </label>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -1560,14 +1573,14 @@ export default function Administracao({
             <div className="flex items-end">
               <button
                 type="button"
-                disabled={!preRegEmail.trim() || !preRegCargo || !preRegDisciplina}
+                disabled={!preRegEmail.trim() || !preRegCargo || preRegDisciplinas.length === 0}
                 onClick={() => {
                   const email = preRegEmail.trim().toLowerCase();
-                  if (!email || !preRegCargo || !preRegDisciplina) return;
-                  onAddPreRegistration({ email, cargo: preRegCargo, disciplina: preRegDisciplina, alocacao: preRegAlocacao, contrato: preRegContrato, allowedTabs: preRegAllowedTabs });
+                  if (!email || !preRegCargo || preRegDisciplinas.length === 0) return;
+                  onAddPreRegistration({ email, cargo: preRegCargo, disciplina: preRegDisciplinas[0], disciplinas: preRegDisciplinas, alocacao: preRegAlocacao, contrato: preRegContrato, allowedTabs: preRegAllowedTabs });
                   setPreRegEmail('');
                   setPreRegCargo('');
-                  setPreRegDisciplina('');
+                  setPreRegDisciplinas([]);
                   setPreRegAlocacao('');
                   setPreRegContrato('');
                   setPreRegAllowedTabs([]);
@@ -1622,7 +1635,7 @@ export default function Administracao({
                       <tr key={reg.email} className={`hover:bg-[#F9FAFB] transition-colors ${index % 2 === 1 ? 'bg-[#FAFBFC]' : ''}`}>
                         <td className="px-4 py-3 font-medium text-[#2D2D2D]">{reg.email}</td>
                         <td className="px-4 py-3 text-[#757575]">{reg.cargo || '—'}</td>
-                        <td className="px-4 py-3 text-[#757575]">{reg.disciplina || '—'}</td>
+                        <td className="px-4 py-3 text-[#757575]">{reg.disciplinas?.join(' | ') || reg.disciplina || '—'}</td>
                         <td className="px-4 py-3 text-[#757575]">{reg.alocacao || '—'}</td>
                         <td className="px-4 py-3 text-[#757575]">{reg.contrato || '—'}</td>
                         <td className="px-4 py-3 text-[#757575]">

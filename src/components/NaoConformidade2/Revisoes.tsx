@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, Clock3, Loader2, Save } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
-import { getDemoRecords, getRecords, updateRecord, type Nc2Item, type Nc2Record } from './ncStore';
+import { getRecords, updateRecord, type Nc2Item, type Nc2Record } from './ncStore';
 import { getDisciplineGroups } from '../../lib/disciplineCatalog';
 
 function itemUnitLabel(item: Nc2Item) {
@@ -10,7 +10,7 @@ function itemUnitLabel(item: Nc2Item) {
   return total === 1 ? 'arquivo' : 'arquivos';
 }
 
-export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
+export default function Revisoes({ currentUser, lockedContractCode }: { currentUser: AuthUser; lockedContractCode?: string }) {
   const [records, setRecords] = useState<Nc2Record[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
@@ -19,8 +19,9 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
   useEffect(() => {
     let active = true;
     (async () => {
+      setLoading(true);
       try {
-        const next = await getRecords();
+        const next = await getRecords(lockedContractCode);
         if (active) {
           setRecords(next);
           setErrorMessage('');
@@ -28,8 +29,8 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
       } catch (error) {
         console.error('Erro ao carregar revisoes:', error);
         if (active) {
-          setRecords(getDemoRecords());
-          setErrorMessage('Firebase recusou acesso as revisoes reais. Mostrando 5 registros de demonstracao.');
+          setRecords([]);
+          setErrorMessage('Firebase recusou acesso as revisoes reais. Nenhum registro demo sera exibido.');
         }
       } finally {
         if (active) setLoading(false);
@@ -38,7 +39,7 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [lockedContractCode]);
 
   const persistRecord = async (record: Nc2Record) => {
     setSavingIds((prev) => new Set(prev).add(record.id));
@@ -59,13 +60,11 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
   };
 
   const updateRecordLocal = (recordId: string, updater: (record: Nc2Record) => Nc2Record) => {
-    setRecords((prev) => {
-      const current = prev.find((item) => item.id === recordId);
-      if (!current) return prev;
-      const nextRecord = updater(current);
-      void persistRecord(nextRecord);
-      return prev.map((item) => (item.id === recordId ? nextRecord : item));
-    });
+    const current = records.find((item) => item.id === recordId);
+    if (!current) return;
+    const nextRecord = updater(current);
+    setRecords((prev) => prev.map((item) => (item.id === recordId ? nextRecord : item)));
+    void persistRecord(nextRecord);
   };
 
   if (loading) {
@@ -78,6 +77,10 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
       </div>
     );
   }
+
+  const visibleRecords = lockedContractCode
+    ? records.filter((rec) => String(rec.contratoCodigo || '').trim().toLowerCase() === lockedContractCode.trim().toLowerCase())
+    : records;
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-[980px] mx-auto animate-in fade-in duration-500 pb-10">
@@ -95,7 +98,7 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
         </div>
       )}
 
-      {records.length === 0 && (
+      {visibleRecords.length === 0 && (
         <div className="rounded-2xl bg-white p-12 flex flex-col items-center gap-3 text-center shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
           <p className="text-[15px] font-bold text-[#2D2D2D]">{errorMessage ? 'Falha ao carregar revisoes' : 'Nenhuma revisao registrada'}</p>
           <p className="text-[13px] text-[#94A3B8]">
@@ -104,7 +107,7 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
         </div>
       )}
 
-      {records.map((rec) => {
+      {visibleRecords.map((rec) => {
         const saving = savingIds.has(rec.id);
         return (
           <div key={rec.id} className="rounded-2xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] overflow-hidden">
@@ -134,9 +137,9 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
                       const value = event.target.value;
                       setRecords((prev) => prev.map((item) => (item.id === rec.id ? { ...item, objetoOs: value } : item)));
                     }}
-                    onBlur={() => {
-                      const fresh = records.find((item) => item.id === rec.id);
-                      if (fresh) void persistRecord(fresh);
+                    onBlur={(event) => {
+                      const value = event.currentTarget.value;
+                      updateRecordLocal(rec.id, (record) => ({ ...record, objetoOs: value }));
                     }}
                     className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] px-3 text-[13px] font-medium outline-none focus:border-[#F05D28]"
                   />
@@ -149,9 +152,9 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
                       const value = event.target.value;
                       setRecords((prev) => prev.map((item) => (item.id === rec.id ? { ...item, disciplina: value } : item)));
                     }}
-                    onBlur={() => {
-                      const fresh = records.find((item) => item.id === rec.id);
-                      if (fresh) void persistRecord(fresh);
+                    onBlur={(event) => {
+                      const value = event.currentTarget.value;
+                      updateRecordLocal(rec.id, (record) => ({ ...record, disciplina: value }));
                     }}
                     className="mt-1 w-full h-11 rounded-xl border border-[#E5E7EB] px-3 text-[13px] font-medium outline-none focus:border-[#F05D28]"
                   >
@@ -175,9 +178,9 @@ export default function Revisoes({ currentUser }: { currentUser: AuthUser }) {
                     const value = event.target.value;
                     setRecords((prev) => prev.map((item) => (item.id === rec.id ? { ...item, observacoes: value } : item)));
                   }}
-                  onBlur={() => {
-                    const fresh = records.find((item) => item.id === rec.id);
-                    if (fresh) void persistRecord(fresh);
+                  onBlur={(event) => {
+                    const value = event.currentTarget.value;
+                    updateRecordLocal(rec.id, (record) => ({ ...record, observacoes: value }));
                   }}
                   className="mt-1 w-full min-h-[120px] resize-y rounded-xl border border-[#E5E7EB] p-3 text-[13px] font-medium outline-none focus:border-[#F05D28]"
                 />

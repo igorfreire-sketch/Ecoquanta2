@@ -1,32 +1,34 @@
 import jsPDF from 'jspdf';
 import { safeFileName, downloadBlob } from './noteExport';
-import { ordemArvore, calcularCodigos, type CronogramaDoc, type CronoRow } from '../components/SolucoesDigitais';
+import { normalizePdfExportOptions, type PdfExportOptions } from './pdfExport';
+import { ordemArvore, calcularCodigos, ordemColunasCronograma, type CronogramaDoc, type CronoRow } from '../components/SolucoesDigitais';
 
 function cabecalho(doc: CronogramaDoc): string[] {
-  return [
-    'ID', 'Atividade', 'Predecessora', 'Início', 'Duração (dias)', 'Fim',
-    'Responsável', '% Concluído', 'Nota', 'Atividade agenda',
-    ...doc.colunasCustom.map((c) => c.nome),
-  ];
+  const nomesFixos: Record<string, string> = {
+    id: 'ID', nome: 'Atividade', predecessora: 'Predecessora', inicio: 'Início',
+    duracao: 'Duração (dias)', fim: 'Fim', responsavel: 'Responsável',
+    percentual: '% Concluído', nota: 'Nota', atividade: 'Atividade agenda',
+  };
+  return ordemColunasCronograma(doc).map((key) => nomesFixos[key] || doc.colunasCustom.find((col) => col.id === key)?.nome || key);
 }
 
 // ponytail: Nota/Atividade agenda saem como o id bruto vinculado (sem resolver titulo/nome) —
 // resolver isso exigiria passar as listas de notes/activities pro export, que hoje opera so em
 // cima do CronogramaDoc. Trocar por titulo/nome se algum dia isso incomodar na planilha exportada.
 function linhaValores(doc: CronogramaDoc, row: CronoRow, codigos: Map<string, string>): string[] {
-  return [
-    codigos.get(row.id) || '',
-    row.nome || '',
-    row.predecessoraId ? (codigos.get(row.predecessoraId) || '') : '',
-    row.dataInicio || '',
-    row.duracaoDias != null ? String(row.duracaoDias) : '',
-    row.dataFim || '',
-    row.responsavelEmail || '',
-    row.percentualConcluido != null ? String(row.percentualConcluido) : '',
-    row.noteId || '',
-    row.atividadeId || '',
-    ...doc.colunasCustom.map((c) => row.custom?.[c.id] || ''),
-  ];
+  const valoresFixos: Record<string, string> = {
+    id: codigos.get(row.id) || '',
+    nome: row.nome || '',
+    predecessora: row.predecessoraId ? (codigos.get(row.predecessoraId) || '') : '',
+    inicio: row.dataInicio || '',
+    duracao: row.duracaoDias != null ? String(row.duracaoDias) : '',
+    fim: row.dataFim || '',
+    responsavel: row.responsavelEmail || '',
+    percentual: row.percentualConcluido != null ? String(row.percentualConcluido) : '',
+    nota: row.noteId || '',
+    atividade: row.atividadeId || '',
+  };
+  return ordemColunasCronograma(doc).map((key) => valoresFixos[key] ?? row.custom?.[key] ?? '');
 }
 
 function linhasOrdenadas(doc: CronogramaDoc): string[][] {
@@ -46,11 +48,12 @@ export function exportCronogramaToCsv(doc: CronogramaDoc) {
 // Um cronograma tem 10+ colunas (9 fixas + customizadas) — sempre paisagem, diferente do
 // heuristico de exportNoteToPdf (que so vira paisagem acima de 6 colunas de banco). Tabela
 // simples (titulo + grade), sem replicar o estilo rico de celula das notas.
-export function exportCronogramaToPdf(doc: CronogramaDoc) {
-  const pdf = new jsPDF({ orientation: 'landscape' });
+export function exportCronogramaToPdf(doc: CronogramaDoc, options?: PdfExportOptions) {
+  const { orientation, format } = normalizePdfExportOptions(options, 'landscape');
+  const pdf = new jsPDF({ orientation, unit: 'mm', format });
   const marginX = 10;
-  const pageWidth = 297;
-  const pageBottom = 190;
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageBottom = pdf.internal.pageSize.getHeight() - 20;
   const lineHeight = 5;
   let y = 14;
 
@@ -63,7 +66,7 @@ export function exportCronogramaToPdf(doc: CronogramaDoc) {
   const colWidth = (pageWidth - marginX * 2) / colunas.length;
 
   const ensureSpace = (needed: number) => {
-    if (y + needed > pageBottom) { pdf.addPage(); y = 14; }
+    if (y + needed > pageBottom) { pdf.addPage(format, orientation); y = 14; }
   };
 
   const desenharLinha = (valores: string[], negrito: boolean) => {

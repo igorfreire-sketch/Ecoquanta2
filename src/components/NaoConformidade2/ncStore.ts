@@ -32,54 +32,14 @@ export interface Nc2Record {
   updatedByEmail?: string;
 }
 
-export function getDemoRecords(): Nc2Record[] {
-  const baseDate = new Date('2026-05-19T09:00:00');
-  const items = [
-    { itemKey: 'carimbo', itemLabel: 'Carimbo', unit: 'folha' as const },
-    { itemKey: 'desenho', itemLabel: 'Desenho', unit: 'folha' as const },
-    { itemKey: 'relatorio', itemLabel: 'Relatorio', unit: 'arquivo' as const },
-    { itemKey: 'faltaArquivo', itemLabel: 'Falta de Arquivo', unit: 'arquivo' as const },
-  ];
-
-  return ['Estrutura', 'Arquitetura', 'Eletrica', 'Hidrossanitaria', 'PCI'].map((disciplina, index) => {
-    const origemAtividade = index % 2 === 0 ? 'interno' as const : 'terceirizado' as const;
-    const createdAt = new Date(baseDate.getTime() + index * 3600000).toISOString();
-    const itens = items.map((item, itemIndex) => ({
-      ...item,
-      quantidadeC: (index + itemIndex) % 3,
-      quantidadeT: ((index + 1) * (itemIndex + 1)) % 4,
-      revisado: false,
-    }));
-    const itensT = itens.filter((item) => item.quantidadeT > 0);
-
-    return {
-      id: `NC2-DEMO-${index + 1}`,
-      contratoCodigo: 'DEMO',
-      contratoNome: 'Contrato Demonstracao',
-      os: `DEMO.OS0${index + 1} - OS Demonstracao ${index + 1}`,
-      osCodigo: `DEMO.OS0${index + 1}`,
-      objetoOs: `Atividade Demonstracao ${index + 1}`,
-      objetoOsCodigo: `DEMO.OS0${index + 1}.00${index + 1}`,
-      disciplina,
-      origemAtividade,
-      avaliador: 'Modo Demonstracao',
-      avaliadorEmail: 'demo@ecoquanta.local',
-      observacoes: `Registro automatico de demonstracao ${index + 1}.`,
-      dataHora: new Date(baseDate.getTime() + index * 3600000).toLocaleString('pt-BR'),
-      itens,
-      itensT,
-      concluido: itensT.length === 0,
-      createdAt,
-      updatedAt: createdAt,
-      updatedByNome: 'Modo Demonstracao',
-      updatedByEmail: 'demo@ecoquanta.local',
-    };
-  });
-}
-
-export async function getRecords(): Promise<Nc2Record[]> {
+export async function getRecords(contractCode?: string): Promise<Nc2Record[]> {
   if (!isFirebaseConfigured()) throw new Error('Firebase nao configurado para conformidade.');
-  return fetchFirebaseCollection<Nc2Record>('nc2Records');
+  const trimmedContractCode = String(contractCode || '').trim();
+  return fetchFirebaseCollection<Nc2Record>(
+    'nc2Records',
+    // ponytail: lowers browser traffic exposure, not security isolation; Firestore rules enforce access.
+    trimmedContractCode ? { field: 'contratoCodigo', value: trimmedContractCode } : undefined,
+  );
 }
 
 export async function saveRecordsBatch(

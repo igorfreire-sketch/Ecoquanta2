@@ -2,6 +2,9 @@ import jsPDF from 'jspdf';
 import { getDisciplineDisplayName } from '../components/Atividades';
 import { getSheetBancos, getSheetDisciplinas, getSheetOsCodigos, getSheetTextos, type AnnotationBanco, type AnnotationSheet } from '../components/CoordenacaoEngenharia/Anotacoes';
 import { cellKey, quebrarTexto } from './bancoGrid';
+import { normalizePdfExportOptions, type PdfExportOptions } from './pdfExport';
+
+export { PDF_PAPER_FORMAT_LABELS, PDF_PAPER_FORMATS, normalizePdfExportOptions, type PdfExportOptions, type PdfExportOrientation, type PdfPaperFormat } from './pdfExport';
 
 // Cor de celula/texto vem como hex (#RGB ou #RRGGBB) dos presets. Converte pro [r,g,b] do jsPDF.
 function hexToRgb(value?: string): [number, number, number] | null {
@@ -45,21 +48,21 @@ function formatDateBRLocal(value?: string) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('pt-BR');
 }
 
-export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] = []) {
+export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] = [], options?: PdfExportOptions) {
   // Banco com muitas colunas nao cabe legivel em retrato (210mm) - vira paisagem (297mm) a
   // partir de um limiar empirico de colunas. Todas as paginas do doc saem na mesma orientacao
   // (jsPDF fixa isso na criacao); paginar dentro da mesma nota so cria paginas extras, nao troca.
   const maxColCount = Math.max(0, ...getSheetBancos(sheet).map((banco) => banco.colCount));
-  const paisagem = maxColCount > 6;
-  const doc = new jsPDF({ orientation: paisagem ? 'landscape' : 'portrait' });
+  const { orientation, format } = normalizePdfExportOptions(options, maxColCount > 6 ? 'landscape' : 'portrait');
+  const doc = new jsPDF({ orientation, unit: 'mm', format });
   const marginX = 14;
-  const pageWidth = paisagem ? 297 : 210;
-  const pageBottom = paisagem ? 190 : 280;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageBottom = doc.internal.pageSize.getHeight() - 17;
   let y = 16;
 
   const ensureSpace = (needed: number) => {
     if (y + needed > pageBottom) {
-      doc.addPage();
+      doc.addPage(format, orientation);
       y = 16;
     }
   };

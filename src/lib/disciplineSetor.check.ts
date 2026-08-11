@@ -37,7 +37,7 @@ assert.equal(isDisciplineHidden('Arquitetura'), false);
   assert.ok(!setores.includes('URB - Urbanismo'), 'disciplina agrupada nao aparece solta');
   assert.ok(!setores.some((item) => item.includes('Geofísica')), 'oculta nao entra na lista');
   assert.ok(!setores.some((item) => item.includes(' - ')), 'nenhuma opcao carrega o prefixo do codigo');
-  assert.equal(setores.length, 20, '8 setores agrupados + 12 avulsas');
+  assert.equal(setores.length, 19, 'lista oficial tem 19 setores');
   // Cadastro livre no admin nao pode virar opcao de filtro.
   assert.deepEqual(getSectorOptions(['Disciplina Inventada', 'Urbanismo']), ['Arquitetura']);
   // Os 6 de Arquitetura viram 1 entrada; a lista tem que ser bem menor que 56.

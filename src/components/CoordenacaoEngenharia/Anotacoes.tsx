@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, Check, ChevronLeft, ChevronRight, Clock, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
 import SearchableSelect from '../SearchableSelect';
 import CampoDialog from '../CampoDialog';
+import PdfExportDialog from '../PdfExportDialog';
 import { getDisciplineDisplayName, getDisciplineIconInfo, type EngineeringActivity } from '../Atividades';
 import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups, expandEngenhariaNaSelecao } from '../../lib/disciplineCatalog';
 import { exportNoteToCsv, exportNoteToPdf, exportNotesToMarkdown } from '../../lib/noteExport';
@@ -32,6 +33,8 @@ export interface AnnotationBanco {
   checklistCells?: string[];
   // Estado "feito" do checkbox por cellKey(r,c) - separado do texto, que continua em rows/cell.
   checklistChecked?: Record<string, boolean>;
+  // Varios itens de checklist dentro de uma unica celula, por cellKey(r,c).
+  cellChecklists?: Record<string, AnnotationChecklistItem[]>;
   // Nome editavel do bloco. Ausente = usa o default "Banco N".
   nome?: string;
 }
@@ -136,6 +139,32 @@ export function getSheetOsCodigos(sheet: AnnotationSheet): string[] {
   return sheet.osCodigo ? [sheet.osCodigo] : [];
 }
 
+function normalizeCellChecklists(banco: AnnotationBanco) {
+  const raw = banco.cellChecklists;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const next: Record<string, AnnotationChecklistItem[]> = {};
+  Object.entries(raw as Record<string, unknown>).forEach(([key, value]) => {
+    const partes = key.split(':');
+    const r = Number(partes[0]);
+    const c = Number(partes[1]);
+    if (partes.length !== 2 || !Number.isInteger(r) || !Number.isInteger(c) || r < 0 || c < 0 || r >= banco.rows.length || c >= banco.colCount || !Array.isArray(value)) return;
+    const itens = value.filter((item): item is AnnotationChecklistItem => (
+      Boolean(item)
+      && typeof item === 'object'
+      && typeof (item as AnnotationChecklistItem).id === 'string'
+      && (item as AnnotationChecklistItem).id.trim() !== ''
+      && typeof (item as AnnotationChecklistItem).texto === 'string'
+      && typeof (item as AnnotationChecklistItem).feito === 'boolean'
+    )).map((item) => ({ id: item.id, texto: item.texto, feito: item.feito }));
+    if (itens.length > 0) next[key] = itens;
+  });
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function normalizeBancoForEditing(banco: AnnotationBanco): AnnotationBanco {
+  return { ...banco, cellChecklists: normalizeCellChecklists(banco) };
+}
+
 type AnotacoesFilter = { type: 'disciplina'; value: string } | { type: 'os'; value: string } | { type: 'all' };
 
 interface AnotacoesProps {
@@ -156,6 +185,7 @@ interface AnotacoesProps {
   onCloseControlled?: () => void;
   // noteId de toda linha de todo cronograma (App.tsx) - so pro icone de relogio no card da lista.
   noteIdsComCronograma?: Set<string>;
+  readOnly?: boolean;
 }
 
 type ContextMenuState = { bancoIndex: number; row: number; col: number; x: number; y: number } | null;
@@ -290,6 +320,32 @@ function normalizeText(value: string) {
   return value.normalize('NFD').replace(new RegExp('[\\u0300-\\u036f]', 'g'), '').trim().toLowerCase();
 }
 
+export function noteMatchesTextSearch(sheet: AnnotationSheet, query: string) {
+  const normalizedQuery = normalizeText(query || '');
+  if (!normalizedQuery) return true;
+  const chunks: string[] = [sheet.titulo || ''];
+  getSheetTextos(sheet).forEach((bloco) => {
+    chunks.push(bloco.nome || '', bloco.texto || '');
+  });
+  (Array.isArray(sheet.checklists) ? sheet.checklists : []).forEach((checklist) => {
+    chunks.push(checklist.nome || '');
+    (Array.isArray(checklist?.itens) ? checklist.itens : []).forEach((item) => chunks.push(item?.texto || ''));
+  });
+  getSheetBancos(sheet).forEach((banco) => {
+    chunks.push(banco.nome || '');
+    (Array.isArray(banco.rows) ? banco.rows : []).forEach((row) => {
+      (Array.isArray(row) ? row : []).forEach((cell) => chunks.push(cell || ''));
+    });
+    (banco.cellChecklists && typeof banco.cellChecklists === 'object' && !Array.isArray(banco.cellChecklists)
+      ? Object.values(banco.cellChecklists)
+      : []
+    ).forEach((itens) => {
+      (Array.isArray(itens) ? itens : []).forEach((item) => chunks.push(item?.texto || ''));
+    });
+  });
+  return chunks.some((value) => normalizeText(value).includes(normalizedQuery));
+}
+
 // ---- Rascunho anti-F5: backup local do editor, sem backend. ----
 // Chave ecoquanta:nota-rascunho:<id> ("nova" quando a nota ainda nao tem id).
 export interface NotaRascunho {
@@ -349,9 +405,9 @@ export function encontrarRascunhoOrfao(email: string, sheets: AnnotationSheet[],
 }
 
 export default function Anotacoes({
-  filter, sheets, osOptions, disciplinaOptions, contractOptions = [], currentUser, activities = [], usuarios = [], onSave, onDelete, controlledSheet, onCloseControlled, noteIdsComCronograma,
+  filter, sheets, osOptions, disciplinaOptions, contractOptions = [], currentUser, activities = [], usuarios = [], onSave, onDelete, controlledSheet, onCloseControlled, noteIdsComCronograma, readOnly = false,
 }: AnotacoesProps) {
-  const normalizeForEditing = (sheet: AnnotationSheet): AnnotationSheet => ({ ...sheet, bancos: getSheetBancos(sheet), textos: getSheetTextos(sheet) });
+  const normalizeForEditing = (sheet: AnnotationSheet): AnnotationSheet => ({ ...sheet, bancos: getSheetBancos(sheet).map(normalizeBancoForEditing), textos: getSheetTextos(sheet) });
   const [editing, setEditing] = React.useState<AnnotationSheet | null>(() => (controlledSheet ? normalizeForEditing(controlledSheet) : null));
   const [contextMenu, setContextMenu] = React.useState<ContextMenuState>(null);
   // Posicao/altura reais do menu de contexto, medidas apos montar (a altura varia com o
@@ -411,10 +467,12 @@ export default function Anotacoes({
   const [listaDisciplina, setListaDisciplina] = React.useState('');
   const [listaVinculo, setListaVinculo] = React.useState('');
   const [listaEdificacao, setListaEdificacao] = React.useState('');
+  const [listaTextoBusca, setListaTextoBusca] = React.useState('');
   // Aba ativa da lista de notas: minhas (Kanban), publicas de outros, ou concluidas ha 10+ dias.
   const [notasTab, setNotasTab] = React.useState<'minhas' | 'publicas' | 'concluidas'>('minhas');
   // Menu do card em posicao FIXED (calculada do botao) para nao ser recortado pelo overflow-hidden do card.
   const [cardMenuPos, setCardMenuPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [pdfTarget, setPdfTarget] = React.useState<{ sheet: AnnotationSheet; linkedTitles: string[] } | null>(null);
   const textoRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
   const celulaRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
   // Celula com foco no momento: enquanto nao focada, celula com link markdown mostra so o
@@ -468,6 +526,7 @@ export default function Anotacoes({
   // anterior e agendar um rascunho fantasma so por ter aberto a nota (bug reapareceu quando o
   // snapshot morava num effect `[editing?.id]` separado).
   React.useEffect(() => {
+    if (readOnly) return;
     if (!editing) return;
     const acabouDeAbrir = lastEditingIdRef.current !== editing.id;
     lastEditingIdRef.current = editing.id;
@@ -487,7 +546,7 @@ export default function Anotacoes({
       salvarRascunho(id, editing, currentUser.email);
     }, 800);
     return () => clearTimeout(timer);
-  }, [editing, sheets, currentUser]);
+  }, [editing, sheets, currentUser, readOnly]);
 
   // Oferece "continuar de onde parou" SO no fluxo de nota nova (+ Nota) - nota ja salva
   // reaberta nunca mostra esse aviso, mesmo que tenha um rascunho proprio pendente (pedido
@@ -594,6 +653,9 @@ export default function Anotacoes({
   const remapChecklistChecked = (checked: Record<string, boolean> | undefined, move: Move) => (
     remapStyles(checked as unknown as Record<string, CellStyle> | undefined, move) as unknown as Record<string, boolean> | undefined
   );
+  const remapCellChecklists = (listas: Record<string, AnnotationChecklistItem[]> | undefined, move: Move) => (
+    remapStyles(listas as unknown as Record<string, CellStyle> | undefined, move) as unknown as Record<string, AnnotationChecklistItem[]> | undefined
+  );
   const insertRow = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => {
     const rows = [...banco.rows];
     rows.splice(at, 0, Array.from({ length: banco.colCount }, () => ''));
@@ -606,6 +668,7 @@ export default function Anotacoes({
       rowHeights: spliceSizes(banco.rowHeights, at, 1, BANCO_ROW_HEIGHT, banco.rows.length),
       checklistCells: remapChecklistCells(banco.checklistCells, move),
       checklistChecked: remapChecklistChecked(banco.checklistChecked, move),
+      cellChecklists: remapCellChecklists(banco.cellChecklists, move),
     };
   });
   const removeRow = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => {
@@ -619,6 +682,7 @@ export default function Anotacoes({
       rowHeights: spliceSizes(banco.rowHeights, at, -1, BANCO_ROW_HEIGHT, banco.rows.length),
       checklistCells: remapChecklistCells(banco.checklistCells, move),
       checklistChecked: remapChecklistChecked(banco.checklistChecked, move),
+      cellChecklists: remapCellChecklists(banco.cellChecklists, move),
     };
   });
   const insertCol = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => {
@@ -637,6 +701,7 @@ export default function Anotacoes({
       checklistCols: banco.checklistCols?.map((c) => (c >= at ? c + 1 : c)),
       checklistCells: remapChecklistCells(banco.checklistCells, move),
       checklistChecked: remapChecklistChecked(banco.checklistChecked, move),
+      cellChecklists: remapCellChecklists(banco.cellChecklists, move),
     };
   });
   const removeCol = (bancoIndex: number, at: number) => updateBanco(bancoIndex, (banco) => {
@@ -652,6 +717,7 @@ export default function Anotacoes({
       checklistCols: banco.checklistCols?.filter((c) => c !== at).map((c) => (c > at ? c - 1 : c)),
       checklistCells: remapChecklistCells(banco.checklistCells, move),
       checklistChecked: remapChecklistChecked(banco.checklistChecked, move),
+      cellChecklists: remapCellChecklists(banco.cellChecklists, move),
     };
   });
   // Liga/desliga a coluna `col` como checklist (usado no menu de contexto da celula).
@@ -670,6 +736,26 @@ export default function Anotacoes({
     const key = cellKey(r, c);
     return { ...banco, checklistChecked: { ...banco.checklistChecked, [key]: !banco.checklistChecked?.[key] } };
   });
+  const updateCellChecklist = (bancoIndex: number, r: number, c: number, updater: (itens: AnnotationChecklistItem[]) => AnnotationChecklistItem[]) => updateBanco(bancoIndex, (banco) => {
+    const key = cellKey(r, c);
+    const cellChecklists = { ...banco.cellChecklists };
+    const itens = updater(cellChecklists[key] ?? []);
+    if (itens.length > 0) cellChecklists[key] = itens;
+    else delete cellChecklists[key];
+    return { ...banco, cellChecklists: Object.keys(cellChecklists).length > 0 ? cellChecklists : undefined };
+  });
+  const addCellChecklistItem = (bancoIndex: number, r: number, c: number, texto = '') => updateCellChecklist(
+    bancoIndex, r, c, (itens) => [...itens, { id: makeId('chkitem'), texto, feito: false }]
+  );
+  const setCellChecklistItem = (bancoIndex: number, r: number, c: number, itemId: string, patch: Partial<AnnotationChecklistItem>) => updateCellChecklist(
+    bancoIndex, r, c, (itens) => itens.map((item) => (item.id === itemId ? { ...item, ...patch } : item))
+  );
+  const toggleCellChecklistItem = (bancoIndex: number, r: number, c: number, itemId: string) => updateCellChecklist(
+    bancoIndex, r, c, (itens) => itens.map((item) => (item.id === itemId ? { ...item, feito: !item.feito } : item))
+  );
+  const removeCellChecklistItem = (bancoIndex: number, r: number, c: number, itemId: string) => updateCellChecklist(
+    bancoIndex, r, c, (itens) => itens.filter((item) => item.id !== itemId)
+  );
 
   // ---- Reordenar linha/coluna (drag da alca "#") ----
   // Pura e testavel: velho indice -> novo indice apos mover de `from` pra `to`.
@@ -700,6 +786,7 @@ export default function Anotacoes({
       merges: (banco.merges || []).map((m) => ({ ...m, r: calcularNovoIndice(m.r, from, to) })),
       checklistCells: remapChecklistCells(banco.checklistCells, (r, c) => ({ r: calcularNovoIndice(r, from, to), c })),
       checklistChecked: remapChecklistChecked(banco.checklistChecked, (r, c) => ({ r: calcularNovoIndice(r, from, to), c })),
+      cellChecklists: remapCellChecklists(banco.cellChecklists, (r, c) => ({ r: calcularNovoIndice(r, from, to), c })),
     };
   });
   const moveCol = (bancoIndex: number, from: number, to: number) => updateBanco(bancoIndex, (banco) => {
@@ -717,6 +804,7 @@ export default function Anotacoes({
       checklistCols: banco.checklistCols?.map((c) => calcularNovoIndice(c, from, to)),
       checklistCells: remapChecklistCells(banco.checklistCells, (r, c) => ({ r, c: calcularNovoIndice(c, from, to) })),
       checklistChecked: remapChecklistChecked(banco.checklistChecked, (r, c) => ({ r, c: calcularNovoIndice(c, from, to) })),
+      cellChecklists: remapCellChecklists(banco.cellChecklists, (r, c) => ({ r, c: calcularNovoIndice(c, from, to) })),
     };
   });
 
@@ -974,10 +1062,16 @@ export default function Anotacoes({
     // Filtro fala em setor: escolher 'Arquitetura' traz URB, LAY, LUM...
     .filter((sheet) => !listaDisciplina || getSheetDisciplinas(sheet).some((item) => disciplineMatchesSector(item, listaDisciplina)))
     .filter((sheet) => listaVinculo !== 'vinculado' || (sheet.marcadosUsuarios || []).includes(currentUser.email))
+    .filter((sheet) => noteMatchesTextSearch(sheet, listaTextoBusca))
     // Mais recente primeiro; nota sem criadoEm (registro antigo) vai pro fim, nao pro topo.
-    .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
-  const temFiltroLista = Boolean(listaAutor || listaContrato || listaOs || listaEdificacao || listaDisciplina || listaVinculo);
-  const limparFiltroLista = () => { setListaAutor(''); setListaContrato(''); setListaOs(''); setListaEdificacao(''); setListaDisciplina(''); setListaVinculo(''); };
+    // Mesmo criadoEm: desempata por titulo (pt-BR, ignorando maiusculas/acentos).
+    .sort((a, b) => {
+      const byCreatedAt = (b.criadoEm || '').localeCompare(a.criadoEm || '');
+      if (byCreatedAt !== 0) return byCreatedAt;
+      return normalizeText(a.titulo || '').localeCompare(normalizeText(b.titulo || ''), 'pt-BR');
+    });
+  const temFiltroLista = Boolean(listaAutor || listaContrato || listaOs || listaEdificacao || listaDisciplina || listaVinculo || listaTextoBusca);
+  const limparFiltroLista = () => { setListaAutor(''); setListaContrato(''); setListaOs(''); setListaEdificacao(''); setListaDisciplina(''); setListaVinculo(''); setListaTextoBusca(''); };
   // Autores que aparecem no seletor: os cadastrados no sistema, sem o proprio usuario
   // (ele ja tem a opcao "Criado por mim").
   const autoresDisponiveis = usuarios
@@ -1000,7 +1094,7 @@ export default function Anotacoes({
     // Nota existente so e editavel pelo autor, admin ou usuario vinculado. Nota recem-criada
     // (ainda nao salva, sem autor gravado) e sempre editavel por quem esta criando.
     const notaJaSalva = sheets.some((sheet) => sheet.id === editing.id);
-    const podeEditar = !notaJaSalva || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios);
+    const podeEditar = !readOnly && (!notaJaSalva || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios));
 
     const updateTitulo = (titulo: string) => setEditing((prev) => (prev ? { ...prev, titulo } : prev));
     // Pede (de novo) o login Google com escopo de Agenda - gesto real do usuario, popup nao
@@ -1148,6 +1242,7 @@ export default function Anotacoes({
       : uniqueOsOptions;
 
     const handleSave = async () => {
+      if (readOnly) return;
       setSaving(true);
       try {
         // Salvar so persiste - fica na nota. Sair e o botao "Fechar" (closeEditing), separado.
@@ -1490,8 +1585,10 @@ export default function Anotacoes({
                             {row.map((cell, c) => {
                               if (isCovered(banco.merges, r, c)) return null;
                               const merge = mergeAt(banco.merges, r, c);
+                              const chave = cellKey(r, c);
                               const estilo = banco.styles?.[cellKey(r, c)];
                               const selecionada = naSelecao(bancoIndex, r, c);
+                              const checklistItens = banco.cellChecklists?.[chave] ?? [];
                               // Altura explicita na celula (nao so na linha): "height" em % nao
                               // resolve dentro de <td>, entao o textarea h-full ficava preso ao
                               // tamanho intrinseco (~2 linhas) mesmo com a linha maior. Soma as
@@ -1537,26 +1634,81 @@ export default function Anotacoes({
                                   {/* Celula de checklist (coluna inteira via checklistCols OU celula avulsa via
                                       checklistCells), r>=1: checkbox + texto lado a lado. r===0 continua
                                       textarea normal (titulo/rotulo), mesmo numa coluna de checklist. */}
-                                  {r > 0 && (banco.checklistCols?.includes(c) || banco.checklistCells?.includes(cellKey(r, c))) ? (
-                                    <div className="flex h-full w-full items-center gap-1.5 px-1.5">
-                                      <input
-                                        type="checkbox"
-                                        checked={banco.checklistChecked?.[cellKey(r, c)] ?? false}
-                                        disabled={!podeEditar}
-                                        onChange={() => toggleChecklistChecked(bancoIndex, r, c)}
-                                        className="h-4 w-4 flex-shrink-0 accent-[#F05D28] cursor-pointer"
-                                      />
-                                      <textarea
-                                        ref={(el) => { celulaRefs.current[`${bancoIndex}:${r}:${c}`] = el; }}
-                                        value={cell}
-                                        onChange={(event) => updateCell(bancoIndex, r, c, event.target.value)}
-                                        readOnly={!podeEditar}
-                                        spellCheck
-                                        lang="pt-BR"
-                                        style={cellCss(estilo)}
-                                        className="h-full flex-1 resize-none overflow-auto bg-transparent py-1.5 leading-[1.4] outline-none text-[#374151]"
-                                      />
-                                    </div>
+                                  {r > 0 && (banco.checklistCols?.includes(c) || banco.checklistCells?.includes(chave)) ? (
+                                    checklistItens.length > 0 ? (
+                                      <div className="flex h-full w-full flex-col gap-1 overflow-auto px-1.5 py-1">
+                                        {checklistItens.map((item) => (
+                                          <div key={item.id} className="flex items-center gap-1.5">
+                                            <input
+                                              type="checkbox"
+                                              checked={item.feito}
+                                              disabled={!podeEditar}
+                                              onChange={() => toggleCellChecklistItem(bancoIndex, r, c, item.id)}
+                                              className="h-4 w-4 flex-shrink-0 accent-[#F05D28] cursor-pointer"
+                                            />
+                                            <input
+                                              type="text"
+                                              value={item.texto}
+                                              onChange={(event) => setCellChecklistItem(bancoIndex, r, c, item.id, { texto: event.target.value })}
+                                              readOnly={!podeEditar}
+                                              spellCheck
+                                              lang="pt-BR"
+                                              style={cellCss(estilo)}
+                                              className="min-w-0 flex-1 bg-transparent outline-none text-[#374151]"
+                                            />
+                                            {podeEditar && (
+                                              <button
+                                                type="button"
+                                                title="Remover item"
+                                                onClick={() => removeCellChecklistItem(bancoIndex, r, c, item.id)}
+                                                className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[#94A3B8] hover:bg-[#FEE2E2] hover:text-[#DC2626]"
+                                              >
+                                                <X size={12} />
+                                              </button>
+                                            )}
+                                          </div>
+                                        ))}
+                                        {podeEditar && (
+                                          <button
+                                            type="button"
+                                            onClick={() => addCellChecklistItem(bancoIndex, r, c)}
+                                            className="self-start text-[11px] font-bold text-[#F05D28] hover:underline"
+                                          >
+                                            + item
+                                          </button>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="flex h-full w-full items-center gap-1.5 px-1.5">
+                                        <input
+                                          type="checkbox"
+                                          checked={banco.checklistChecked?.[chave] ?? false}
+                                          disabled={!podeEditar}
+                                          onChange={() => toggleChecklistChecked(bancoIndex, r, c)}
+                                          className="h-4 w-4 flex-shrink-0 accent-[#F05D28] cursor-pointer"
+                                        />
+                                        <textarea
+                                          ref={(el) => { celulaRefs.current[`${bancoIndex}:${r}:${c}`] = el; }}
+                                          value={cell}
+                                          onChange={(event) => updateCell(bancoIndex, r, c, event.target.value)}
+                                          readOnly={!podeEditar}
+                                          spellCheck
+                                          lang="pt-BR"
+                                          style={cellCss(estilo)}
+                                          className="h-full flex-1 resize-none overflow-auto bg-transparent py-1.5 leading-[1.4] outline-none text-[#374151]"
+                                        />
+                                        {podeEditar && (
+                                          <button
+                                            type="button"
+                                            title="Adicionar checklist multi-item"
+                                            onClick={() => addCellChecklistItem(bancoIndex, r, c, cell)}
+                                            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[12px] font-bold text-[#F05D28] hover:bg-[#FFF3EC]"
+                                          >
+                                            +
+                                          </button>
+                                        )}
+                                      </div>
+                                    )
                                   ) : (() => {
                                     const chaveCelula = `${bancoIndex}:${r}:${c}`;
                                     const rotuloLink = extrairLabelDoLink(cell);
@@ -2561,10 +2713,11 @@ export default function Anotacoes({
   const minhasNotasKanban = minhasNotasTodas.filter((sheet) => !isConcluidaAntiga(sheet));
   const minhasNotasConcluidas = minhasNotasTodas.filter(isConcluidaAntiga);
   // So o autor ou um admin do sistema pode excluir a nota.
-  const canDeleteSheet = (sheet: AnnotationSheet) => canDeleteNote(currentUser, sheet.autorEmail);
+  const canDeleteSheet = (sheet: AnnotationSheet) => !readOnly && canDeleteNote(currentUser, sheet.autorEmail);
 
   // Move a nota pra outra coluna do Kanban (drag-and-drop ou clique nos botoes de status).
   const moverStatus = (sheet: AnnotationSheet, status: 'criado' | 'iniciado' | 'concluido') => {
+    if (readOnly) return;
     if (getSheetStatus(sheet) === status) return;
     void onSave({ ...sheet, status, updatedAt: new Date().toISOString() });
   };
@@ -2577,6 +2730,14 @@ export default function Anotacoes({
   const handleDeleteSheet = (sheet: AnnotationSheet) => {
     setOpenCardMenuId(null);
     if (window.confirm(`Excluir a anotação "${sheet.titulo || 'Sem título'}"?`)) void onDelete(sheet.id);
+  };
+
+  const openPdfExport = (sheet: AnnotationSheet) => {
+    const linkedTitles = (sheet.linkedNoteIds || [])
+      .map((id) => sheets.find((item) => item.id === id)?.titulo)
+      .filter((title): title is string => Boolean(title));
+    setOpenCardMenuId(null);
+    setPdfTarget({ sheet, linkedTitles });
   };
 
   const renderCard = (sheet: AnnotationSheet) => {
@@ -2664,17 +2825,19 @@ export default function Anotacoes({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setOpenCardMenuId(null);
-                  const linkedTitles = (sheet.linkedNoteIds || [])
-                    .map((id) => sheets.find((item) => item.id === id)?.titulo)
-                    .filter((title): title is string => Boolean(title));
-                  exportNoteToPdf(sheet, linkedTitles);
-                }}
+                onClick={() => openPdfExport(sheet)}
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
               >
                 <FileText size={14} />
                 Exportar PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => { setOpenCardMenuId(null); exportNotesToMarkdown([sheet], currentUser.email); }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+              >
+                <FileText size={14} />
+                Exportar MD
               </button>
               {canDeleteSheet(sheet) && (
                 <button
@@ -2765,6 +2928,14 @@ export default function Anotacoes({
             <option value="">Todas as notas</option>
             <option value="vinculado">Fui vinculado</option>
           </SearchableSelect>
+          <input
+            type="search"
+            value={listaTextoBusca}
+            onChange={(event) => setListaTextoBusca(event.target.value)}
+            aria-label="Buscar no conteúdo das notas"
+            placeholder="Buscar no conteúdo das notas..."
+            className={filtroClass}
+          />
           {temFiltroLista && (
             <button
               type="button"
@@ -2860,8 +3031,9 @@ export default function Anotacoes({
                   return (
                     <div
                       key={coluna.key}
-                      onDragOver={(event) => event.preventDefault()}
+                      onDragOver={(event) => { if (!readOnly) event.preventDefault(); }}
                       onDrop={(event) => {
+                        if (readOnly) return;
                         event.preventDefault();
                         const id = event.dataTransfer.getData('text/plain');
                         const sheet = minhasNotasKanban.find((item) => item.id === id);
@@ -2876,7 +3048,7 @@ export default function Anotacoes({
                         {notasColuna.map((sheet) => (
                           <div
                             key={sheet.id}
-                            draggable
+                            draggable={!readOnly}
                             onDragStart={(event) => event.dataTransfer.setData('text/plain', sheet.id)}
                           >
                             {renderCard(sheet)}
@@ -2910,6 +3082,18 @@ export default function Anotacoes({
             )
           )}
         </>
+      )}
+
+      {pdfTarget && (
+        <PdfExportDialog
+          title="Exportar PDF"
+          defaultOrientationLabel="Padrão da nota (auto)"
+          onCancel={() => setPdfTarget(null)}
+          onConfirm={(options) => {
+            exportNoteToPdf(pdfTarget.sheet, pdfTarget.linkedTitles, options);
+            setPdfTarget(null);
+          }}
+        />
       )}
     </div>
   );

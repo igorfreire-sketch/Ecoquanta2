@@ -7,6 +7,8 @@ import { disciplineMatchesSector, getSectorOptions } from '../../lib/disciplineC
 import Anotacoes, {
   copiarNota,
   getSheetDisciplinas,
+  getSheetOsCodigos,
+  noteMatchesTextSearch,
   novaNotaBase,
   type AnnotationSheet,
 } from './Anotacoes';
@@ -24,13 +26,15 @@ interface NotesProps {
   // Nota que veio de uma notificação: abre direto no editor.
   abrirNota?: AnnotationSheet | null;
   onNotaAberta?: () => void;
-  onSaveNote: (sheet: AnnotationSheet) => Promise<void>;
-  onDeleteNote: (id: string) => Promise<void>;
+  onSaveNote?: (sheet: AnnotationSheet) => Promise<void>;
+  onDeleteNote?: (id: string) => Promise<void>;
   // noteId de toda linha de todo cronograma - so repassado pro icone de relogio no card (ver App.tsx).
   noteIdsComCronograma?: Set<string>;
+  contractScopeCode?: string;
+  readOnly?: boolean;
 }
 
-export default function Notes({ disciplinas, notes, osOptions, currentUser, preloadedData, usuarios = [], abrirNota, onNotaAberta, onSaveNote, onDeleteNote, noteIdsComCronograma }: NotesProps) {
+export default function Notes({ disciplinas, notes, osOptions, currentUser, preloadedData, usuarios = [], abrirNota, onNotaAberta, onSaveNote, onDeleteNote, noteIdsComCronograma, contractScopeCode = '', readOnly = false }: NotesProps) {
   const [mapaAberto, setMapaAberto] = React.useState(false);
   // Nota aberta no editor por um botao daqui (Nova nota) ou por um no do Mapa Mental.
   const [sheetAberta, setSheetAberta] = React.useState<AnnotationSheet | null>(null);
@@ -41,6 +45,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
   const [filtroEdificacao, setFiltroEdificacao] = React.useState('');
   const [filtroDisciplina, setFiltroDisciplina] = React.useState('');
   const [filtroAutor, setFiltroAutor] = React.useState('');
+  const [filtroTextoBusca, setFiltroTextoBusca] = React.useState('');
 
   React.useEffect(() => {
     if (!abrirNota) return;
@@ -52,6 +57,26 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
     () => buildActivitiesFromEap(preloadedData, currentUser),
     [preloadedData, currentUser]
   );
+  const scopedOsOptions = React.useMemo(() => {
+    const target = String(contractScopeCode || '').trim();
+    if (!target) return osOptions;
+    return osOptions.filter((os) => String(os.contratoCodigo || '').trim() === target);
+  }, [contractScopeCode, osOptions]);
+  const scopedNotes = React.useMemo(() => {
+    const target = String(contractScopeCode || '').trim();
+    const osContrato = new Map(osOptions.map((os) => [String(os.codigo || '').trim(), String(os.contratoCodigo || '').trim()]));
+    return notes.filter((note) => {
+      if (readOnly && note.publica === false) return false;
+      if (!target && !readOnly) return true;
+      const contratos = getSheetOsCodigos(note).map((codigo) => osContrato.get(String(codigo || '').trim())).filter(Boolean);
+      return target ? contratos.includes(target) : contratos.length > 0;
+    });
+  }, [contractScopeCode, notes, osOptions, readOnly]);
+  const scopedActivities = React.useMemo(() => {
+    const target = String(contractScopeCode || '').trim();
+    if (!target) return allActivities;
+    return allActivities.filter((activity: any) => String(activity?.contratoCodigo || activity?.contractCode || activity?.contrato || '').trim() === target);
+  }, [allActivities, contractScopeCode]);
 
   const sortedDisciplinas = React.useMemo(
     () => Array.from(new Set(disciplinas)).sort((a, b) => getDisciplineDisplayName(a).localeCompare(getDisciplineDisplayName(b), 'pt-BR')),
@@ -66,9 +91,9 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
       .sort((a: { nome: string }, b: { nome: string }) => a.nome.localeCompare(b.nome, 'pt-BR'));
   }, [preloadedData]);
 
-  const sortedOs = React.useMemo(
-    () => Array.from(new Map(osOptions.map((os) => [os.codigo, os])).values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
-    [osOptions]
+  const sortedOs = React.useMemo<Array<{ codigo: string; nome: string; contratoCodigo?: string }>>(
+    () => Array.from(new Map<string, { codigo: string; nome: string; contratoCodigo?: string }>(scopedOsOptions.map((os) => [os.codigo, os])).values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
+    [scopedOsOptions]
   );
 
   // OS do contrato escolhido: o filtro de contrato e pre-filtro do de OS.
@@ -89,29 +114,35 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
   const edificacoesFiltradas = React.useMemo<string[]>(() => {
     if (!filtroOs) return [];
     const nomes = new Set<string>();
-    allActivities.forEach((a) => { if (a.osCodigo === filtroOs && a.edificio) nomes.add(a.edificio); });
+    scopedActivities.forEach((a) => { if (a.osCodigo === filtroOs && a.edificio) nomes.add(a.edificio); });
     return Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  }, [allActivities, filtroOs]);
+  }, [scopedActivities, filtroOs]);
 
   // Janela de criacao: minhas notas (publicas e particulares) + todas as publicas dos outros.
   const minhasNotas = React.useMemo(() => {
     const codigosDoContrato = new Set(osFiltradas.map((os) => os.codigo));
-    return notes
+    return scopedNotes
       .filter((nota) => nota.autorEmail === currentUser.email || nota.publica !== false)
       .filter((nota) => !filtroAutor || nota.autorEmail === filtroAutor)
       .filter((nota) => !filtroContrato || (nota.osCodigo ? codigosDoContrato.has(nota.osCodigo) : false))
       .filter((nota) => !filtroOs || nota.osCodigo === filtroOs)
       .filter((nota) => !filtroEdificacao || nota.edificacao === filtroEdificacao)
       .filter((nota) => !filtroDisciplina || getSheetDisciplinas(nota).some((item) => disciplineMatchesSector(item, filtroDisciplina)))
-      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-  }, [notes, currentUser.email, filtroAutor, filtroContrato, filtroOs, filtroEdificacao, filtroDisciplina, osFiltradas]);
+      .filter((nota) => noteMatchesTextSearch(nota, filtroTextoBusca))
+      .sort((a, b) => {
+        const byCreatedAt = (b.criadoEm || '').localeCompare(a.criadoEm || '');
+        return byCreatedAt || (a.titulo || '').localeCompare(b.titulo || '', 'pt-BR', { sensitivity: 'base' });
+      });
+  }, [scopedNotes, currentUser.email, filtroAutor, filtroContrato, filtroOs, filtroEdificacao, filtroDisciplina, filtroTextoBusca, osFiltradas]);
 
   const abrirCriacao = () => {
+    if (readOnly) return;
     setFiltroContrato('');
     setFiltroOs('');
     setFiltroEdificacao('');
     setFiltroDisciplina('');
     setFiltroAutor('');
+    setFiltroTextoBusca('');
     setCriarAberto(true);
   };
 
@@ -128,18 +159,19 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
   const editor = (
     <Anotacoes
       filter={{ type: 'all' }}
-      sheets={notes}
-      osOptions={osOptions}
+      sheets={scopedNotes}
+      osOptions={scopedOsOptions}
       disciplinaOptions={sortedDisciplinas}
       contractOptions={contractOptions}
       usuarios={usuarios}
       currentUser={currentUser}
-      activities={allActivities}
-      onSave={onSaveNote}
-      onDelete={onDeleteNote}
+      activities={scopedActivities}
+      onSave={onSaveNote || (async () => {})}
+      onDelete={onDeleteNote || (async () => {})}
       controlledSheet={sheetAberta}
       onCloseControlled={() => setSheetAberta(null)}
       noteIdsComCronograma={noteIdsComCronograma}
+      readOnly={readOnly}
     />
   );
 
@@ -147,7 +179,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
     return (
       <>
         <MindMap
-          sheets={notes}
+          sheets={scopedNotes}
           currentUserEmail={currentUser.email}
           osOptions={sortedOs}
           onOpenNote={(sheet) => setSheetAberta(sheet)}
@@ -161,14 +193,16 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
   return (
     <div className="rounded-2xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
       <div className="mb-5 flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={abrirCriacao}
-          className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F05D28] px-4 text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F] cursor-pointer"
-        >
-          <Plus size={15} />
-          Nova nota
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={abrirCriacao}
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F05D28] px-4 text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F] cursor-pointer"
+          >
+            <Plus size={15} />
+            Nova nota
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setMapaAberto(true)}
@@ -263,6 +297,14 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
                   <option key={setor} value={setor}>{setor}</option>
                 ))}
               </SearchableSelect>
+              <input
+                type="search"
+                value={filtroTextoBusca}
+                onChange={(event) => setFiltroTextoBusca(event.target.value)}
+                aria-label="Buscar no conteúdo das notas para copiar"
+                placeholder="Buscar no conteúdo das notas..."
+                className="h-11 w-[240px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+              />
             </div>
 
             <div className="mt-4 flex-1 overflow-auto">

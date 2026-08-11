@@ -22,6 +22,9 @@ interface CronogramaRow {
 
 interface CronogramaProps {
   lockedContractCode?: string;
+  loading?: boolean;
+  loadError?: string;
+  onRetry?: () => void;
   viewMode?: 'default' | 'planning';
   currentUser?: {
     nome?: string;
@@ -246,15 +249,15 @@ function normalizeCronogramaRow(row: any): CronogramaRow | null {
     };
   }
 
-  const code = normalizeCode(row.code || row.codigo || row.id);
+  const code = normalizeCode(row.code || row.codigo || row.id || row.activityId || row.seq);
   const name = normalizeText(row.name || row.nome || row.title);
   if (!code || !name) return null;
 
   return {
     code,
     name,
-    progress: Number(row.progress ?? row.avancoAtual ?? row.percentage ?? 0),
-    duration: Number(row.duration ?? row.duracao ?? 0),
+    progress: Number(row.progress ?? row.avancoAtual ?? row.percentage ?? row.percentualConcluido ?? 0),
+    duration: Number(row.duration ?? row.duracao ?? row.duracaoDias ?? 0),
     plannedStart: String(row.plannedStart || row.inicioPlanejado || row.dataInicio || '').trim(),
     plannedEnd: String(row.plannedEnd || row.terminoPlanejado || row.dataFim || '').trim(),
     predecessor: Array.isArray(row.predecessors)
@@ -1170,6 +1173,9 @@ function TreeRow({
 export default function Cronograma({
   preloadedData,
   lockedContractCode,
+  loading = false,
+  loadError,
+  onRetry,
   viewMode = 'default',
   currentUser,
   onPlannerApprovalSubmit,
@@ -1187,7 +1193,7 @@ export default function Cronograma({
   const contracts = useMemo(() => buildContractOptions(rows, preloadedData), [rows, preloadedData]);
   const osOptions = useMemo(() => buildOsOptions(rows, preloadedData), [rows, preloadedData]);
 
-  const [contractFilter, setContractFilter] = useState('Todos');
+  const [contractFilter, setContractFilter] = useState(() => normalizeText(lockedContractCode) || 'Todos');
   const [osFilter, setOsFilter] = useState('Todas');
   const [showInProgressActivities, setShowInProgressActivities] = useState(false);
   const [showGantt, setShowGantt] = useState(false);
@@ -2022,7 +2028,18 @@ export default function Cronograma({
         </div>
 
         <div className="max-h-[680px] overflow-auto">
-          {tree.length === 0 ? (
+          {loading ? (
+            <div className="p-8 text-[13px] font-semibold text-[#64748B]">Carregando cronograma...</div>
+          ) : loadError ? (
+            <div className="flex flex-col items-start gap-3 p-8">
+              <p className="text-[13px] font-semibold text-[#B91C1C]">Não foi possível carregar o cronograma. {loadError}</p>
+              {onRetry && (
+                <button type="button" onClick={onRetry} className="rounded-xl bg-[#F05D28] px-4 py-2 text-[12px] font-black uppercase tracking-[1px] text-white">
+                  Tentar de novo
+                </button>
+              )}
+            </div>
+          ) : tree.length === 0 ? (
             <div className="p-8 text-[13px] text-[#757575]">Nenhuma atividade encontrada no recorte atual.</div>
           ) : (
             tree.map((node) => (
@@ -2046,7 +2063,7 @@ export default function Cronograma({
     const pendingCount = Object.keys(approvalDrafts).length;
     const progressRowsCount = planningVisibleRows.length;
 
-    if (!showInProgressActivities) {
+    if (!showInProgressActivities || loading || loadError) {
       return renderStandardCronograma(
         'Cronograma de Planejamento',
         'Sem o modo atividades em andamento, o cronograma se comporta como os demais.',

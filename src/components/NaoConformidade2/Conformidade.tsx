@@ -18,7 +18,7 @@ import Preenchimento from './Preenchimento';
 import Revisoes from './Revisoes';
 import TerceirizadasCadastro from '../TerceirizadasCadastro';
 import Cronograma from '../Cronograma';
-import { getDemoRecords, getRecords, type Nc2Record } from './ncStore';
+import { getRecords, type Nc2Record } from './ncStore';
 import type { TerceirizadaRecord } from '../Administracao';
 import type { AuthUser } from '../LoginScreen';
 
@@ -37,6 +37,7 @@ type RegistroOs = {
   name?: string;
   nome?: string;
   contractCode?: string;
+  contratoCodigo?: string;
   contrato?: string;
   contractId?: string;
 };
@@ -54,7 +55,7 @@ const getOsName = (os: RegistroOs) =>
   String(os.name || os.nome || getOsCode(os)).trim();
 
 const getOsContractCode = (os: RegistroOs) =>
-  String(os.contractCode || os.contrato || os.contractId || '').trim();
+  String(os.contractCode || os.contratoCodigo || os.contrato || os.contractId || '').trim();
 
 const ITEM_GROUP_LABELS: Record<string, string> = {
   relatorio: 'Relatorio',
@@ -198,15 +199,15 @@ function Dashboard({
     const load = async () => {
       setLoading(true);
       try {
-        const next = await getRecords();
+        const next = await getRecords(lockedContractCode);
         if (!cancelled) {
           setRecords(next);
           setErrorMessage('');
         }
       } catch (error) {
         if (!cancelled) {
-          setRecords(getDemoRecords());
-          setErrorMessage('Firebase recusou acesso aos dados reais. Mostrando 5 registros de demonstracao.');
+          setRecords([]);
+          setErrorMessage('Firebase recusou acesso aos dados reais. Nenhum registro demo sera exibido.');
         }
         console.error('Erro ao carregar registros de conformidade:', error);
       } finally {
@@ -216,20 +217,25 @@ function Dashboard({
 
     void load();
     return () => { cancelled = true; };
-  }, []);
+  }, [lockedContractCode]);
 
   const filteredOsOptions = useMemo(() => {
-    if (!selectedContract) return osOptions;
-    return osOptions.filter((os) => getOsContractCode(os) === selectedContract);
+    const selectedContractKey = normalizeText(selectedContract);
+    if (!selectedContractKey) return osOptions;
+    return osOptions.filter((os) => normalizeText(getOsContractCode(os)) === selectedContractKey);
   }, [osOptions, selectedContract]);
 
   const filteredRecords = useMemo(() => {
+    const selectedContractKey = normalizeText(selectedContract);
+    const selectedOsKey = normalizeText(selectedOs);
     return records.filter((record) => {
-      const matchesContract = !selectedContract || record.contratoCodigo === selectedContract;
-      const matchesOs = !selectedOs || selectedOs === 'Todas' || record.osCodigo === selectedOs;
+      const matchesContract = !selectedContractKey || normalizeText(record.contratoCodigo) === selectedContractKey;
+      const matchesOs = !selectedOsKey || selectedOs === 'Todas' || normalizeText(record.osCodigo) === selectedOsKey;
       return matchesContract && matchesOs;
     });
   }, [records, selectedContract, selectedOs]);
+
+  const hasFilteredRecords = filteredRecords.length > 0;
 
   const { disciplinesData, groupsData, totalAnalyzedData, totalFiles } = useMemo(
     () => buildDashboardMetrics(filteredRecords, disciplinas),
@@ -309,6 +315,12 @@ function Dashboard({
           </div>
         )}
 
+        {!loading && !hasFilteredRecords ? (
+          <div className="rounded-xl bg-white p-10 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] text-center text-[14px] font-medium text-[#757575]">
+            Nenhuma não conformidade registrada para esse filtro.
+          </div>
+        ) : (
+        <>
         <div className="rounded-xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
           <div className="mb-8">
             <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">ANÁLISE</p>
@@ -317,8 +329,6 @@ function Dashboard({
           <div className="h-[350px] w-full">
             {loading ? (
               <div className="h-full flex items-center justify-center text-[13px] text-[#757575]">Carregando registros...</div>
-            ) : disciplinesData.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-[13px] text-[#757575]">Nenhuma nao conformidade encontrada para esse filtro.</div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={disciplinesData}>
@@ -397,6 +407,8 @@ function Dashboard({
             </div>
           </div>
         </div>
+        </>
+        )}
       </div>
     </div>
   );
@@ -461,7 +473,7 @@ export default function Conformidade({
       <div className="w-full">
         {activeTab === 'dashboard' && <Dashboard preloadedData={preloadedData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />}
         {activeTab === 'preenchimento' && <Preenchimento currentUser={currentUser} preloadedData={preloadedData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />}
-        {activeTab === 'revisoes' && <Revisoes currentUser={currentUser} />}
+        {activeTab === 'revisoes' && <Revisoes currentUser={currentUser} lockedContractCode={lockedContractCode} />}
         {activeTab === 'cronograma' && <Cronograma preloadedData={preloadedData as any} lockedContractCode={lockedContractCode} />}
         {activeTab === 'terceirizadas' && (
           <>

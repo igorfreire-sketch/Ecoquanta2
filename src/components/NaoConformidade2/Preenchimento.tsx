@@ -2,7 +2,7 @@ import SearchableSelect from '../SearchableSelect';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Send } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
-import { getSectorOptions, getUserDisciplineList } from '../../lib/disciplineCatalog';
+import { disciplineMatchesSector, getSectorOptions, getUserDisciplineList } from '../../lib/disciplineCatalog';
 import { generateId, saveRecordsBatch, type Nc2Record } from './ncStore';
 
 type ItemKey = 'carimbo' | 'desenho' | 'relatorio' | 'faltaArquivo';
@@ -199,18 +199,15 @@ export default function Preenchimento({
       const disciplina = String(activity?.criadoPorDisciplina || activity?.disciplina || '').trim();
       const disciplineMatches = currentDisciplines.length === 0
         ? true
-        : currentDisciplines.some((item) => normalizeText(item) === normalizeText(disciplina));
+        : currentDisciplines.some((item) => disciplineMatchesSector(disciplina, item));
+      const sectorMatches = !formData.disciplina || disciplineMatchesSector(disciplina, formData.disciplina);
 
       return (
         normalizeText(contratoCodigo) === normalizeText(formData.contrato) &&
         normalizeText(osCodigo) === normalizeText(formData.os) &&
         normalizeText(itemCodigo) === normalizeText(formData.objetoOsCodigo) &&
         disciplineMatches &&
-        (
-          !formData.disciplina ||
-          normalizeText(disciplina) === normalizeText(formData.disciplina) ||
-          currentDisciplines.some((item) => normalizeText(item) === normalizeText(formData.disciplina))
-        )
+        sectorMatches
       );
     }) || null;
   }, [currentDisciplines, formData.contrato, formData.disciplina, formData.objetoOsCodigo, formData.os, sourceActivities]);
@@ -241,6 +238,9 @@ export default function Preenchimento({
   }, [formData.contrato, formData.disciplina, formData.objetoOsCodigo, formData.os, origemAutomatica]);
 
   const checkedItems = ITEM_KEYS.filter((key) => itens[key].checked);
+  const hasInvalidQuantities = checkedItems.some((key) => (
+    (parseInt(itens[key].c, 10) || 0) + (parseInt(itens[key].t, 10) || 0) === 0
+  ));
   const totalC = checkedItems.reduce((sum, key) => sum + (parseInt(itens[key].c, 10) || 0), 0);
   const totalT = checkedItems.reduce((sum, key) => sum + (parseInt(itens[key].t, 10) || 0), 0);
 
@@ -285,7 +285,16 @@ export default function Preenchimento({
   };
 
   const buildRecord = (): Nc2Record | null => {
-    if (!formData.avaliador || !formData.contrato || !formData.os || !formData.disciplina || !formData.objetoOs || checkedItems.length === 0) {
+    if (
+      !formData.avaliador ||
+      !formData.contrato ||
+      !formData.os ||
+      !formData.disciplina ||
+      !formData.objetoOs ||
+      !formData.origemAtividade ||
+      checkedItems.length === 0 ||
+      hasInvalidQuantities
+    ) {
       return null;
     }
 
@@ -335,7 +344,9 @@ export default function Preenchimento({
   const handleRegistrarProxima = () => {
     const record = buildRecord();
     if (!record) {
-      setErrorMessage('Preencha os campos obrigatorios e marque pelo menos um item verificado.');
+      setErrorMessage(hasInvalidQuantities
+        ? 'Informe C ou T maior que zero em cada item marcado.'
+        : 'Preencha os campos obrigatorios e marque pelo menos um item verificado.');
       return;
     }
     setErrorMessage('');
@@ -368,7 +379,7 @@ export default function Preenchimento({
   };
 
   const canRegisterCurrent = Boolean(
-    formData.avaliador && formData.contrato && formData.os && formData.disciplina && formData.objetoOs && formData.origemAtividade && checkedItems.length > 0
+    formData.avaliador && formData.contrato && formData.os && formData.disciplina && formData.objetoOs && formData.origemAtividade && checkedItems.length > 0 && !hasInvalidQuantities
   );
 
   return (

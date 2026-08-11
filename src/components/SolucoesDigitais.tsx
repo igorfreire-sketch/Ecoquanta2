@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, Globe, Indent, Link2, Lock, Outdent, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Globe, Indent, Link2, Lock, Outdent, Trash2, X } from 'lucide-react';
 import { isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
 import SearchableSelect from './SearchableSelect';
 import CampoDialog from './CampoDialog';
@@ -13,10 +13,10 @@ const DISCIPLINA_ALVO = 'bi - solucoes digitais';
 // Paleta fixa p/ pintar linha (mesmo espirito do CORES_FUNDO da Anotacoes, sem acoplar aos dois arquivos).
 const PALETA_CELULA: Array<[string, string]> = [
   ['Sem cor', ''],
-  ['Amarelo', '#FEF9C3'],
-  ['Verde', '#DCFCE7'],
   ['Azul', '#DBEAFE'],
   ['Vermelho', '#FEE2E2'],
+  ['Verde', '#DCFCE7'],
+  ['Amarelo', '#FEF9C3'],
   ['Laranja', '#FFE7D9'],
   ['Cinza', '#F3F4F6'],
 ];
@@ -66,22 +66,24 @@ export interface CronogramaDoc {
   // toda coluna a direita da que mudou. Chave = COLUNAS_FIXAS[].key pras fixas, ColunaCustom.id
   // pras customizadas.
   colWidths?: Record<string, number>;
+  // Ordem visual das colunas. Ausente em documentos antigos = ordem padrao abaixo.
+  colOrder?: string[];
 }
 
 // Colunas fixas na ordem de renderizacao, com a largura padrao aproximada de como cada uma
 // renderiza hoje (ID estreito, Atividade larga, Duracao/% estreitos etc.) — nao forca tudo pro
 // mesmo tamanho como o BANCO_COL_WIDTH da nota faz.
-const COLUNAS_FIXAS: Array<{ key: string; largura: number }> = [
-  { key: 'id', largura: 60 },
-  { key: 'nome', largura: 260 },
-  { key: 'predecessora', largura: 200 },
-  { key: 'inicio', largura: 130 },
-  { key: 'duracao', largura: 100 },
-  { key: 'fim', largura: 130 },
-  { key: 'responsavel', largura: 160 },
-  { key: 'percentual', largura: 90 },
-  { key: 'nota', largura: 150 },
-  { key: 'atividade', largura: 190 },
+const COLUNAS_FIXAS: Array<{ key: string; nome: string; largura: number }> = [
+  { key: 'id', nome: 'ID', largura: 60 },
+  { key: 'nome', nome: 'Atividade', largura: 260 },
+  { key: 'predecessora', nome: 'Predecessora', largura: 200 },
+  { key: 'inicio', nome: 'Início', largura: 130 },
+  { key: 'duracao', nome: 'Duração (dias)', largura: 100 },
+  { key: 'fim', nome: 'Fim', largura: 130 },
+  { key: 'responsavel', nome: 'Responsável', largura: 160 },
+  { key: 'percentual', nome: '% Concluído', largura: 90 },
+  { key: 'nota', nome: 'Nota', largura: 150 },
+  { key: 'atividade', nome: 'Atividade agenda', largura: 190 },
 ];
 const LARGURA_COLUNA_CUSTOM_PADRAO = 160;
 // "Detalhe" (a descricao longa que o seed do cronograma real usa) e tipicamente texto corrido -
@@ -116,6 +118,12 @@ function criarLinhaVazia(seq: number): CronoRow {
     parentId: '',
     custom: {},
   };
+}
+
+export function ordemColunasCronograma(doc: CronogramaDoc): string[] {
+  const todas = [...COLUNAS_FIXAS.map((col) => col.key), ...doc.colunasCustom.map((col) => col.id)];
+  const restantes = new Set(todas);
+  return [...(doc.colOrder || []).filter((key) => restantes.delete(key)), ...todas.filter((key) => restantes.has(key))];
 }
 
 // Ordem em arvore: agrupa por parentId preservando a ordem de insercao dentro de cada pai.
@@ -192,8 +200,8 @@ function nivelDe(row: CronoRow, mapa: Map<string, CronoRow>): number {
   return nivel;
 }
 
-// Codigo hierarquico do ID: raiz = posicao entre os irmaos ("1", "2"...), filho = codigo do pai +
-// posicao entre os irmaos ("1.1", "1.2"...), neto = "1.1.1" e assim por diante. Sem teto de nivel.
+// Codigo hierarquico estavel: cada segmento usa seq, que nunca muda ao inserir/reordenar irmaos.
+// Reparentear pode mudar o prefixo porque a linha passa a pertencer a outra hierarquia.
 export function calcularCodigos(rows: CronoRow[]): Map<string, string> {
   const porPai = new Map<string, CronoRow[]>();
   rows.forEach((r) => {
@@ -203,8 +211,9 @@ export function calcularCodigos(rows: CronoRow[]): Map<string, string> {
   });
   const codigos = new Map<string, string>();
   function visitar(paiId: string, prefixo: string) {
-    (porPai.get(paiId) || []).forEach((r, i) => {
-      const codigo = prefixo ? `${prefixo}.${i + 1}` : `${i + 1}`;
+    (porPai.get(paiId) || []).forEach((r) => {
+      const segmento = String(r.seq);
+      const codigo = prefixo ? `${prefixo}.${segmento}` : segmento;
       codigos.set(r.id, codigo);
       visitar(r.id, codigo);
     });
@@ -260,13 +269,13 @@ function MenuFlutuante({ x, y, onFechar, children }: { x: number; y: number; onF
   return createPortal(
     <>
       <div
-        className="fixed inset-0 z-40"
+        className="fixed inset-0 z-[210]"
         onClick={onFechar}
         onContextMenu={(e) => { e.preventDefault(); onFechar(); }}
       />
       <div
-        className="fixed z-50 rounded-lg border border-[#E5E7EB] bg-white p-1.5 shadow-lg"
-        style={{ top: Math.min(y, window.innerHeight - 120), left: Math.min(x, window.innerWidth - 180) }}
+        className="fixed z-[211] rounded-lg border border-[#E5E7EB] bg-white p-1.5 shadow-lg"
+        style={{ top: Math.max(8, Math.min(y, window.innerHeight - 300)), left: Math.max(8, Math.min(x, window.innerWidth - 180)) }}
       >
         {children}
       </div>
@@ -281,6 +290,7 @@ function MenuFlutuante({ x, y, onFechar, children }: { x: number; y: number; onF
 function AlcaColuna({ onMouseDown }: { onMouseDown: (event: ReactMouseEvent) => void }) {
   return (
     <div
+      draggable={false}
       onMouseDown={onMouseDown}
       className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-[#F05D28]"
     />
@@ -321,6 +331,10 @@ export default function SolucoesDigitais({
   // Nome de atividade com foco: enquanto nao focado, se tiver link markdown mostra so o rotulo
   // (igual celula da nota); focado, mostra o texto bruto pra poder editar.
   const [linhaNomeFocada, setLinhaNomeFocada] = useState<string | null>(null);
+  const [linhaArrastada, setLinhaArrastada] = useState<string | null>(null);
+  const [alvoArrastoLinha, setAlvoArrastoLinha] = useState<{ id: string; depois: boolean } | null>(null);
+  const alvoArrastoLinhaRef = useRef<{ id: string; depois: boolean } | null>(null);
+  const [colunaArrastada, setColunaArrastada] = useState<string | null>(null);
   // Arrasto de redimensionar coluna em andamento — mesma logica do banco da nota (Anotacoes.tsx
   // ~386-388/505-534), so pra coluna (aqui nao existe redimensionar linha).
   const redimensionarRef = useRef<{ key: string; inicioPx: number; tamanhoInicial: number } | null>(null);
@@ -389,6 +403,17 @@ export default function SolucoesDigitais({
   const linhasFiltradas = modoArvore ? ordemArvore(rows) : rows.filter((r) => r.responsavelEmail === filtroResponsavel);
   const mapaPorId = new Map<string, CronoRow>(rows.map((r) => [r.id, r]));
   const codigos = calcularCodigos(rows);
+  const colunasVisiveis = ordemColunasCronograma(doc).map((key) => {
+    const fixa = COLUNAS_FIXAS.find((col) => col.key === key);
+    if (fixa) return fixa;
+    const custom = doc.colunasCustom.find((col) => col.id === key)!;
+    return {
+      key,
+      nome: custom.nome,
+      largura: normalizar(custom.nome) === 'detalhe' ? LARGURA_COLUNA_DETALHE_PADRAO : LARGURA_COLUNA_CUSTOM_PADRAO,
+      custom: true,
+    };
+  });
 
   // Salvar e explicito (botao), nao autosave: toda edicao so muda o estado local (`atualizarDoc`)
   // e marca `sujo`; so "Salvar" grava no Firestore e limpa o `sujo`.
@@ -436,6 +461,16 @@ export default function SolucoesDigitais({
     atualizarDoc({ rows: [...rows, { ...criarLinhaVazia(proximoSeq), ordem: rows.length }] });
   }
 
+  function inserirLinhaPerto(id: string, posicao: 'above' | 'below') {
+    const indice = rows.findIndex((row) => row.id === id);
+    if (indice === -1) return;
+    const proximoSeq = rows.reduce((max, row) => Math.max(max, row.seq || 0), 0) + 1;
+    const nova = { ...criarLinhaVazia(proximoSeq), parentId: rows[indice].parentId || '' };
+    const destino = indice + (posicao === 'below' ? 1 : 0);
+    atualizarDoc({ rows: [...rows.slice(0, destino), nova, ...rows.slice(destino)] });
+    setMenuCor(null);
+  }
+
   function pintarLinha(id: string, cor: string) {
     atualizarLinha(id, { corLinha: cor || '' });
     setMenuCor(null);
@@ -448,7 +483,47 @@ export default function SolucoesDigitais({
   }
 
   function reordenar(novo: CronoRow[]) {
-    atualizarDoc({ rows: novo.map((r, i) => ({ ...r, ordem: i })) });
+    atualizarDoc({ rows: novo });
+  }
+
+  function soltarLinha(alvoId: string, depois: boolean) {
+    const origem = rows.find((row) => row.id === linhaArrastada);
+    const alvo = rows.find((row) => row.id === alvoId);
+    if (!origem || !alvo || origem.id === alvo.id || (origem.parentId || '') !== (alvo.parentId || '')) return;
+    const semOrigem = rows.filter((row) => row.id !== origem.id);
+    const indiceAlvo = semOrigem.findIndex((row) => row.id === alvo.id);
+    const destino = indiceAlvo + (depois ? 1 : 0);
+    reordenar([...semOrigem.slice(0, destino), origem, ...semOrigem.slice(destino)]);
+  }
+
+  function podeSoltarLinha(alvoId: string) {
+    const origem = rows.find((row) => row.id === linhaArrastada);
+    const alvo = rows.find((row) => row.id === alvoId);
+    return Boolean(origem && alvo && origem.id !== alvo.id && (origem.parentId || '') === (alvo.parentId || ''));
+  }
+
+  function marcarAlvoArrastoLinha(alvoId: string, event: ReactMouseEvent<HTMLTableRowElement>) {
+    if (!podeSoltarLinha(alvoId)) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const proximo = { id: alvoId, depois: event.clientY > rect.top + rect.height / 2 };
+    if (alvoArrastoLinhaRef.current?.id === proximo.id && alvoArrastoLinhaRef.current.depois === proximo.depois) return;
+    alvoArrastoLinhaRef.current = proximo;
+    setAlvoArrastoLinha(proximo);
+  }
+
+  function abrirMenuLinha(id: string, event: ReactMouseEvent, comHiperlink: boolean) {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenuCor({ id, x: event.clientX, y: event.clientY, comHiperlink });
+  }
+
+  function soltarColuna(alvo: string, depois: boolean) {
+    if (!colunaArrastada || colunaArrastada === alvo) return;
+    const semOrigem = ordemColunasCronograma(doc).filter((key) => key !== colunaArrastada);
+    const indiceAlvo = semOrigem.indexOf(alvo);
+    const destino = indiceAlvo + (depois ? 1 : 0);
+    atualizarDoc({ colOrder: [...semOrigem.slice(0, destino), colunaArrastada, ...semOrigem.slice(destino)] });
   }
 
   // Direita: vira filha do irmao imediatamente anterior NO MESMO NIVEL atual — assim varias
@@ -594,6 +669,7 @@ export default function SolucoesDigitais({
     setMenuColuna(null);
     atualizarDoc({
       colunasCustom: doc.colunasCustom.filter((c) => c.id !== id),
+      colOrder: doc.colOrder?.filter((key) => key !== id),
       rows: rows.map((r) => {
         if (!r.custom || !(id in r.custom)) return r;
         const custom = { ...r.custom };
@@ -607,6 +683,147 @@ export default function SolucoesDigitais({
     const row = rows.find((r) => r.id === rowId);
     if (!row) return;
     atualizarLinha(rowId, { custom: { ...(row.custom || {}), [colId]: valor } });
+  }
+
+  function renderCelula(row: CronoRow, key: string, nivel: number, temFilhos: boolean) {
+    switch (key) {
+      case 'id':
+        return <td key={key} draggable onDragStart={(e) => { if (e.buttons && e.buttons !== 1) { e.preventDefault(); return; } setLinhaArrastada(row.id); e.dataTransfer.setData('text/plain', row.id); e.dataTransfer.effectAllowed = 'move'; }} className={`${linhaArrastada === row.id ? 'cursor-grabbing' : 'cursor-default'} px-3 py-1 text-gray-500`} title="Clique e arraste para reordenar entre linhas do mesmo nível">#{codigos.get(row.id)}</td>;
+      case 'nome': {
+        const match = linhaNomeFocada !== row.id ? REGEX_LINK_MARKDOWN.exec(row.nome) : null;
+        return (
+          <td
+            key={key}
+            className="px-3 py-1"
+            onContextMenu={(e) => abrirMenuLinha(row.id, e, true)}
+            title="Botão direito para editar a linha ou hiperlink"
+          >
+            <div className="flex items-center gap-1" style={{ paddingLeft: nivel * 20 }}>
+              {modoArvore && (
+                <button
+                  type="button"
+                  onClick={() => alternarColapso(row.id)}
+                  className={`shrink-0 text-gray-400 hover:text-[#F05D28] ${temFilhos ? '' : 'invisible'}`}
+                  title={row.colapsada ? 'Expandir' : 'Retrair'}
+                >
+                  {row.colapsada ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                </button>
+              )}
+              {match ? (
+                <div
+                  onClick={() => setLinhaNomeFocada(row.id)}
+                  className="w-full flex-1 cursor-text truncate rounded border border-[#E5E7EB] px-2 py-1"
+                >
+                  {row.nome.slice(0, match.index)}
+                  <span className="text-[#2563EB] underline">{match[1]}</span>
+                  {row.nome.slice(match.index + match[0].length)}
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={row.nome}
+                  onChange={(e) => atualizarLinha(row.id, { nome: e.target.value })}
+                  onFocus={() => setLinhaNomeFocada(row.id)}
+                  onBlur={() => setLinhaNomeFocada((prev) => (prev === row.id ? null : prev))}
+                  className="w-full flex-1 border border-[#E5E7EB] rounded px-2 py-1"
+                  placeholder="Nome da atividade"
+                />
+              )}
+              {extrairLinkDaCelula(row.nome) && (
+                <button
+                  type="button"
+                  title="Abrir link"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => window.open(extrairLinkDaCelula(row.nome)!, '_blank', 'noopener')}
+                  className="shrink-0 rounded p-0.5 text-[#2563EB] hover:bg-[#DBEAFE]"
+                >
+                  <Link2 size={12} />
+                </button>
+              )}
+              {modoArvore && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => moverEsquerda(row.id)}
+                    disabled={!row.parentId}
+                    className="shrink-0 text-gray-400 hover:text-[#F05D28] disabled:opacity-30"
+                    title="Promover (shift+tab)"
+                  >
+                    <Outdent size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moverDireita(row.id)}
+                    disabled={!irmaoAnterior(rows, row)}
+                    className="shrink-0 text-gray-400 hover:text-[#F05D28] disabled:opacity-30"
+                    title="Indentar (tab)"
+                  >
+                    <Indent size={14} />
+                  </button>
+                </>
+              )}
+            </div>
+          </td>
+        );
+      }
+      case 'predecessora':
+        return (
+          <td key={key} className="px-3 py-1">
+            <select
+              value={row.predecessoraId}
+              onChange={(e) => onEditarPredecessora(row.id, e.target.value)}
+              className="w-full border border-[#E5E7EB] rounded px-2 py-1"
+            >
+              <option value="">Nenhuma</option>
+              {rows.filter((r) => r.id !== row.id).map((r) => (
+                <option key={r.id} value={r.id}>#{codigos.get(r.id)} - {r.nome || '(sem nome)'}</option>
+              ))}
+            </select>
+          </td>
+        );
+      case 'inicio':
+        return <td key={key} className="px-3 py-1"><input type="date" value={row.dataInicio} onChange={(e) => onEditarInicio(row.id, e.target.value)} className="w-full border border-[#E5E7EB] rounded px-2 py-1" /></td>;
+      case 'duracao':
+        return <td key={key} className="px-3 py-1"><input type="number" value={row.duracaoDias ?? ''} onChange={(e) => onEditarDuracao(row.id, e.target.value)} className="w-24 border border-[#E5E7EB] rounded px-2 py-1" /></td>;
+      case 'fim':
+        return <td key={key} className="px-3 py-1"><input type="date" value={row.dataFim} onChange={(e) => onEditarFim(row.id, e.target.value)} className="w-full border border-[#E5E7EB] rounded px-2 py-1" /></td>;
+      case 'responsavel':
+        return (
+          <td key={key} className="px-3 py-1">
+            <select value={row.responsavelEmail} onChange={(e) => atualizarLinha(row.id, { responsavelEmail: e.target.value })} className="w-full border border-[#E5E7EB] rounded px-2 py-1">
+              <option value="">Sem responsável</option>
+              {responsaveis.map((u) => <option key={u.email} value={u.email}>{u.nome}</option>)}
+            </select>
+          </td>
+        );
+      case 'percentual':
+        return <td key={key} className="px-3 py-1"><input type="number" min={0} max={100} value={row.percentualConcluido ?? ''} onChange={(e) => atualizarLinha(row.id, { percentualConcluido: e.target.value === '' ? null : Number(e.target.value) })} className="w-20 border border-[#E5E7EB] rounded px-2 py-1" placeholder="%" /></td>;
+      case 'nota':
+        return (
+          <td key={key} className="px-3 py-1">
+            <SearchableSelect value={row.noteId} onChange={(e) => onEscolherNota(row.id, e.target.value)} className="w-full border border-[#E5E7EB] rounded px-2 py-1 bg-white" searchPlaceholder="Sem nota">
+              <option value="">Sem nota</option>
+              {onSaveNote && <option value={NOVA_NOTA_VALOR}>+ Criar nova nota</option>}
+              {notes.map((n) => <option key={n.id} value={n.id}>{n.titulo || '(sem título)'}</option>)}
+            </SearchableSelect>
+          </td>
+        );
+      case 'atividade':
+        return (
+          <td key={key} className="px-3 py-1">
+            <SearchableSelect value={row.atividadeId || ''} onChange={(e) => atualizarLinha(row.id, { atividadeId: e.target.value })} className="w-full border border-[#E5E7EB] rounded px-2 py-1 bg-white" searchPlaceholder="Sem vínculo">
+              <option value="">Sem vínculo</option>
+              {activities.map((a) => <option key={a.id} value={a.id}>{a.osCodigo} - {a.atividade || a.itemNome || '(sem nome)'}</option>)}
+            </SearchableSelect>
+          </td>
+        );
+      default:
+        return (
+          <td key={key} className="px-3 py-1">
+            <input type="text" value={row.custom?.[key] || ''} onChange={(e) => editarCelulaCustom(row.id, key, e.target.value)} className="w-full border border-[#E5E7EB] rounded px-2 py-1" />
+          </td>
+        );
+    }
   }
 
   const autorInfo = [
@@ -700,68 +917,30 @@ export default function SolucoesDigitais({
               {/* table-fixed + colgroup: sem isso o navegador ignora as larguras arrastadas (mesmo aviso do banco da nota). */}
               <table className="min-w-full table-fixed text-sm text-[#2D2D2D]">
                 <colgroup>
-                  {COLUNAS_FIXAS.map((col) => (
-                    <col key={col.key} style={{ width: `${larguraColuna(col.key, col.largura)}px` }} />
-                  ))}
-                  {doc.colunasCustom.map((col) => (
-                    <col
-                      key={col.id}
-                      style={{ width: `${larguraColuna(col.id, normalizar(col.nome) === 'detalhe' ? LARGURA_COLUNA_DETALHE_PADRAO : LARGURA_COLUNA_CUSTOM_PADRAO)}px` }}
-                    />
-                  ))}
+                  {colunasVisiveis.map((col) => <col key={col.key} style={{ width: `${larguraColuna(col.key, col.largura)}px` }} />)}
                   <col style={{ width: '40px' }} />
                 </colgroup>
                 <thead className="bg-gray-50 border-b border-[#E5E7EB]">
                   <tr>
-                    <th className="relative px-3 py-2 text-left font-medium">
-                      ID
-                      <AlcaColuna onMouseDown={iniciarRedimensionar('id', larguraColuna('id', 60))} />
-                    </th>
-                    <th className="relative px-3 py-2 text-left font-medium">
-                      Atividade
-                      <AlcaColuna onMouseDown={iniciarRedimensionar('nome', larguraColuna('nome', 260))} />
-                    </th>
-                    <th className="relative px-3 py-2 text-left font-medium">
-                      Predecessora
-                      <AlcaColuna onMouseDown={iniciarRedimensionar('predecessora', larguraColuna('predecessora', 200))} />
-                    </th>
-                    <th className="relative px-3 py-2 text-left font-medium">
-                      Início
-                      <AlcaColuna onMouseDown={iniciarRedimensionar('inicio', larguraColuna('inicio', 130))} />
-                    </th>
-                    <th className="relative px-3 py-2 text-left font-medium">
-                      Duração (dias)
-                      <AlcaColuna onMouseDown={iniciarRedimensionar('duracao', larguraColuna('duracao', 100))} />
-                    </th>
-                    <th className="relative px-3 py-2 text-left font-medium">
-                      Fim
-                      <AlcaColuna onMouseDown={iniciarRedimensionar('fim', larguraColuna('fim', 130))} />
-                    </th>
-                    <th className="relative px-3 py-2 text-left font-medium">
-                      Responsável
-                      <AlcaColuna onMouseDown={iniciarRedimensionar('responsavel', larguraColuna('responsavel', 160))} />
-                    </th>
-                    <th className="relative px-3 py-2 text-left font-medium">
-                      % Concluído
-                      <AlcaColuna onMouseDown={iniciarRedimensionar('percentual', larguraColuna('percentual', 90))} />
-                    </th>
-                    <th className="relative px-3 py-2 text-left font-medium">
-                      Nota
-                      <AlcaColuna onMouseDown={iniciarRedimensionar('nota', larguraColuna('nota', 150))} />
-                    </th>
-                    <th className="relative px-3 py-2 text-left font-medium">
-                      Atividade agenda
-                      <AlcaColuna onMouseDown={iniciarRedimensionar('atividade', larguraColuna('atividade', 190))} />
-                    </th>
-                    {doc.colunasCustom.map((col) => (
+                    {colunasVisiveis.map((col) => (
                       <th
-                        key={col.id}
-                        className="relative px-3 py-2 text-left font-medium cursor-context-menu"
-                        onContextMenu={(e) => { e.preventDefault(); setMenuColuna({ id: col.id, x: e.clientX, y: e.clientY }); }}
-                        title="Botão direito para renomear/remover"
+                        key={col.key}
+                        draggable
+                        onDragStart={(e) => { setColunaArrastada(col.key); e.dataTransfer.setData('text/plain', col.key); e.dataTransfer.effectAllowed = 'move'; }}
+                        onDragOver={(e) => { if (colunaArrastada) e.preventDefault(); }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          soltarColuna(col.key, e.clientX > rect.left + rect.width / 2);
+                          setColunaArrastada(null);
+                        }}
+                        onDragEnd={() => setColunaArrastada(null)}
+                        className="relative cursor-move px-3 py-2 text-left font-medium"
+                        onContextMenu={'custom' in col ? (e) => { e.preventDefault(); setMenuColuna({ id: col.key, x: e.clientX, y: e.clientY }); } : undefined}
+                        title={'custom' in col ? 'Arraste para reordenar; botão direito para renomear/remover' : 'Arraste para reordenar'}
                       >
                         {col.nome}
-                        <AlcaColuna onMouseDown={iniciarRedimensionar(col.id, larguraColuna(col.id, normalizar(col.nome) === 'detalhe' ? LARGURA_COLUNA_DETALHE_PADRAO : LARGURA_COLUNA_CUSTOM_PADRAO))} />
+                        <AlcaColuna onMouseDown={iniciarRedimensionar(col.key, larguraColuna(col.key, col.largura))} />
                       </th>
                     ))}
                     <th className="px-3 py-2 text-left font-medium"></th>
@@ -774,197 +953,24 @@ export default function SolucoesDigitais({
                     return (
                     <tr
                       key={row.id}
-                      className="border-b border-[#E5E7EB] last:border-b-0"
-                      style={{ backgroundColor: row.corLinha }}
-                      onContextMenu={(e) => { e.preventDefault(); setMenuCor({ id: row.id, x: e.clientX, y: e.clientY, comHiperlink: false }); }}
-                      title="Botão direito para pintar a linha"
+                      onMouseDownCapture={(e) => { if (e.button === 2) { e.preventDefault(); e.stopPropagation(); } }}
+                      onDragOver={(e) => marcarAlvoArrastoLinha(row.id, e)}
+                      onDrop={(e) => {
+                        if (!podeSoltarLinha(row.id)) return;
+                        e.preventDefault();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        soltarLinha(row.id, e.clientY > rect.top + rect.height / 2);
+                        setLinhaArrastada(null);
+                        alvoArrastoLinhaRef.current = null;
+                        setAlvoArrastoLinha(null);
+                      }}
+                      onDragEnd={() => { setLinhaArrastada(null); alvoArrastoLinhaRef.current = null; setAlvoArrastoLinha(null); }}
+                      className={`border-b border-[#E5E7EB] last:border-b-0 ${linhaArrastada === row.id ? 'opacity-50' : ''} ${linhaArrastada && !podeSoltarLinha(row.id) ? 'cursor-not-allowed' : ''}`}
+                      style={{ backgroundColor: row.corLinha, boxShadow: alvoArrastoLinha?.id === row.id ? `inset 0 ${alvoArrastoLinha.depois ? '-4px' : '4px'} #F05D28` : undefined }}
+                      onContextMenuCapture={(e) => { e.preventDefault(); setMenuCor({ id: row.id, x: e.clientX, y: e.clientY, comHiperlink: false }); }}
+                      title="Arraste para reordenar; botão direito para editar a linha"
                     >
-                      <td className="px-3 py-1 text-gray-500">#{codigos.get(row.id)}</td>
-                      <td
-                        className="px-3 py-1"
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setMenuCor({ id: row.id, x: e.clientX, y: e.clientY, comHiperlink: true });
-                        }}
-                        title="Botão direito para hiperlink ou cor"
-                      >
-                        <div className="flex items-center gap-1" style={{ paddingLeft: nivel * 20 }}>
-                          {modoArvore && (
-                            <button
-                              type="button"
-                              onClick={() => alternarColapso(row.id)}
-                              className={`shrink-0 text-gray-400 hover:text-[#F05D28] ${temFilhos ? '' : 'invisible'}`}
-                              title={row.colapsada ? 'Expandir' : 'Retrair'}
-                            >
-                              {row.colapsada ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                            </button>
-                          )}
-                          {(() => {
-                            // Diferente da celula de nota (que costuma SER so o link): o nome da
-                            // atividade e o conteudo principal da linha, o link e so um extra nele.
-                            // Sem foco, troca apenas o trecho "[rotulo](url)" pelo rotulo azul
-                            // sublinhado, mantendo o texto ao redor visivel — nunca esconde o nome
-                            // inteiro atras do rotulo do link (URL solta sem colchetes fica como
-                            // esta hoje, sem split, pra nao complicar o parse por pouco ganho).
-                            const match = linhaNomeFocada !== row.id ? REGEX_LINK_MARKDOWN.exec(row.nome) : null;
-                            if (match) {
-                              const antes = row.nome.slice(0, match.index);
-                              const depois = row.nome.slice(match.index + match[0].length);
-                              return (
-                                <div
-                                  onClick={() => setLinhaNomeFocada(row.id)}
-                                  className="w-full flex-1 cursor-text truncate rounded border border-[#E5E7EB] px-2 py-1"
-                                >
-                                  {antes}
-                                  <span className="text-[#2563EB] underline">{match[1]}</span>
-                                  {depois}
-                                </div>
-                              );
-                            }
-                            return (
-                              <input
-                                type="text"
-                                value={row.nome}
-                                onChange={(e) => atualizarLinha(row.id, { nome: e.target.value })}
-                                onFocus={() => setLinhaNomeFocada(row.id)}
-                                onBlur={() => setLinhaNomeFocada((prev) => (prev === row.id ? null : prev))}
-                                className="w-full flex-1 border border-[#E5E7EB] rounded px-2 py-1"
-                                placeholder="Nome da atividade"
-                              />
-                            );
-                          })()}
-                          {extrairLinkDaCelula(row.nome) && (
-                            <button
-                              type="button"
-                              title="Abrir link"
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={() => window.open(extrairLinkDaCelula(row.nome)!, '_blank', 'noopener')}
-                              className="shrink-0 rounded p-0.5 text-[#2563EB] hover:bg-[#DBEAFE]"
-                            >
-                              <Link2 size={12} />
-                            </button>
-                          )}
-                          {modoArvore && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => moverEsquerda(row.id)}
-                                disabled={!row.parentId}
-                                className="shrink-0 text-gray-400 hover:text-[#F05D28] disabled:opacity-30"
-                                title="Promover (shift+tab)"
-                              >
-                                <Outdent size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => moverDireita(row.id)}
-                                disabled={!irmaoAnterior(rows, row)}
-                                className="shrink-0 text-gray-400 hover:text-[#F05D28] disabled:opacity-30"
-                                title="Indentar (tab)"
-                              >
-                                <Indent size={14} />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-3 py-1">
-                        <select
-                          value={row.predecessoraId}
-                          onChange={(e) => onEditarPredecessora(row.id, e.target.value)}
-                          className="w-full border border-[#E5E7EB] rounded px-2 py-1"
-                        >
-                          <option value="">Nenhuma</option>
-                          {rows.filter((r) => r.id !== row.id).map((r) => (
-                            <option key={r.id} value={r.id}>#{codigos.get(r.id)} - {r.nome || '(sem nome)'}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-3 py-1">
-                        <input
-                          type="date"
-                          value={row.dataInicio}
-                          onChange={(e) => onEditarInicio(row.id, e.target.value)}
-                          className="w-full border border-[#E5E7EB] rounded px-2 py-1"
-                        />
-                      </td>
-                      <td className="px-3 py-1">
-                        <input
-                          type="number"
-                          value={row.duracaoDias ?? ''}
-                          onChange={(e) => onEditarDuracao(row.id, e.target.value)}
-                          className="w-24 border border-[#E5E7EB] rounded px-2 py-1"
-                        />
-                      </td>
-                      <td className="px-3 py-1">
-                        <input
-                          type="date"
-                          value={row.dataFim}
-                          onChange={(e) => onEditarFim(row.id, e.target.value)}
-                          className="w-full border border-[#E5E7EB] rounded px-2 py-1"
-                        />
-                      </td>
-                      <td className="px-3 py-1">
-                        <select
-                          value={row.responsavelEmail}
-                          onChange={(e) => atualizarLinha(row.id, { responsavelEmail: e.target.value })}
-                          className="w-full border border-[#E5E7EB] rounded px-2 py-1"
-                        >
-                          <option value="">Sem responsável</option>
-                          {responsaveis.map((u) => (
-                            <option key={u.email} value={u.email}>{u.nome}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-3 py-1">
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={row.percentualConcluido ?? ''}
-                          onChange={(e) => atualizarLinha(row.id, { percentualConcluido: e.target.value === '' ? null : Number(e.target.value) })}
-                          className="w-20 border border-[#E5E7EB] rounded px-2 py-1"
-                          placeholder="%"
-                        />
-                      </td>
-                      <td className="px-3 py-1">
-                        <SearchableSelect
-                          value={row.noteId}
-                          onChange={(e) => onEscolherNota(row.id, e.target.value)}
-                          className="w-full border border-[#E5E7EB] rounded px-2 py-1 bg-white"
-                          searchPlaceholder="Sem nota"
-                        >
-                          <option value="">Sem nota</option>
-                          {onSaveNote && <option value={NOVA_NOTA_VALOR}>+ Criar nova nota</option>}
-                          {notes.map((n) => (
-                            <option key={n.id} value={n.id}>{n.titulo || '(sem título)'}</option>
-                          ))}
-                        </SearchableSelect>
-                      </td>
-                      <td className="px-3 py-1">
-                        <SearchableSelect
-                          value={row.atividadeId || ''}
-                          onChange={(e) => atualizarLinha(row.id, { atividadeId: e.target.value })}
-                          className="w-full border border-[#E5E7EB] rounded px-2 py-1 bg-white"
-                          searchPlaceholder="Sem vínculo"
-                        >
-                          <option value="">Sem vínculo</option>
-                          {activities.map((a) => (
-                            <option key={a.id} value={a.id}>{a.osCodigo} - {a.atividade || a.itemNome || '(sem nome)'}</option>
-                          ))}
-                        </SearchableSelect>
-                      </td>
-                      {doc.colunasCustom.map((col) => (
-                        <td key={col.id} className="px-3 py-1">
-                          <input
-                            type="text"
-                            value={row.custom?.[col.id] || ''}
-                            onChange={(e) => editarCelulaCustom(row.id, col.id, e.target.value)}
-                            className="w-full border border-[#E5E7EB] rounded px-2 py-1"
-                          />
-                        </td>
-                      ))}
+                      {colunasVisiveis.map((col) => renderCelula(row, col.key, nivel, temFilhos))}
                       <td className="px-3 py-1 text-center">
                         <button
                           onClick={() => removerLinha(row.id)}
@@ -1004,6 +1010,30 @@ export default function SolucoesDigitais({
       {menuCor && (
         <MenuFlutuante x={menuCor.x} y={menuCor.y} onFechar={() => setMenuCor(null)}>
           <div className="flex w-40 flex-col">
+            <button
+              type="button"
+              onClick={() => inserirLinhaPerto(menuCor.id, 'above')}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+            >
+              <ArrowUp size={14} />
+              Inserir linha acima
+            </button>
+            <button
+              type="button"
+              onClick={() => inserirLinhaPerto(menuCor.id, 'below')}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+            >
+              <ArrowDown size={14} />
+              Inserir linha abaixo
+            </button>
+            <button
+              type="button"
+              onClick={() => { removerLinha(menuCor.id); setMenuCor(null); }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#DC2626] hover:bg-[#FEF2F2]"
+            >
+              <Trash2 size={14} />
+              Excluir linha
+            </button>
             {menuCor.comHiperlink && (
               <button
                 type="button"
@@ -1014,17 +1044,20 @@ export default function SolucoesDigitais({
                 Hiperlink
               </button>
             )}
-            <div className={`flex flex-wrap gap-1 px-1 py-1.5 ${menuCor.comHiperlink ? 'border-t border-[#F1F5F9]' : ''}`}>
-              {PALETA_CELULA.map(([label, valor]) => (
-                <button
-                  key={label}
-                  type="button"
-                  title={label}
-                  onClick={() => pintarLinha(menuCor.id, valor)}
-                  className="h-6 w-6 rounded-full border border-[#D1D5DB]"
-                  style={{ backgroundColor: valor || '#fff' }}
-                />
-              ))}
+            <div className="border-t border-[#F1F5F9] px-3 py-2">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">Cor da linha</p>
+              <div className="flex flex-wrap gap-1">
+                {PALETA_CELULA.map(([label, valor]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    title={label}
+                    onClick={() => pintarLinha(menuCor.id, valor)}
+                    className={`h-6 w-6 rounded-md border border-[#E5E7EB] hover:ring-2 hover:ring-[#F05D28] ${rows.find((row) => row.id === menuCor.id)?.corLinha === valor ? 'ring-2 ring-[#F05D28]' : ''}`}
+                    style={{ backgroundColor: valor || '#FFFFFF' }}
+                  />
+                ))}
+              </div>
             </div>
           </div>
         </MenuFlutuante>

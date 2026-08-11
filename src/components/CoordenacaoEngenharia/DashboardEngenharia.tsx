@@ -670,19 +670,22 @@ function FilterField({
   value,
   onChange,
   children,
+  disabled = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   children: React.ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <div className="space-y-1.5">
       <label className="text-[10px] font-bold text-[#757575] uppercase tracking-widest">{label}</label>
       <SearchableSelect
-        className="w-full h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[12px] font-semibold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer"
+        className="w-full h-10 px-3 bg-white border border-[#E5E7EB] rounded-xl text-[12px] font-semibold text-[#2D2D2D] focus:border-[#F05D28] focus:ring-1 focus:ring-[#F05D28] transition-colors outline-none cursor-pointer disabled:cursor-not-allowed disabled:bg-[#F8FAFC] disabled:text-[#94A3B8]"
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
       >
         {children}
       </SearchableSelect>
@@ -691,7 +694,8 @@ function FilterField({
 }
 
 export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode = 'dashboard', activeContractCode }: DashboardEngenhariaProps) {
-  const filtroContratoGlobal = filtrosAtivos?.contrato || 'Todos';
+  const contratoBloqueado = String(activeContractCode || '').trim();
+  const filtroContratoGlobal = contratoBloqueado || filtrosAtivos?.contrato || 'Todos';
   const filtroOSGlobal = filtrosAtivos?.os || 'Todos';
   const filtroDisciplina = filtrosAtivos?.disciplina || 'Todos';
   const registro = React.useMemo(() => getUnifiedRegistroData(preloadedData), [preloadedData]);
@@ -956,6 +960,7 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   const maxPrazo = React.useMemo(() => Math.max(...tableData.map(t => Math.abs(t.prazoAtual)), 1), [tableData]);
 
   const updateFiltroGlobal = (key: keyof GlobalDashboardFilters, value: string) => {
+    if (key === 'contrato' && contratoBloqueado) return;
     setFiltrosGlobais((prev) => ({
       ...prev,
       [key]: value,
@@ -991,9 +996,9 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
     <div className="w-full space-y-6 sm:space-y-8 font-['Montserrat'] relative">
       <section className="rounded-2xl bg-white px-4 py-4 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] sm:px-5">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <FilterField label="Contrato" value={filtrosGlobais.contrato} onChange={(value) => updateFiltroGlobal('contrato', value)}>
-            <option value="Todos">Todos os contratos</option>
-            {contractOptions.map((item) => (
+          <FilterField label="Contrato" value={filtrosGlobais.contrato} onChange={(value) => updateFiltroGlobal('contrato', value)} disabled={Boolean(contratoBloqueado)}>
+            {!contratoBloqueado && <option value="Todos">Todos os contratos</option>}
+            {contractOptions.filter((item) => !contratoBloqueado || item.codigo === contratoBloqueado).map((item) => (
               <option key={item.codigo} value={item.codigo}>{item.nome || item.codigo}</option>
             ))}
           </FilterField>

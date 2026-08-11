@@ -1,11 +1,61 @@
 rules_version = '2';
 
+// Fonte: docs/firestore-schema.md secao 6.
+// stlCatalog = catalogo publico, leitura livre, escrita so via Admin SDK (Functions/console).
+// orders / licenseTokens / cattoyGenerations / calculatorExports = zero acesso client-side.
+// Toda leitura/escrita nessas 4 collections passa por Cloud Function com Admin SDK,
+// que ignora estas regras (Admin SDK nao e sujeito ao Firestore Security Rules).
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Pivot (2026-08-08): login virou Google Sign-In (sem senha), e sem Cloud
+    // Functions no plano Spark nao ha' forma server-side de setar o primeiro
+    // admin (era o problema do custom claim antes, continua sendo o problema
+    // do doc siteUsers -- alguem precisa ja' ser admin pra promover o
+    // primeiro). Solucao: o e-mail do dono e' admin por si so', hardcoded
+    // aqui (mesma allowlist de src/constants/adminAllowlist.ts, mas em rules
+    // nao da' pra importar TS, entao o valor e' duplicado -- se o e-mail do
+    // dono mudar, atualizar nos dois lugares). `token.email` vem do Google
+    // na grafia da conta; `.lower()` normaliza pra bater com a constante em
+    // minusculo. A clausula do doc siteUsers continua valendo em paralelo
+    // (segunda opcao do ||) pra promover OUTRAS pessoas depois, sem precisar
+    // hardcodar mais e-mails aqui -- o dono vira admin via siteUsers e usa o
+    // painel (UsersTab) pra promover.
+    // Ordem importa: o `||` do Firestore rules faz short-circuit, entao o
+    // check de e-mail (barato, so' le o token) roda ANTES do get() no doc.
+    // Pra uma conta nova, o doc siteUsers/{uid} ainda nao existe -- se o
+    // get() rodasse primeiro e a clausula de e-mail nao existisse, a regra
+    // quebraria (leitura de doc inexistente currently resolve pra
+    // `exists() == false`, mas `.data.isAdmin` em cima disso da' erro).
+    // Com o e-mail primeiro, contas novas do dono nunca dependem do get().
+    // Ban (2026-08-08, pedido do Igor): siteUsers/{uid}.banido bloqueia escrita
+    // em TUDO que passa por isAdmin(), nao so' cosmetico no front. O dono
+    // (e-mail hardcoded acima) nunca cai nesse check -- ele nunca pode ficar
+    // banido nem por si mesmo (UsersTab.tsx ja impede no client) nem por erro,
+    // porque a clausula de e-mail do isAdmin() de baixo faz curto-circuito antes
+    // de qualquer get() de banido.
+    // `.get('banido', false)` tolera docs antigos/recem-criados sem o campo
+    // (get() de campo ausente da erro e nega a regra inteira -- so' Igor era
+    // imune por causa do curto-circuito de e-mail em isAdmin() abaixo).
+    function isBanned() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/siteUsers/$(request.auth.uid)).data.get('banido', false) == true;
+    }
+
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.token.email.lower() == 'igor3dprint@gmail.com' ||
+        (get(/databases/$(database)/documents/siteUsers/$(request.auth.uid)).data.isAdmin == true && !isBanned())
+      );
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
 
+    // App operacional (cronograma/atividades/admin) -- collections antigas do
+    // painel interno, perdidas no rewrite de 2026-08-08 que trouxe isAdmin()/
+    // siteUsers. Restauradas com a mesma isSignedIn() de antes.
     match /appData/{document} {
       allow read, write, delete: if isSignedIn();
     }
@@ -77,6 +127,131 @@ service cloud.firestore {
     match /emergencyReadMarkers/{document} {
       allow read, create, update: if isSignedIn();
       allow delete: if false;
+    }
+
+    match /stlCatalog/{stlId} {
+      allow read: if true;
+      // Wave 5b (docs/admin-access-control.md §5): escrita liberada pro painel
+      // admin via doc siteUsers.isAdmin, nunca so' "autenticado" (A01 Broken Access Control).
+      allow write: if isAdmin();
+    }
+
+    match /gambiarras/{projectId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // siteUsers/{uid}: perfil minimo (email, isAdmin, createdAt) que substitui o
+    // custom claim. Regra de seguranca critica desta secao: um usuario logado
+    // pode ler/criar/atualizar SO' o proprio doc, e nunca pode setar isAdmin=true
+    // nele mesmo -- nem no create (obrigado a mandar isAdmin==false) nem no
+    // update (obrigado a mandar o MESMO valor que ja' esta' salvo, comparando
+    // request.resource.data.isAdmin == resource.data.isAdmin). Um usuario nao-admin
+    // que tenta escrever isAdmin:true no proprio doc cai fora das duas condicoes:
+    // no create, isAdmin teria que ser exatamente false; no update, o valor
+    // enviado teria que ser IGUAL ao que ja' esta' no banco (que e' false), entao
+    // qualquer valor diferente (true) reprova a regra. A unica forma de virar
+    // admin e' um admin existente escrever isAdmin:true no doc de outra pessoa
+    // (clausula isAdmin() do write), o que exige que o proprio doc do admin ja'
+    // tenha isAdmin==true -- nao ha' bootstrap client-side possivel, so' manual
+    // no Console (mesmo padrao do custom claim antigo, agora aplicado ao doc).
+    //
+    // Ban (2026-08-08): mesmo raciocinio se aplica a `banido`. No self-update
+    // (request.auth.uid == uid), `request.resource.data.banido == resource.data.banido`
+    // exige o MESMO valor ja' salvo -- uma conta banida nao consegue se
+    // desbanir sozinha (settaria banido:false, diferente do true salvo, reprova),
+    // e uma conta normal nao consegue se banir/desbanir por conta propria fora
+    // do fluxo do admin. So' um admin (clausula isAdmin() do update, que ja'
+    // exclui admin banido -- ver isAdmin() acima) pode escrever `banido` no doc
+    // de outra pessoa. UsersTab.tsx tambem trava client-side o dono banir/excluir
+    // a propria conta, mas a regra abaixo NAO tem essa trava especifica pro
+    // dono (nenhum admin, incluindo o dono, esta impedido pela regra de banir
+    // OUTRA conta -- o que a regra impede e' auto-banimento/auto-desbanimento).
+    match /siteUsers/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow create: if request.auth != null && request.auth.uid == uid &&
+        request.resource.data.isAdmin == false;
+      allow update: if request.auth != null && (
+        (request.auth.uid == uid &&
+          request.resource.data.isAdmin == resource.data.isAdmin &&
+          request.resource.data.get('banido', false) == resource.data.get('banido', false)) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Media kit publico (pagina separada, agente paralelo) -- singleton em
+    // mediaKit/main, mesmo padrao read-livre/write-admin das outras collections.
+    match /mediaKit/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Todo conteudo de pagina publica que nao e' STL nem anuncio -- substitui
+    // as categorias assinatura/ferramentas/cursos/ebooks/indicados/loja/
+    // parceiros/tutoriais do antigo cache do Apps Script (code.gs). Um doc por
+    // item, campo `category` pra filtrar (src/services/pageDataService.ts).
+    // `indicados` absorveu a antiga collection `testeiEAprovoItems` (mesmo
+    // shape de PageItem) -- consolidado aqui, nao existe mais collection separada.
+    match /pageContent/{itemId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Anuncios (promo/interstitial/banner) -- mesmo shape de campo do AdItem
+    // existente (src/services/googleScriptService.ts): title, description, url,
+    // image, active, showForFree, type, order. `type == 'banner'` cobre o que
+    // antes era a categoria separada `banner` do cache do Apps Script --
+    // pageDataService.getCourseBannerAd() le desta mesma collection.
+    match /ads/{adId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Testei e Aprovo -- collection propria (2026-08-08), separada de
+    // `pageContent`/categoria `indicados` (o comentario acima em `pageContent`
+    // ficou desatualizado, mantido so' pra nao mexer fora do escopo). Mesmo
+    // shape de campo de `ads` (nome, imagemUrl, mercadoLivre, shopee,
+    // aliexpress, ativo, ordem) e mesmo padrao read-livre/write-admin.
+    match /testeiEAprovo/{itemId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Flags globais do site (interstitialAdCategories, salesBlocked,
+    // premiumMonthlyPrice, commercialLicenseButtonPrice) -- singleton em
+    // siteSettings/main. pageDataService.getSiteSettings() cai pro default
+    // hardcoded se o doc ainda nao existir (Igor nao semeou).
+    match /siteSettings/{settingsId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // MP dados: token e webhook secret nunca podem ser lidos pelo app React.
+    // Admin edita via Function autenticada; checkout/webhook le via Admin SDK.
+    match /mpDados/{docId} {
+      allow read, write: if false;
+    }
+
+    match /orders/{orderId} {
+      allow read, write: if false; // so Cloud Function (webhook MP) via Admin SDK
+    }
+
+    match /licenseTokens/{tokenId} {
+      allow read, write: if false; // so Cloud Function (emissao/validacao de licenca) via Admin SDK
+    }
+
+    match /cattoyGenerations/{genId} {
+      allow read, write: if false; // so Cloud Function via Admin SDK
+    }
+
+    match /calculatorExports/{exportId} {
+      allow read, write: if false; // so Cloud Function via Admin SDK
+    }
+
+    // Qualquer collection nao listada acima: nega por padrao.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -10,6 +10,7 @@ import {
 import html2canvas from 'html2canvas';
 
 import { fetchEapDataFromFirebase, isFirebaseConfigured, upsertFirebaseAppData } from '../../lib/firebaseDb';
+import { truncateAfterRealCompletion } from '../../lib/curvaS';
 
 // NOVOS TIPOS COMPRIMIDOS
 interface CompressedPayload {
@@ -257,8 +258,13 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
 
   useEffect(() => { setLiveSeries(data.series); }, [data.series]);
 
+  const visibleSeries = useMemo(
+    () => truncateAfterRealCompletion(liveSeries, (s: any) => extractPct(s.realAcumulado)),
+    [liveSeries],
+  );
+
   const chartDataFinal = useMemo(() => {
-    let filtered = liveSeries.filter((s: any) => {
+    let filtered = visibleSeries.filter((s: any) => {
       const d = s.dateObj;
       if (!d) return false;
       if (globalConfig.startDate && d < new Date(globalConfig.startDate + 'T00:00:00')) return false;
@@ -273,7 +279,7 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
       prevReal = s.realAcumulado; prevIdeal = s.idealAcumulado;
       return { ...s, dateTs: s.dateObj.getTime(), displayName: formatLabel(s.dateObj, globalConfig.viewMode), ritmoReal: round2(ritmoReal), ritmoIdeal: round2(ritmoIdeal) };
     });
-  }, [liveSeries, globalConfig]);
+  }, [visibleSeries, globalConfig]);
 
   const gap = round2(data.summary.realPct - data.summary.idealPct);
 
@@ -368,7 +374,7 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
           <div className="xl:w-1/3 bg-[#F8FAFC] rounded-2xl p-5 flex flex-col h-[482px]">
             <h4 className="font-bold text-gray-800 mb-1 flex items-center gap-2"><Edit3 size={18} className="text-[#3B82F6]"/> Ajuste em Tempo Real</h4>
             <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
-              {liveSeries.map((pt: any, idx: number) => (
+              {visibleSeries.map((pt: any, idx: number) => (
                 <div key={idx} className="p-3">
                   <p className="text-[13px] font-bold text-gray-700 mb-2 flex items-center gap-2"><CalendarIcon size={14} className="text-gray-400"/> {pt.dataBase}</p>
                   <div className="flex gap-3">

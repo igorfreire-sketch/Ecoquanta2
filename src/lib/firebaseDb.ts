@@ -1,5 +1,5 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
-import { getAuth, signInAnonymously, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, signInAnonymously, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -174,8 +174,9 @@ async function ensureFirebaseAuth() {
   if (!app) return;
 
   if (!authPromise) {
-    authPromise = signInAnonymously(getAuth(app))
-      .then(() => undefined)
+    const auth = getAuth(app);
+    authPromise = auth.authStateReady()
+      .then(() => auth.currentUser ? undefined : signInAnonymously(auth).then(() => undefined))
       .catch((error) => {
         authPromise = null;
         throw error;
@@ -197,8 +198,7 @@ let googleCalendarToken: { token: string; expiresAt: number } | null = null;
 
 // Login social (Google) via Firebase Auth. Precisa do provider "Google" habilitado em
 // Firebase Console > Authentication > Sign-in method - se nao estiver, o popup falha com
-// auth/operation-not-allowed. Sobrescreve a sessao anonima do ensureFirebaseAuth (ok - so
-// isSignedIn() e checado nas rules, nao importa se e anonimo ou nao).
+// auth/operation-not-allowed. Sobrescreve a sessao anonima do ensureFirebaseAuth.
 export async function signInWithGooglePopup(): Promise<string> {
   const config = readFirebaseConfig();
   if (!config) throw new Error('Firebase indisponivel para autenticar. Verifique a configuracao do ambiente.');
@@ -214,6 +214,29 @@ export async function signInWithGooglePopup(): Promise<string> {
     googleCalendarToken = { token: credential.accessToken, expiresAt: Date.now() + 55 * 60 * 1000 };
   }
   return email;
+}
+
+export async function ensureGoogleFirebaseAuth(expectedEmail: string): Promise<void> {
+  const config = readFirebaseConfig();
+  if (!config) throw new Error('Firebase indisponivel para autenticar.');
+  if (!app) app = initializeApp(config);
+  const auth = getAuth(app);
+  await auth.authStateReady();
+  const expected = expectedEmail.trim().toLowerCase();
+  if (auth.currentUser?.email?.trim().toLowerCase() === expected) return;
+
+  const authenticatedEmail = (await signInWithGooglePopup()).trim().toLowerCase();
+  if (authenticatedEmail !== expected) {
+    await signOutFirebase();
+    throw new Error(`Entre com a conta Google ${expectedEmail} para salvar alteracoes administrativas.`);
+  }
+}
+
+export async function signOutFirebase(): Promise<void> {
+  if (!app) return;
+  await signOut(getAuth(app));
+  authPromise = null;
+  googleCalendarToken = null;
 }
 
 // Token OAuth do Google (escopo Agenda) em cache - null quando nunca logou ou quando expirou
@@ -253,25 +276,30 @@ function mergeRegistroProfessionalsByDiscipline(registro: any, admin?: any) {
 
   terceirizadas.forEach((item: any) => {
     const nome = String(item?.nome || '').trim();
-    const disciplina = String(item?.disciplina || '').trim() || 'Sem disciplina';
     if (!nome) return;
+    const disciplinas: string[] = Array.from(new Set<string>(
+      (Array.isArray(item?.disciplinas) ? item.disciplinas : String(item?.disciplina || '').split(','))
+        .map((value: any) => String(value || '').trim())
+        .filter(Boolean),
+    ));
+    (disciplinas.length > 0 ? disciplinas : ['Sem disciplina']).forEach((disciplina) => {
+      const bucketKey = Object.keys(merged).find((key) => normalizeDiscipline(key) === normalizeDiscipline(disciplina)) || disciplina;
+      const bucket = Array.isArray(merged[bucketKey]) ? [...merged[bucketKey]] : [];
+      const email = buildThirdPartyEmail(item?.id, nome);
+      const exists = bucket.some((entry: any) => normalizeEmail(entry?.email) === normalizeEmail(email));
 
-    const bucketKey = Object.keys(merged).find((key) => normalizeDiscipline(key) === normalizeDiscipline(disciplina)) || disciplina;
-    const bucket = Array.isArray(merged[bucketKey]) ? [...merged[bucketKey]] : [];
-    const email = buildThirdPartyEmail(item?.id, nome);
-    const exists = bucket.some((entry: any) => normalizeEmail(entry?.email) === normalizeEmail(email));
+      if (!exists) {
+        bucket.push({
+          nome,
+          email,
+          cargo: 'Terceirizada',
+          disciplina,
+          isThirdParty: true,
+        });
+      }
 
-    if (!exists) {
-      bucket.push({
-        nome,
-        email,
-        cargo: 'Terceirizada',
-        disciplina,
-        isThirdParty: true,
-      });
-    }
-
-    merged[bucketKey] = bucket;
+      merged[bucketKey] = bucket;
+    });
   });
 
   return merged;
@@ -550,11 +578,15 @@ export async function fetchEapDataFromFirebase(): Promise<any> {
     if (!isFirebaseConfigured()) return null;
     await ensureFirebaseAuth();
     const dbRef = getDb();
-    const [eapData, curvaSReajustado] = await Promise.all([
-      getAppDataDoc<any>(dbRef, 'eap'),
-      getAppDataDoc<any>(dbRef, 'curvaSReajustado'),
-    ]);
+    const eapData = await getAppDataDoc<any>(dbRef, 'eap');
     if (!eapData) return null;
+
+    let curvaSReajustado: any = null;
+    try {
+      curvaSReajustado = await getAppDataDoc<any>(dbRef, 'curvaSReajustado');
+    } catch (error) {
+      console.error('❌ Erro ao fetch curvaSReajustado data:', error);
+    }
 
     return Array.isArray(curvaSReajustado?.reajustado)
       ? { ...eapData, reajustado: curvaSReajustado.reajustado }
@@ -565,18 +597,26 @@ export async function fetchEapDataFromFirebase(): Promise<any> {
   }
 }
 
-export async function fetchCronogramaDataFromFirebase(): Promise<any[]> {
+export async function fetchCronogramaDataFromFirebase(): Promise<any[] | null> {
   try {
     if (!isFirebaseConfigured()) return [];
     await ensureFirebaseAuth();
     const dbRef = getDb();
-    const cronograma = await getAppDataDoc<any>(dbRef, 'cronograma');
-    if (Array.isArray(cronograma)) return cronograma;
-    if (Array.isArray(cronograma?.cronograma)) return cronograma.cronograma;
-    return [];
+
+    try {
+      const cronograma = await getAppDataDoc<any>(dbRef, 'cronograma');
+      return Array.isArray(cronograma)
+        ? cronograma
+        : Array.isArray(cronograma?.cronograma)
+          ? cronograma.cronograma
+          : [];
+    } catch (error) {
+      console.error('❌ Erro ao fetch appData/cronograma:', error);
+      return null;
+    }
   } catch (error) {
     console.error('❌ Erro ao fetch cronograma data:', error);
-    return [];
+    return null;
   }
 }
 
@@ -642,7 +682,7 @@ export async function fetchRegistroDataFromFirebase(user: AuthUserLike): Promise
     };
   } catch (error) {
     console.error('Erro ao fetch registro data:', error);
-    return EMPTY_REGISTRO_RESPONSE;
+    return { ...EMPTY_REGISTRO_RESPONSE, success: false, error: 'Erro ao carregar dados do registro.' };
   }
 }
 
@@ -868,10 +908,16 @@ export async function updateFirebaseRegistroActivity(activityId: string, patch: 
   });
 }
 
-export async function fetchFirebaseCollection<T = Record<string, unknown>>(collectionName: string): Promise<T[]> {
+export async function fetchFirebaseCollection<T = Record<string, unknown>>(
+  collectionName: string,
+  equalityFilter?: { field: string; value: unknown },
+): Promise<T[]> {
   await ensureFirebaseAuth();
   const dbRef = getDb();
-  const snapshot = await getDocs(collection(dbRef, collectionName));
+  const collectionRef = collection(dbRef, collectionName);
+  const snapshot = await getDocs(equalityFilter
+    ? query(collectionRef, where(equalityFilter.field, '==', equalityFilter.value))
+    : collectionRef);
   return snapshot.docs.map((entry) => normalizeFirestoreRecord(entry) as T);
 }
 

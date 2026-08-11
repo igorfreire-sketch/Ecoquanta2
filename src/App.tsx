@@ -11,6 +11,7 @@ import {
   Bell,
   AtSign,
   X,
+  ExternalLink,
   LayoutDashboard,
   TrendingUp,
   LayoutGrid,
@@ -28,6 +29,7 @@ import {
   ClipboardPaste,
   CalendarClock,
   Cpu,
+  Plus,
 } from 'lucide-react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import type {
@@ -84,9 +86,12 @@ import { PATCH_NOTES } from './config/patchNotes';
 import { applyAcessibilidade, getStoredAcessibilidade, type Acessibilidade } from './lib/theme';
 import { estadoNotificacao, notificarDesktop, pedirPermissaoNotificacao, type PermissaoNotificacao } from './lib/desktopNotify';
 import { getLatestEapDisplayDate } from './lib/eapDate';
+import { getDisciplinePatch, getRoleTabs } from './lib/adminAccess';
 import KonamiGame from './components/KonamiGame';
 import {
   DEFAULT_DISCIPLINE_SETTINGS,
+  getDisciplineGroups,
+  getDisciplineSector,
   getPrimaryDisciplineValue,
   getUserDisciplineList,
   splitDisciplineValues,
@@ -103,7 +108,9 @@ import {
   replaceFirebaseAppData,
   canDeleteNote,
   canEditNote,
+  ensureGoogleFirebaseAuth,
   signInWithGooglePopup,
+  signOutFirebase,
 } from './lib/firebaseDb';
 
 const Atividades = React.lazy(() => import('./components/Atividades'));
@@ -135,13 +142,49 @@ const DEFAULT_ALOCACOES = [
   'Oiticica',
 ];
 
-// Domínio corporativo: usuários deste domínio são aprovados automaticamente
-// mas sem nenhuma aba habilitada (admin atribuirá acessos depois se necessário)
+// Domínio corporativo entra automaticamente na Principal; demais abas dependem do admin.
 const CORPORATE_DOMAIN = '@quantaconsultoria.com';
 const isCorporateEmail = (email: string) => email.toLowerCase().trim().endsWith(CORPORATE_DOMAIN);
 
 function normalizeUserText(value?: string) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+type AdminGuardUser = Pick<UserAccessRecord, 'id' | 'email' | 'isAdmin' | 'status'>;
+
+function getCriticalAdminMutationRisk(
+  before: AdminGuardUser[],
+  after: AdminGuardUser[],
+  currentEmail: string,
+  currentIsAdmin: boolean,
+) {
+  const key = (user: AdminGuardUser) => normalizeUserText(user.email || user.id);
+  const currentKey = normalizeUserText(currentEmail);
+  const afterCurrent = after.find((user) => key(user) === currentKey);
+
+  if (currentIsAdmin && (!afterCurrent || !afterCurrent.isAdmin || afterCurrent.status !== 'approved')) {
+    return { blocked: 'Voce nao pode rebaixar, bloquear ou excluir seu proprio acesso administrativo.', requiresConfirmation: false };
+  }
+
+  if (!after.some((user) => user.isAdmin && user.status === 'approved')) {
+    return { blocked: 'A alteracao deixaria o sistema sem administrador ativo.', requiresConfirmation: false };
+  }
+
+  const requiresConfirmation = before.some((user) => {
+    if (!user.isAdmin || key(user) === currentKey) return false;
+    const next = after.find((candidate) => key(candidate) === key(user));
+    return !next || !next.isAdmin || next.status === 'blocked';
+  });
+
+  return { blocked: '', requiresConfirmation };
+}
+
+if (import.meta.env.DEV) {
+  const self = { id: 'a', email: 'a@x.com', isAdmin: true, status: 'approved' as const };
+  console.assert(
+    Boolean(getCriticalAdminMutationRisk([self], [{ ...self, isAdmin: false }], self.email, true).blocked),
+    'EQ-13 self-check: auto-rebaixamento deve ser bloqueado.',
+  );
 }
 
 function shouldLockUserToContract(user?: AuthUser | null) {
@@ -155,7 +198,7 @@ function shouldLockUserToContract(user?: AuthUser | null) {
   return Boolean(String(user.contrato || '').trim());
 }
 
-type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'solucoes' | 'administracao';
+type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'solucoes' | 'banco-links' | 'administracao';
 type AreaTecnicaSubTab = 'atividades' | 'disciplinas';
 type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas';
 type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas' | 'importar';
@@ -170,14 +213,53 @@ const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'contrato', label: 'Contrato' },
   { key: 'cronograma', label: 'Cronograma' },
   { key: 'solucoes', label: 'Soluções digitais' },
+  { key: 'banco-links', label: 'Banco de Links' },
   { key: 'administracao', label: 'Administração' },
 ];
 
 // Rotulo de cada area pro breadcrumb (Area > Sub-aba), igual ao nome no rail.
 const AREA_LABELS: Record<string, string> = {
   principal: 'Principal',
+  'banco-links': 'Banco de Links',
   ...Object.fromEntries(ADMIN_APP_TABS.map((tab) => [tab.key, tab.label])),
 };
+
+const DATABASE_LINK_SEED: DatabaseLinkRecord = {
+  id: 'acompanhamento-cliente',
+  nome: 'Acompanhamento Cliente',
+  link: 'https://quanta-dash.vercel.app/',
+  descricao: '',
+};
+
+function withSeedDatabaseLinks(items: any[]): DatabaseLinkRecord[] {
+  const seedUrl = DATABASE_LINK_SEED.link.trim().toLowerCase();
+  const links = (Array.isArray(items) ? items : [])
+    .map((item: any) => ({
+      id: String(item?.id || '').trim(),
+      nome: String(item?.nome || item?.name || ''),
+      link: String(item?.link || item?.url || ''),
+      descricao: String(item?.descricao || item?.description || ''),
+      atualizadoEm: item?.atualizadoEm ? String(item.atualizadoEm) : undefined,
+    }))
+    .filter((item) => item.nome.trim() && item.link.trim());
+
+  let seeded = false;
+  const merged = links.filter((item) => {
+    const isSeed =
+      item.id === DATABASE_LINK_SEED.id ||
+      item.link.trim().toLowerCase() === seedUrl;
+    if (!isSeed) return true;
+    if (seeded) return false;
+    seeded = true;
+    item.id = DATABASE_LINK_SEED.id;
+    item.nome = DATABASE_LINK_SEED.nome;
+    item.link = DATABASE_LINK_SEED.link;
+    item.descricao = DATABASE_LINK_SEED.descricao;
+    return true;
+  });
+
+  return seeded ? merged : [DATABASE_LINK_SEED, ...merged];
+}
 
 interface AuthResponse {
   success: boolean;
@@ -234,6 +316,8 @@ interface PublicModulePayload {
   data?: Partial<GlobalData>;
 }
 
+type AdminEditableField = 'usuarios' | 'disciplineSettings' | 'cargos' | 'alocacoes' | 'terceirizadas' | 'roleTabPermissions' | 'databaseLinks' | 'preRegistrations';
+
 interface AdminSnapshotState {
   usuarios: UserAccessRecord[];
   disciplineSettings: DisciplineSettingRecord[];
@@ -243,6 +327,7 @@ interface AdminSnapshotState {
   roleTabPermissions: RoleTabPermissions;
   databaseLinks: DatabaseLinkRecord[];
   preRegistrations: PreRegistrationRecord[];
+  editedFields?: AdminEditableField[];
 }
 
 function normalizeEapCode(value: any) {
@@ -390,6 +475,23 @@ function normalizeDisciplineSetting(value: any): DisciplineSettingRecord | null 
   };
 }
 
+const OFFICIAL_DISCIPLINE_GROUPS = getDisciplineGroups();
+
+function normalizeAdminDisciplineName(value: any) {
+  const cleaned = String(value || '').trim();
+  if (!cleaned) return '';
+  const direct = OFFICIAL_DISCIPLINE_GROUPS.find((item) => normalizeUserText(item) === normalizeUserText(cleaned));
+  if (direct) return direct;
+  const sector = getDisciplineSector(cleaned);
+  return OFFICIAL_DISCIPLINE_GROUPS.find((item) => normalizeUserText(item) === normalizeUserText(sector)) || '';
+}
+
+function normalizeAdminDisciplineValues(value: any) {
+  return Array.from(new Set(
+    splitDisciplineValues(value).map(normalizeAdminDisciplineName).filter(Boolean),
+  ));
+}
+
 function normalizeDisciplineSettings(value: any): DisciplineSettingRecord[] {
   const source = Array.isArray(value) ? value : [];
   const byName = new Map<string, DisciplineSettingRecord>();
@@ -397,10 +499,13 @@ function normalizeDisciplineSettings(value: any): DisciplineSettingRecord[] {
   source.forEach((entry) => {
     const normalized = normalizeDisciplineSetting(entry);
     if (!normalized) return;
-    byName.set(normalized.nome, normalized);
+    const nome = normalizeAdminDisciplineName(normalized.nome);
+    if (!nome) return;
+    const current = byName.get(nome);
+    byName.set(nome, { nome, showInCharts: current?.showInCharts !== false && normalized.showInCharts !== false });
   });
 
-  return Array.from(byName.values());
+  return byName.size > 0 ? Array.from(byName.values()) : DEFAULT_DISCIPLINE_SETTINGS;
 }
 
 function getDisciplineNamesFromSettings(settings: DisciplineSettingRecord[]) {
@@ -831,6 +936,138 @@ function TabLoadingFallback() {
   );
 }
 
+function BancoLinksPageV2({
+  links,
+  canManage,
+  onSaveLink,
+}: {
+  links: DatabaseLinkRecord[];
+  canManage: boolean;
+  onSaveLink?: (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => Promise<void> | void;
+}) {
+  const [search, setSearch] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
+  const [nome, setNome] = useState('');
+  const [link, setLink] = useState('');
+  const [error, setError] = useState('');
+
+  const filteredLinks = links.filter((item) => (
+    `${item.nome} ${item.link} ${item.descricao || ''}`.toLowerCase().includes(search.trim().toLowerCase())
+  ));
+
+  const resetForm = () => {
+    setNome('');
+    setLink('');
+    setError('');
+    setFormOpen(false);
+  };
+
+  const handleSave = async () => {
+    const trimmedNome = nome.trim();
+    const trimmedLink = link.trim();
+    if (!trimmedNome || !trimmedLink) {
+      setError('Preencha nome e URL.');
+      return;
+    }
+    if (!onSaveLink) return;
+    await onSaveLink({ nome: trimmedNome, link: trimmedLink, descricao: '' });
+    resetForm();
+  };
+
+  return (
+    <div className="space-y-6">
+      <section className="space-y-4 rounded-2xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] lg:p-8">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <h1 className="text-[24px] font-bold text-[#2D2D2D]">Banco de Links</h1>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Pesquisar link"
+              className="h-11 min-w-[240px] rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-4 text-[13px] text-[#2D2D2D] outline-none transition focus:border-[#F05D28] focus:bg-white"
+            />
+            {canManage && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setFormOpen((prev) => !prev);
+                }}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#F05D28] px-4 text-[13px] font-bold text-white transition hover:opacity-90"
+              >
+                <Plus size={15} />
+                <span>Link</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {canManage && formOpen && (
+          <div className="grid grid-cols-1 gap-3 rounded-2xl border border-[#FDE3D5] bg-[#FFF8F4] p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_auto]">
+            <input
+              type="text"
+              value={nome}
+              onChange={(event) => setNome(event.target.value)}
+              placeholder="Nome"
+              className="h-11 rounded-xl border border-[#E5E7EB] bg-white px-4 text-[13px] text-[#2D2D2D] outline-none transition focus:border-[#F05D28]"
+            />
+            <input
+              type="url"
+              value={link}
+              onChange={(event) => setLink(event.target.value)}
+              placeholder="URL ou local"
+              className="h-11 rounded-xl border border-[#E5E7EB] bg-white px-4 text-[13px] text-[#2D2D2D] outline-none transition focus:border-[#F05D28]"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { void handleSave(); }}
+                className="inline-flex h-11 items-center justify-center rounded-xl bg-[#F05D28] px-4 text-[13px] font-bold text-white transition hover:opacity-90"
+              >
+                Registrar
+              </button>
+              <button
+                type="button"
+                onClick={resetForm}
+                className="inline-flex h-11 items-center justify-center rounded-xl border border-[#E5E7EB] bg-white px-4 text-[13px] font-semibold text-[#757575] transition hover:border-[#CBD5E1] hover:text-[#2D2D2D]"
+              >
+                Cancelar
+              </button>
+            </div>
+            {error && <p className="text-[12px] font-semibold text-[#DC2626] lg:col-span-3">{error}</p>}
+          </div>
+        )}
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+        {filteredLinks.map((item) => (
+          <a
+            key={item.id || item.link}
+            href={item.link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-2xl border border-transparent bg-white p-5 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition-colors hover:border-[#F05D28]/30"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="truncate text-[15px] font-bold text-[#2D2D2D]">{item.nome}</h2>
+                <p className="mt-3 truncate text-[12px] text-[#F05D28]">{item.link}</p>
+              </div>
+              <ExternalLink size={17} className="shrink-0 text-[#F05D28]" />
+            </div>
+          </a>
+        ))}
+        {filteredLinks.length === 0 && (
+          <div className="rounded-2xl bg-white p-5 text-[13px] font-medium text-[#757575] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
+            Nenhum link encontrado.
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 class TabErrorBoundary extends React.Component<
   { children: React.ReactNode; resetKey: string },
   { hasError: boolean; errorMessage: string | null }
@@ -1073,12 +1310,18 @@ function normalizeLoadedAdmin(admin: any, data: GlobalData) {
     ?? DEFAULT_DISCIPLINE_SETTINGS,
   );
   const validDisciplinaNames = getDisciplineNamesFromSettings(disciplineSettings);
-  const validDisciplinaSet = new Set(validDisciplinaNames);
-  // Disciplina cadastrada num usuario que o admin ja removeu/renomeou do catalogo:
-  // limpa so o campo (usuario precisa ser recadastrado), sem apagar mais nada dele.
-  const sanitizedUsers = normalizedUsers.map((user) => (
-    user.disciplina && !validDisciplinaSet.has(user.disciplina) ? { ...user, disciplina: '' } : user
-  ));
+  // Disciplina removida do catalogo continua no vinculo como legado: nunca apagar acesso
+  // de usuario ao normalizar uma leitura administrativa.
+  const sanitizedUsers = normalizedUsers.map((user) => {
+    const disciplinas = Array.from(new Set(
+      getUserDisciplineList(user).map((item) => normalizeAdminDisciplineName(item) || String(item || '').trim()).filter(Boolean),
+    ));
+    return {
+      ...user,
+      disciplina: disciplinas[0] || '',
+      disciplinas,
+    };
+  });
 
   return {
     ...admin,
@@ -1099,18 +1342,30 @@ function getAdminState(data: GlobalData) {
     disciplineSettings,
     cargos: Array.isArray(admin.cargos) ? admin.cargos : [],
     alocacoes,
-    terceirizadas: Array.isArray(admin.terceirizadas) ? admin.terceirizadas.map((item: any) => ({
-      id: String(item.id || ''),
-      nome: String(item.nome || item.name || ''),
-      disciplina: String(item.disciplina || item.discipline || ''),
-    })).filter((item: TerceirizadaRecord) => item.id && item.nome) : [],
-    databaseLinks: Array.isArray(admin.databaseLinks) ? admin.databaseLinks : [],
+     terceirizadas: Array.isArray(admin.terceirizadas) ? admin.terceirizadas.map((item: any) => {
+       const rawDisciplinas = Array.isArray(item.disciplinas) ? item.disciplinas : String(item.disciplina || item.discipline || '').split(',');
+       const disciplinas = Array.from(new Set(
+         rawDisciplinas.map((value: any) => normalizeAdminDisciplineName(value) || String(value || '').trim()).filter(Boolean),
+       ));
+       return {
+         id: String(item.id || ''),
+         nome: String(item.nome || item.name || ''),
+         disciplina: disciplinas.join(', '),
+         disciplinas,
+       };
+     }).filter((item: TerceirizadaRecord) => item.id && item.nome) : [],
+    databaseLinks: withSeedDatabaseLinks(admin.databaseLinks),
     roleTabPermissions: admin.roleTabPermissions && typeof admin.roleTabPermissions === 'object' ? admin.roleTabPermissions as RoleTabPermissions : {},
     preRegistrations: Array.isArray(admin.preRegistrations)
-      ? (admin.preRegistrations as any[]).map((r: any) => ({
-          ...r,
-          allowedTabs: Array.isArray(r.allowedTabs) ? r.allowedTabs as AppTabKey[] : [],
-        }) as PreRegistrationRecord)
+      ? (admin.preRegistrations as any[]).map((r: any) => {
+          const disciplinas = Array.from(new Set(splitDisciplineValues(r.disciplinas || r.disciplina)));
+          return {
+            ...r,
+            disciplina: disciplinas[0] || '',
+            disciplinas,
+            allowedTabs: (Array.isArray(r.allowedTabs) ? r.allowedTabs : String(r.allowedTabs || r.abas || '').split(',').map((item: string) => item.trim()).filter(Boolean)) as AppTabKey[],
+          };
+        }) as PreRegistrationRecord[]
       : [],
     };
 }
@@ -1137,19 +1392,24 @@ function mergeAdminStateWithRemote(
     throw new Error('Protecao de dados: o salvamento administrativo tentou publicar uma lista vazia de usuarios.');
   }
 
+  const draftHasField = (field: Exclude<AdminEditableField, 'roleTabPermissions'>) =>
+    draftState.editedFields?.includes(field) || draftState[field].length > 0;
+  const draftHasObject = (field: 'roleTabPermissions') =>
+    draftState.editedFields?.includes(field) || hasObjectEntries(draftState[field]);
+
   return {
     usuarios: mergedUsers,
-    disciplineSettings: draftState.disciplineSettings.length > 0
+    disciplineSettings: draftHasField('disciplineSettings')
       ? draftState.disciplineSettings
       : remoteAdminState.disciplineSettings,
-    cargos: draftState.cargos.length > 0 ? draftState.cargos : remoteAdminState.cargos,
-    alocacoes: draftState.alocacoes.length > 0 ? draftState.alocacoes : remoteAdminState.alocacoes,
-    terceirizadas: draftState.terceirizadas.length > 0 ? draftState.terceirizadas : remoteAdminState.terceirizadas,
-    roleTabPermissions: hasObjectEntries(draftState.roleTabPermissions)
+    cargos: draftHasField('cargos') ? draftState.cargos : remoteAdminState.cargos,
+    alocacoes: draftHasField('alocacoes') ? draftState.alocacoes : remoteAdminState.alocacoes,
+    terceirizadas: draftHasField('terceirizadas') ? draftState.terceirizadas : remoteAdminState.terceirizadas,
+    roleTabPermissions: draftHasObject('roleTabPermissions')
       ? draftState.roleTabPermissions
       : remoteAdminState.roleTabPermissions,
-    databaseLinks: draftState.databaseLinks.length > 0 ? draftState.databaseLinks : remoteAdminState.databaseLinks,
-    preRegistrations: draftState.preRegistrations.length > 0 ? draftState.preRegistrations : remoteAdminState.preRegistrations,
+    databaseLinks: draftHasField('databaseLinks') ? draftState.databaseLinks : remoteAdminState.databaseLinks,
+    preRegistrations: draftHasField('preRegistrations') ? draftState.preRegistrations : remoteAdminState.preRegistrations,
   };
 }
 
@@ -1268,6 +1528,10 @@ function filterGlobalDataByContract(data: GlobalData, contractCode: string): Glo
     else next.eap = targetEap;
   }
 
+  if (Array.isArray(data.contractInterferences)) {
+    next.contractInterferences = data.contractInterferences.filter((item: any) => String(item?.contratoCodigo || '').trim() === target);
+  }
+
   return next;
 }
 
@@ -1346,24 +1610,22 @@ function buildRegistroProfessionalsByDiscipline(registro: any, admin: any) {
 
   const terceirizadas = Array.isArray(admin?.terceirizadas) ? admin.terceirizadas : [];
   terceirizadas.forEach((item: any) => {
-    const disciplina = String(item?.disciplina || item?.discipline || '').trim() || 'Sem disciplina';
     const nome = String(item?.nome || item?.name || '').trim();
     if (!nome) return;
-
-    const bucketKey = Object.keys(merged).find((key) => normalizeUserText(key) === normalizeUserText(disciplina)) || disciplina;
-    const bucket = Array.isArray(merged[bucketKey]) ? [...merged[bucketKey]] : [];
     const email = buildThirdPartyEmail(String(item?.id || ''), nome);
-    const exists = bucket.some((entry: any) => String(entry?.email || '').trim().toLowerCase() === email.toLowerCase());
-    if (!exists) {
-      bucket.push({
-        nome,
-        email,
-        cargo: 'Terceirizada',
-        disciplina,
-        isThirdParty: true,
-      });
-    }
-    merged[bucketKey] = bucket;
+    const disciplinas = Array.from(new Set<string>(
+      (Array.isArray(item?.disciplinas) ? item.disciplinas : String(item?.disciplina || item?.discipline || '').split(','))
+        .map((value: any) => String(value || '').trim())
+        .filter(Boolean),
+    ));
+    (disciplinas.length > 0 ? disciplinas : ['Sem disciplina']).forEach((disciplina) => {
+      const bucketKey = Object.keys(merged).find((key) => normalizeUserText(key) === normalizeUserText(disciplina)) || disciplina;
+      const bucket = Array.isArray(merged[bucketKey]) ? [...merged[bucketKey]] : [];
+      if (!bucket.some((entry: any) => String(entry?.email || '').trim().toLowerCase() === email.toLowerCase())) {
+        bucket.push({ nome, email, cargo: 'Terceirizada', disciplina, isThirdParty: true });
+      }
+      merged[bucketKey] = bucket;
+    });
   });
 
   return merged;
@@ -1649,6 +1911,9 @@ export default function App() {
   const [databaseLinks, setDatabaseLinks] = useState<DatabaseLinkRecord[]>([]);
   const [preRegistrations, setPreRegistrations] = useState<PreRegistrationRecord[]>([]);
   const [dirtyUserIds, setDirtyUserIds] = useState<string[]>([]);
+  const [moduleErrors, setModuleErrors] = useState<Record<string, string>>({});
+  const [moduleLoading, setModuleLoading] = useState<Record<string, boolean>>({});
+  const moduleLoadingRef = React.useRef<Set<string>>(new Set());
   const [adminHasPendingChanges, setAdminHasPendingChanges] = useState(false);
   const [isSavingAdminChanges, setIsSavingAdminChanges] = useState(false);
   const [loadedModules, setLoadedModules] = useState<Record<string, boolean>>({});
@@ -1656,6 +1921,7 @@ export default function App() {
   const adminDraftVersionRef = React.useRef(0);
   const adminDraftRef = React.useRef<AdminSnapshotState | null>(null);
   const deletedUserEmailsRef = React.useRef<Set<string>>(new Set());
+  const databaseLinksComSeed = React.useMemo(() => withSeedDatabaseLinks(databaseLinks), [databaseLinks]);
 
   // ANOTACOES (Disciplinas)
   const [notes, setNotes] = useState<AnnotationSheet[]>([]);
@@ -1697,7 +1963,6 @@ export default function App() {
       nome: String(item.nome || item.codigo || '').trim(),
     })).filter((item: any) => item.id);
   }, [effectiveGlobalData.registro?.contracts]);
-
   const adminTerceirizadas = React.useMemo(() => {
     return [...terceirizadas, ...pendingTerceirizadas];
   }, [pendingTerceirizadas, terceirizadas]);
@@ -1714,13 +1979,22 @@ export default function App() {
   }), [adminTerceirizadas, alocacoes, cargos, databaseLinks, disciplineSettings, preRegistrations, roleTabPermissions, usuarios]);
 
   React.useEffect(() => {
-    adminDraftRef.current = getAdminSnapshotState();
+    adminDraftRef.current = {
+      ...getAdminSnapshotState(),
+      editedFields: adminDraftRef.current?.editedFields,
+    };
   }, [getAdminSnapshotState]);
 
   const updateAdminDraftRef = useCallback((patch: Partial<AdminSnapshotState>) => {
+    const editableFields = ['usuarios', 'disciplineSettings', 'cargos', 'alocacoes', 'terceirizadas', 'roleTabPermissions', 'databaseLinks', 'preRegistrations'] as const;
+    const touchedFields = editableFields.filter((field) => Object.prototype.hasOwnProperty.call(patch, field));
     const next = {
       ...(adminDraftRef.current || getAdminSnapshotState()),
       ...patch,
+      editedFields: Array.from(new Set([
+        ...(adminDraftRef.current?.editedFields || []),
+        ...touchedFields,
+      ])),
     };
     adminDraftRef.current = next;
     return next;
@@ -1762,9 +2036,10 @@ export default function App() {
         id: item.id,
         nome: item.nome,
         disciplina: item.disciplina,
+        disciplinas: item.disciplinas || String(item.disciplina || '').split(',').map((value) => value.trim()).filter(Boolean),
       })),
       roleTabPermissions: snapshotState.roleTabPermissions,
-      databaseLinks: snapshotState.databaseLinks,
+      databaseLinks: withSeedDatabaseLinks(snapshotState.databaseLinks),
       preRegistrations: snapshotState.preRegistrations,
     };
   }, [getAdminSnapshotState]);
@@ -1827,6 +2102,15 @@ export default function App() {
     const safeMergedState = deletedUserEmailsRef.current.size > 0
       ? { ...mergedState, usuarios: mergedState.usuarios.filter((user) => !deletedUserEmailsRef.current.has(normalizeUserText(user.email || user.id))) }
       : mergedState;
+    const existingUsers = mergeUserAccessRecords(
+      getAdminState({ admin: existingAdmin || {} }).usuarios,
+      getAuthUsersList(existingAuth),
+    );
+    const risk = getCriticalAdminMutationRisk(existingUsers, safeMergedState.usuarios, currentUser?.email || '', Boolean(currentUser?.isAdmin));
+    if (risk.blocked) throw new Error(risk.blocked);
+    if (risk.requiresConfirmation && window.prompt('Digite CONFIRMAR para concluir alteracoes destrutivas em outro administrador.') !== 'CONFIRMAR') {
+      throw new Error('Alteracao administrativa cancelada.');
+    }
     const snapshot = buildAdminFirebaseSnapshot(safeMergedState);
 
     return {
@@ -1834,7 +2118,7 @@ export default function App() {
       state: safeMergedState,
       existingAuth,
     };
-  }, [buildAdminFirebaseSnapshot]);
+  }, [buildAdminFirebaseSnapshot, currentUser]);
 
   const writeAdminSnapshotToFirebase = useCallback(async (snapshot: Record<string, any>) => {
     if (!isFirebaseConfigured()) return;
@@ -1872,7 +2156,7 @@ export default function App() {
 
     setGlobalData(normalizedData);
     if (options?.resetLoadedModules !== false) {
-      setLoadedModules({});
+      setLoadedModules(Array.isArray(normalizedData.cronograma) ? { cronograma: true } : {});
     }
 
     if (normalizedData.admin) {
@@ -1904,7 +2188,7 @@ export default function App() {
     deletedUserEmailsRef.current = new Set();
   }, []);
 
-  const loadCollaborationData = useCallback(async () => {
+  const loadCollaborationData = useCallback(async (user: AuthUser) => {
     if (!isFirebaseConfigured()) {
       return {
         planningTodos: [],
@@ -1917,9 +2201,12 @@ export default function App() {
 
     // Cada colecao busca de forma isolada: uma falha (ex: regra do Firestore
     // faltando) nao pode derrubar o bootstrap inteiro (admin/registro/eap).
-    const fetchCollectionSafe = async (name: string) => {
+    const fetchCollectionSafe = async (name: string, contractScoped = false) => {
       try {
-        return await fetchFirebaseCollection(name);
+        if (contractScoped && !user.isAdmin && !String(user.contrato || '').trim()) return [];
+        return await fetchFirebaseCollection(name, contractScoped && !user.isAdmin
+          ? { field: 'contratoCodigo', value: String(user.contrato || '').trim() }
+          : undefined);
       } catch (error) {
         console.error(`❌ Erro ao carregar colecao ${name}:`, error);
         return [];
@@ -1928,10 +2215,10 @@ export default function App() {
 
     const [planningTodos, contractPriorities, contractInterferences, resolvedAlerts, osSettings] = await Promise.all([
       fetchCollectionSafe('planningTodos'),
-      fetchCollectionSafe('contractPriorities'),
-      fetchCollectionSafe('contractInterferences'),
+      fetchCollectionSafe('contractPriorities', true),
+      fetchCollectionSafe('contractInterferences', true),
       fetchCollectionSafe('resolvedAlerts'),
-      fetchCollectionSafe('osSettings'),
+      fetchCollectionSafe('osSettings', true),
     ]);
 
     return { planningTodos, contractPriorities, contractInterferences, resolvedAlerts, osSettings };
@@ -1945,13 +2232,13 @@ export default function App() {
         fetchRegistroDataFromFirebase(user),
         fetchCronogramaDataFromFirebase(),
         fetchEapDataFromFirebase(),
-        loadCollaborationData(),
+        loadCollaborationData(user),
       ]);
 
       const mergedData = applyUnifiedEapData(mergeGlobalData(bootstrapData, {
-        registro,
-        cronograma,
+        ...(registro.success !== false ? { registro } : {}),
         eap,
+        ...(cronograma ? { cronograma } : {}),
         ...collaboration,
       }), eap);
 
@@ -2023,14 +2310,17 @@ export default function App() {
       let fullData: GlobalData = {};
       
       try {
-        const [bootstrapData, collaboration] = await Promise.all([
+        const [bootstrapData, cronograma, eap, collaboration] = await Promise.all([
           fetchBootstrapDataFromFirebase(),
-          loadCollaborationData(),
+          fetchCronogramaDataFromFirebase(),
+          fetchEapDataFromFirebase(),
+          loadCollaborationData(user),
         ]);
-        fullData = {
+        fullData = applyUnifiedEapData({
           ...bootstrapData,
+          ...(cronograma ? { cronograma } : {}),
           ...collaboration,
-        };
+        }, eap);
       } catch (fbError) {
         console.error('Erro ao carregar dados publicados:', fbError);
         if (!isBackgroundSync) setLoadText('Erro ao conectar dados publicados. Tente atualizar a página.');
@@ -2170,28 +2460,57 @@ export default function App() {
   }, [currentUser, activeTab, roleTabPermissions]);
 
   const loadFirebaseModule = useCallback(async (moduleName: 'registro' | 'cronograma' | 'eap') => {
-    if (!currentUser || loadedModules[moduleName]) return;
+    if (!currentUser || loadedModules[moduleName] || moduleLoadingRef.current.has(moduleName)) return;
 
+    moduleLoadingRef.current.add(moduleName);
+    setModuleLoading((prev) => ({ ...prev, [moduleName]: true }));
     setIsBackgroundSyncing(true);
     try {
+      setModuleErrors((prev) => {
+        if (!prev[moduleName]) return prev;
+        const next = { ...prev };
+        delete next[moduleName];
+        return next;
+      });
+      let loaded = false;
       if (moduleName === 'registro') {
         const registro = await fetchRegistroDataFromFirebase(currentUser);
-        setGlobalData((prev) => {
-          return mergeGlobalData(prev, { registro });
-        });
+        if (registro.success !== false) {
+          setGlobalData((prev) => {
+            return mergeGlobalData(prev, { registro });
+          });
+          loaded = true;
+        } else {
+          setModuleErrors((prev) => ({ ...prev, registro: registro.error || 'Falha ao carregar os contratos.' }));
+        }
       } else if (moduleName === 'cronograma') {
         const cronograma = await fetchCronogramaDataFromFirebase();
-        setGlobalData((prev) => {
-          return mergeGlobalData(prev, { cronograma });
-        });
+        if (cronograma) {
+          setGlobalData((prev) => {
+            return mergeGlobalData(prev, { cronograma });
+          });
+          loaded = true;
+        } else {
+          setModuleErrors((prev) => ({ ...prev, cronograma: 'Falha ao carregar o cronograma.' }));
+        }
       } else if (moduleName === 'eap') {
         const eap = await fetchEapDataFromFirebase();
-        setGlobalData((prev) => {
-          return applyUnifiedEapData(prev, eap);
-        });
+        if (eap) {
+          setGlobalData((prev) => {
+            return applyUnifiedEapData(prev, eap);
+          });
+          loaded = true;
+        } else {
+          setModuleErrors((prev) => ({ ...prev, eap: 'Falha ao carregar as atividades.' }));
+        }
       }
-      setLoadedModules((prev) => ({ ...prev, [moduleName]: true }));
+      if (loaded) setLoadedModules((prev) => ({ ...prev, [moduleName]: true }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : `Falha ao carregar ${moduleName}.`;
+      setModuleErrors((prev) => ({ ...prev, [moduleName]: message }));
     } finally {
+      moduleLoadingRef.current.delete(moduleName);
+      setModuleLoading((prev) => ({ ...prev, [moduleName]: false }));
       setIsBackgroundSyncing(false);
     }
   }, [currentUser, loadedModules]);
@@ -2215,7 +2534,10 @@ export default function App() {
       activeTab === 'cronograma';
 
     if (wantsRegistro) void loadFirebaseModule('registro');
-    if (wantsCronograma) void loadFirebaseModule('cronograma');
+    if (wantsCronograma) {
+      void loadFirebaseModule('cronograma');
+      void loadFirebaseModule('eap');
+    }
     if (wantsEap) void loadFirebaseModule('eap');
   }, [activeTab, areaTecnicaSubTab, contratoSubTab, currentUser, loadFirebaseModule, nc2SubTab, planejamentoSubTab, preloading, subTab]);
 
@@ -2242,6 +2564,7 @@ export default function App() {
     }
 
     try {
+      await ensureGoogleFirebaseAuth(currentUser.email);
       const draftState = adminDraftRef.current || getAdminSnapshotState();
       const {
         snapshot: adminSnapshot,
@@ -2306,11 +2629,28 @@ export default function App() {
   }, []);
 
   const addPreRegistration = useCallback(async (record: PreRegistrationRecord) => {
+    const email = String(record.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) return;
+    const disciplinas = Array.from(new Set(
+      splitDisciplineValues(record.disciplinas || record.disciplina).map((item) => normalizeAdminDisciplineName(item) || String(item || '').trim()).filter(Boolean),
+    ));
+    if (disciplinas.length === 0) return;
+    const normalizedRecord: PreRegistrationRecord = {
+      ...record,
+      email,
+      disciplina: disciplinas[0],
+      disciplinas,
+      allowedTabs: Array.from(new Set(
+        (Array.isArray(record.allowedTabs) ? record.allowedTabs : [])
+          .map((tab) => String(tab).trim())
+          .filter((tab) => ADMIN_APP_TABS.some((item) => item.key === tab))
+      )) as AppTabKey[],
+    };
     const source = adminDraftRef.current?.preRegistrations || preRegistrations;
-    const idx = source.findIndex((r) => r.email.toLowerCase() === record.email.toLowerCase());
+    const idx = source.findIndex((r) => r.email.toLowerCase() === email);
     const next = idx >= 0
-      ? source.map((item, index) => index === idx ? record : item)
-      : [...source, record];
+      ? source.map((item, index) => index === idx ? normalizedRecord : item)
+      : [...source, normalizedRecord];
 
     setPreRegistrations(next);
     updateAdminDraftRef({ preRegistrations: next });
@@ -2606,12 +2946,12 @@ export default function App() {
     const baseline = remote?.requests ?? disciplinaRequests;
     const request: DisciplinaRequest = {
       id: createDraftId('discreq'),
-      userEmail: currentUser.email,
+      userEmail: normalizeUserText(currentUser.email),
       userNome: currentUser.nome,
       disciplinas: disciplinasPedidas,
       criadoEm: new Date().toISOString(),
     };
-    const merged = [...baseline.filter((item) => item.userEmail !== currentUser.email), request];
+    const merged = [...baseline.filter((item) => normalizeUserText(item.userEmail) !== normalizeUserText(currentUser.email)), request];
     if (isFirebaseConfigured()) await replaceFirebaseAppData('disciplinaRequests', { requests: merged });
     setDisciplinaRequests(merged);
   }, [currentUser, disciplinaRequests]);
@@ -2755,9 +3095,7 @@ export default function App() {
     if (firstTab) setActiveTab(firstTab);
   };
 
-  // Login com Google (Firebase Auth) - aditivo, nao substitui o login por senha. So verifica
-  // se o e-mail da conta Google ja e um usuario cadastrado no sistema (mesmo registro/`auth`
-  // usado pelo login por senha) - nao cria usuario novo aqui, isso continua pelo Cadastrar.
+  // Login com Google (Firebase Auth): usa acesso existente ou materializa o pré-cadastro aprovado.
   const handleGoogleLogin = async (rememberMode: boolean) => {
     if (!isFirebaseConfigured()) {
       throw new Error('Firebase indisponivel para autenticar. Verifique a configuracao do ambiente.');
@@ -2766,12 +3104,52 @@ export default function App() {
     const email = await signInWithGooglePopup();
     const normalizedEmail = normalizeUserText(email);
     const authData = await fetchFirebaseAppData<any>('auth');
-    const matchedUser: any = getAuthUsersList(authData).find(
+    let matchedUser: any = getAuthUsersList(authData).find(
       (item: any) => normalizeUserText(item?.email) === normalizedEmail,
     ) || null;
 
     if (!matchedUser) {
-      throw new Error('Esta conta Google nao esta cadastrada no EcoQuanta. Peca a um administrador ou use "Cadastrar".');
+      const adminData = await fetchFirebaseAppData<any>('admin');
+      const adminState = getAdminState({ admin: adminData || {} });
+      const preRegistration = adminState.preRegistrations.find((record) => normalizeUserText(record.email) === normalizedEmail);
+
+      if (!preRegistration && !isCorporateEmail(email)) {
+        throw new Error('Esta conta Google nao esta cadastrada no EcoQuanta. Peca a um administrador ou use "Cadastrar".');
+      }
+
+      const preRegistrationAny = (preRegistration || {}) as any;
+      const cargo = String(preRegistration?.cargo || preRegistrationAny.role || '').trim();
+      const disciplinas = splitDisciplineValues(preRegistrationAny.disciplinas || preRegistration?.disciplina);
+      const allowedTabs = Array.from(new Set(
+        (preRegistration?.allowedTabs || [])
+          .map((tab) => String(tab).trim())
+          .filter(Boolean),
+      )) as AppTabKey[];
+      const approvedUser = normalizeUserAccessRecord({
+        id: normalizedEmail,
+        nome: String(preRegistrationAny.nome || preRegistrationAny.name || email.split('@')[0] || email).trim(),
+        email,
+        cargo,
+        disciplina: preRegistration?.disciplina || '',
+        disciplinas,
+        alocacao: preRegistration?.alocacao || '',
+        contrato: preRegistration?.contrato || '',
+        status: 'approved',
+        allowedTabs,
+        isAdmin: false,
+        showInCharts: true,
+        adminReviewed: Boolean(preRegistration),
+      });
+      const nextUsers = mergeUserAccessRecords(adminState.usuarios, [approvedUser]);
+      await syncAuthSnapshotToFirebase(nextUsers, authData);
+      setUsuarios(nextUsers);
+      matchedUser = {
+        ...approvedUser,
+        role: approvedUser.cargo,
+        cargo: approvedUser.cargo,
+        allowedTabs: approvedUser.allowedTabs,
+        abas: approvedUser.allowedTabs,
+      };
     }
 
     const status = normalizeUserText(matchedUser.status || '');
@@ -2796,6 +3174,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    void signOutFirebase().catch((error) => console.warn('Nao foi possivel encerrar a sessao Firebase:', error));
     adminAutoLoadAttemptRef.current = false;
     clearSession();
     setCurrentUser(null);
@@ -2849,8 +3228,7 @@ export default function App() {
   };
 
   const applyRolePresetTabs = useCallback((cargo: string) => {
-    const roleTabs = roleTabPermissions[cargo] || [];
-    return Array.from(new Set(roleTabs.map((tab) => String(tab).trim()).filter(Boolean))) as AppTabKey[];
+    return getRoleTabs(roleTabPermissions, cargo);
   }, [roleTabPermissions]);
 
   const markUserDirty = useCallback((userId: string) => {
@@ -2873,18 +3251,11 @@ export default function App() {
 
       if (Object.prototype.hasOwnProperty.call(patch, 'cargo')) {
         const cargo = String(patch.cargo || '').trim();
-        const roleTabs = cargo ? applyRolePresetTabs(cargo) : [];
-        if (!cargo) {
-          nextUser.allowedTabs = [];
-        } else if (roleTabs.length > 0) {
-          nextUser.allowedTabs = roleTabs;
-        }
+        nextUser.allowedTabs = cargo ? applyRolePresetTabs(cargo) : [];
       }
 
       if (Object.prototype.hasOwnProperty.call(patch, 'disciplina') || Object.prototype.hasOwnProperty.call(patch, 'disciplinas')) {
-        const nextDisciplines = splitDisciplineValues((patch as any).disciplinas || patch.disciplina);
-        nextUser.disciplina = getPrimaryDisciplineValue(nextDisciplines[0] || patch.disciplina || user.disciplina);
-        (nextUser as any).disciplinas = nextDisciplines.length > 0 ? nextDisciplines : splitDisciplineValues(user.disciplina);
+        Object.assign(nextUser, getDisciplinePatch(patch));
       }
 
       return nextUser;
@@ -2900,7 +3271,7 @@ export default function App() {
   const resolveDisciplinaRequest = useCallback(async (request: DisciplinaRequest, disciplinasAprovadas: string[]) => {
     if (disciplinasAprovadas.length > 0) {
       const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
-      const user = sourceUsers.find((item) => item.email === request.userEmail);
+      const user = sourceUsers.find((item) => normalizeUserText(item.email) === normalizeUserText(request.userEmail));
       if (user) {
         const nextDisciplinas = Array.from(new Set([...user.disciplinas, ...disciplinasAprovadas]));
         updateUsuarioDraft(user.id, { disciplinas: nextDisciplinas });
@@ -2916,11 +3287,16 @@ export default function App() {
   const toggleUsuarioAdminDraft = useCallback((userId: string, checked: boolean) => {
     const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
     const nextUsers = sourceUsers.map((user) => user.id === userId ? invalidateUserSession({ ...user, isAdmin: checked }) : user);
+    const risk = getCriticalAdminMutationRisk(sourceUsers, nextUsers, currentUser?.email || '', Boolean(currentUser?.isAdmin));
+    if (risk.blocked) {
+      window.alert(risk.blocked);
+      return;
+    }
     setUsuarios(nextUsers);
     updateAdminDraftRef({ usuarios: nextUsers });
     markUserDirty(userId);
     markAdminChangesPending();
-  }, [invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
+  }, [currentUser, invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
   const toggleUsuarioOnlyThirdPartyDraft = useCallback((userId: string, checked: boolean) => {
     const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
@@ -2981,7 +3357,7 @@ export default function App() {
   }, [markAdminChangesPending, updateAdminDraftRef]);
 
   const addDisciplina = useCallback(async (value: string) => {
-    const item = value.trim();
+    const item = normalizeAdminDisciplineName(value);
     if (!item) return;
     const draftState = adminDraftRef.current || getAdminSnapshotState();
     const draftDisciplinas = getDisciplineNamesFromSettings(draftState.disciplineSettings);
@@ -2994,6 +3370,14 @@ export default function App() {
 
   const removeDisciplina = useCallback(async (value: string) => {
     const draftState = adminDraftRef.current || getAdminSnapshotState();
+    const key = normalizeUserText(value);
+    const uses = (values: any) => splitDisciplineValues(values).some((item) => normalizeUserText(item) === key);
+    const impact = [
+      ...draftState.usuarios.filter((user) => uses(getUserDisciplineList(user))),
+      ...draftState.terceirizadas.filter((item) => uses((item as any).disciplinas || item.disciplina)),
+      ...draftState.preRegistrations.filter((item) => uses((item as any).disciplinas || item.disciplina)),
+    ].length;
+    if (impact > 0 && !window.confirm(`${impact} cadastro(s) continuam vinculados a "${value}" como legado. Remover apenas do catálogo?`)) return;
     const nextDisciplineSettings = draftState.disciplineSettings.filter((item) => item.nome !== value);
     await saveConfigOptions(
       draftState.cargos,
@@ -3017,23 +3401,25 @@ export default function App() {
     const item = value.trim();
     if (!item) return;
     const draftState = adminDraftRef.current || getAdminSnapshotState();
-    saveConfigOptions(
+    await saveConfigOptions(
       Array.from(new Set([...draftState.cargos, item])),
       getDisciplineNamesFromSettings(draftState.disciplineSettings),
       draftState.alocacoes,
       draftState.disciplineSettings,
     );
-    saveRoleTabPermissions({
+    const nextPermissions = {
       ...draftState.roleTabPermissions,
       [item]: draftState.roleTabPermissions[item] || [],
-    });
-  }, [getAdminSnapshotState, saveConfigOptions, saveRoleTabPermissions]);
+    };
+    saveRoleTabPermissions(nextPermissions);
+    await persistAdminChanges({ silent: true });
+  }, [getAdminSnapshotState, persistAdminChanges, saveConfigOptions, saveRoleTabPermissions]);
 
   const addAlocacao = useCallback(async (value: string) => {
     const item = value.trim();
     if (!item) return;
     const draftState = adminDraftRef.current || getAdminSnapshotState();
-    saveConfigOptions(
+    await saveConfigOptions(
       draftState.cargos,
       getDisciplineNamesFromSettings(draftState.disciplineSettings),
       Array.from(new Set([...draftState.alocacoes, item])),
@@ -3043,7 +3429,7 @@ export default function App() {
 
   const removeAlocacao = useCallback(async (value: string) => {
     const draftState = adminDraftRef.current || getAdminSnapshotState();
-    saveConfigOptions(
+    await saveConfigOptions(
       draftState.cargos,
       getDisciplineNamesFromSettings(draftState.disciplineSettings),
       draftState.alocacoes.filter((item) => item !== value),
@@ -3060,7 +3446,8 @@ export default function App() {
     setRoleTabPermissions(nextPermissions);
     updateAdminDraftRef({ cargos: nextCargos, roleTabPermissions: nextPermissions });
     markAdminChangesPending();
-  }, [getAdminSnapshotState, markAdminChangesPending, updateAdminDraftRef]);
+    await persistAdminChanges({ silent: true });
+  }, [getAdminSnapshotState, markAdminChangesPending, persistAdminChanges, updateAdminDraftRef]);
 
   const toggleRoleTabPermission = useCallback(async (cargo: string, tab: AppTabKey) => {
     const draftState = adminDraftRef.current || getAdminSnapshotState();
@@ -3069,17 +3456,18 @@ export default function App() {
       ? currentTabs.filter((item) => item !== tab)
       : [...currentTabs, tab];
 
-    saveRoleTabPermissions({
-      ...draftState.roleTabPermissions,
-      [cargo]: nextTabs,
-    });
-  }, [getAdminSnapshotState, saveRoleTabPermissions]);
+    const nextPermissions = { ...draftState.roleTabPermissions, [cargo]: nextTabs };
+    setRoleTabPermissions(nextPermissions);
+    updateAdminDraftRef({ roleTabPermissions: nextPermissions });
+    markAdminChangesPending();
+    await persistAdminChanges({ silent: true });
+  }, [getAdminSnapshotState, markAdminChangesPending, persistAdminChanges, updateAdminDraftRef]);
 
   const saveDatabaseLink = useCallback(async (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => {
     const sourceLinks = adminDraftRef.current?.databaseLinks || databaseLinks;
-    const nextDatabaseLinks = payload.id
+    const nextDatabaseLinks = withSeedDatabaseLinks(payload.id
       ? sourceLinks.map((item) => item.id === payload.id ? { ...item, ...payload } : item)
-      : [...sourceLinks, { id: payload.id || createDraftId('db-link'), ...payload }];
+      : [...sourceLinks, { id: payload.id || createDraftId('db-link'), ...payload }]);
     setDatabaseLinks(nextDatabaseLinks);
     updateAdminDraftRef({ databaseLinks: nextDatabaseLinks });
     markAdminChangesPending();
@@ -3087,24 +3475,34 @@ export default function App() {
 
   const deleteDatabaseLink = useCallback(async (id: string) => {
     const sourceLinks = adminDraftRef.current?.databaseLinks || databaseLinks;
-    const nextDatabaseLinks = sourceLinks.filter((item) => item.id !== id);
+    const nextDatabaseLinks = withSeedDatabaseLinks(sourceLinks.filter((item) => item.id !== id));
     setDatabaseLinks(nextDatabaseLinks);
     updateAdminDraftRef({ databaseLinks: nextDatabaseLinks });
     markAdminChangesPending();
   }, [databaseLinks, markAdminChangesPending, updateAdminDraftRef]);
 
+  const saveDatabaseLinkAndPersist = useCallback(async (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => {
+    await saveDatabaseLink(payload);
+    await persistAdminChanges();
+  }, [persistAdminChanges, saveDatabaseLink]);
+
   const saveTerceirizada = useCallback(async (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => {
     const nome = String(payload.nome || '').trim();
-    const disciplina = String(payload.disciplina || '').trim();
-    if (!nome || !disciplina) return;
+    const disciplinas = Array.from(new Set(
+      (Array.isArray(payload.disciplinas) ? payload.disciplinas : String(payload.disciplina || '').split(','))
+        .map((value) => String(value || '').trim())
+        .filter(Boolean),
+    ));
+    const disciplina = disciplinas.join(', ');
+    if (!nome || disciplinas.length === 0) return;
 
     const normalizedNome = normalizeUserText(nome);
-    const normalizedDisciplina = normalizeUserText(disciplina);
+    const normalizedDisciplina = disciplinas.map((item) => normalizeUserText(item)).join('|');
     const sourceTerceirizadas = adminDraftRef.current?.terceirizadas || [...terceirizadas, ...pendingTerceirizadas];
     const mergedBase = sourceTerceirizadas.filter((item) => (
       payload.id
         ? item.id !== payload.id
-        : !(normalizeUserText(item.nome) === normalizedNome && normalizeUserText(item.disciplina) === normalizedDisciplina)
+        : !(normalizeUserText(item.nome) === normalizedNome && (item.disciplinas || String(item.disciplina || '').split(',')).map((value) => normalizeUserText(value)).filter(Boolean).join('|') === normalizedDisciplina)
     ));
     const nextTerceirizadas = [
       ...mergedBase,
@@ -3112,6 +3510,7 @@ export default function App() {
         id: payload.id || createDraftId('terceirizada'),
         nome,
         disciplina,
+        disciplinas,
       },
     ];
 
@@ -3139,38 +3538,45 @@ export default function App() {
     const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
     const user = sourceUsers.find((item) => item.id === userId);
     if (!user) return;
-    // Auto-apply role tabs on acceptance; fall back to ['registro'] so the user can always access the app
-    const roleTabs = user.cargo ? applyRolePresetTabs(user.cargo) : [];
-    const autoTabs: AppTabKey[] = user.allowedTabs.length > 0 ? user.allowedTabs : (roleTabs.length > 0 ? roleTabs : ['registro' as AppTabKey]);
-    const nextUsers = sourceUsers.map((item) => item.id === userId ? invalidateUserSession({ ...item, status: 'approved', allowedTabs: autoTabs }) : item);
-    setUsuarios(nextUsers);
-    updateAdminDraftRef({ usuarios: nextUsers });
-    markUserDirty(userId);
-    markAdminChangesPending();
-  }, [applyRolePresetTabs, invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
-
-  const blockUser = useCallback(async (userId: string) => {
-    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
-    const user = sourceUsers.find((item) => item.id === userId);
-    if (!user) return;
-    const nextUsers = sourceUsers.map((item) => item.id === userId ? invalidateUserSession({ ...item, status: 'blocked', online: false }) : item);
+    const nextUsers = sourceUsers.map((item) => item.id === userId ? invalidateUserSession({ ...item, status: 'approved' }) : item);
     setUsuarios(nextUsers);
     updateAdminDraftRef({ usuarios: nextUsers });
     markUserDirty(userId);
     markAdminChangesPending();
   }, [invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
+  const blockUser = useCallback(async (userId: string) => {
+    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+    const user = sourceUsers.find((item) => item.id === userId);
+    if (!user) return;
+    const nextUsers = sourceUsers.map((item) => item.id === userId ? invalidateUserSession({ ...item, status: 'blocked', online: false }) : item);
+    const risk = getCriticalAdminMutationRisk(sourceUsers, nextUsers, currentUser?.email || '', Boolean(currentUser?.isAdmin));
+    if (risk.blocked) {
+      window.alert(risk.blocked);
+      return;
+    }
+    setUsuarios(nextUsers);
+    updateAdminDraftRef({ usuarios: nextUsers });
+    markUserDirty(userId);
+    markAdminChangesPending();
+  }, [currentUser, invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
+
   const deleteUsuario = useCallback(async (userId: string) => {
     const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
     const user = sourceUsers.find((item) => item.id === userId);
     if (!user) return;
+    const nextUsers = sourceUsers.filter((item) => item.id !== userId);
+    const risk = getCriticalAdminMutationRisk(sourceUsers, nextUsers, currentUser?.email || '', Boolean(currentUser?.isAdmin));
+    if (risk.blocked) {
+      window.alert(risk.blocked);
+      return;
+    }
     const email = normalizeUserText(user.email || user.id);
     if (email) deletedUserEmailsRef.current.add(email);
-    const nextUsers = sourceUsers.filter((item) => item.id !== userId);
     setUsuarios(nextUsers);
     updateAdminDraftRef({ usuarios: nextUsers });
     markAdminChangesPending();
-  }, [markAdminChangesPending, updateAdminDraftRef, usuarios]);
+  }, [currentUser, markAdminChangesPending, updateAdminDraftRef, usuarios]);
 
   const resetUserPassword = useCallback(async (user: UserAccessRecord) => {
     const response = await postToAppsScript<GenericResponse>({ action: 'adminResetPassword', email: user.email });
@@ -3194,6 +3600,55 @@ export default function App() {
       onDeleteNote={deleteAnnotationSheet}
       noteIdsComCronograma={noteIdsComCronograma}
     />
+  ) : null;
+  const contractNotesScopeCode = String(lockedContractCode || filtrosAtivos.contrato || '').trim();
+  const contractNotesPage = currentUser ? (
+    <Notes
+      disciplinas={disciplinas || []}
+      notes={notes || []}
+      osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []}
+      currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin }}
+      preloadedData={effectiveGlobalData}
+      usuarios={usuarios}
+      noteIdsComCronograma={noteIdsComCronograma}
+      contractScopeCode={contractNotesScopeCode === 'Todos' ? '' : contractNotesScopeCode}
+      readOnly
+    />
+  ) : null;
+  const cronogramaModuleReady = Boolean(loadedModules.cronograma) && !moduleLoading.cronograma && !moduleErrors.cronograma;
+  const atividadesModuleReady = Boolean(loadedModules.registro && loadedModules.eap)
+    && !moduleLoading.registro && !moduleLoading.eap
+    && !moduleErrors.registro && !moduleErrors.eap;
+  const atividadesModuleState = moduleErrors.registro || moduleErrors.eap ? 'error' : atividadesModuleReady ? 'ready' : 'loading';
+  const atividadesLoadFallback = (
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-3 rounded-[24px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
+      {atividadesModuleState === 'error' ? (
+        <>
+          <p className="text-[14px] font-bold text-[#991B1B]">Não foi possível carregar as atividades.</p>
+          <p className="text-[12px] text-[#B91C1C]">{moduleErrors.eap || moduleErrors.registro}</p>
+          <button
+            type="button"
+            onClick={() => {
+              if (moduleErrors.registro) void loadFirebaseModule('registro');
+              if (moduleErrors.eap) void loadFirebaseModule('eap');
+            }}
+            className="inline-flex h-10 w-fit items-center justify-center rounded-xl bg-[#F05D28] px-4 text-[12px] font-black uppercase tracking-[1px] text-white"
+          >
+            Tentar de novo
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-[14px] font-bold text-[#2D2D2D]">Carregando atividades...</p>
+          <p className="text-[12px] font-medium text-[#64748B]">Estamos preparando a EAP. A tela aparecerá assim que os dados estiverem completos.</p>
+        </>
+      )}
+    </div>
+  );
+  const cronogramaPage = currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) ? (
+    userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)
+      ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} loading={!cronogramaModuleReady && !moduleErrors.cronograma} loadError={moduleErrors.cronograma} onRetry={() => { void loadFirebaseModule('cronograma'); }} />
+      : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} loading={!cronogramaModuleReady && !moduleErrors.cronograma} loadError={moduleErrors.cronograma} onRetry={() => { void loadFirebaseModule('cronograma'); }} />
   ) : null;
 
   const headerTabs = (() => {
@@ -3228,6 +3683,7 @@ export default function App() {
     if (activeTab === 'contrato') {
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: contratoSubTab === 'atividades', onClick: () => setContratoSubTab('atividades') },
+        { key: 'interferencias', label: 'Interferências', icon: <AlertTriangle size={16} />, active: contratoSubTab === 'interferencias', onClick: () => setContratoSubTab('interferencias') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: contratoSubTab === 'disciplinas', onClick: () => setContratoSubTab('disciplinas') },
       ];
     }
@@ -3366,6 +3822,9 @@ export default function App() {
                   <NavItem icon={<Cpu size={20} />} label="Soluções digitais" active={activeTab === 'solucoes'} onClick={() => setActiveTab('solucoes')} />
                   {activeTab === 'solucoes' && subNav}
                 </>
+              )}
+              {currentUser && userHasTabAccess(currentUser, 'banco-links', roleTabPermissions) && (
+                <NavItem icon={<Database size={20} />} label="Banco de Links" active={activeTab === 'banco-links'} onClick={() => setActiveTab('banco-links')} />
               )}
               {currentUser && currentUser.isAdmin && (
                 <>
@@ -3521,14 +3980,16 @@ export default function App() {
                   onPedirNotificacao={() => { void pedirPermissaoNotificacaoDesktop(); }}
                   disciplinasDisponiveis={disciplinas}
                   minhasDisciplinas={getUserDisciplineList(currentUser)}
-                  pedidoPendente={disciplinaRequests.find((item) => item.userEmail === currentUser.email)?.disciplinas || null}
+                  pedidoPendente={disciplinaRequests.find((item) => normalizeUserText(item.userEmail) === normalizeUserText(currentUser.email))?.disciplinas || null}
                   onDefinirDisciplinas={(lista) => { void definirDisciplinasDoUsuario(lista); }}
                 />
               )}
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'disciplinas'
                   ? notesPage
-                  : <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} autoSelectUserDisciplineFilter disciplineFilterEnabled notes={notes} splitOsCardsByDiscipline cronogramaPlaceholder />
+                  : atividadesModuleReady
+                    ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} autoSelectUserDisciplineFilter disciplineFilterEnabled notes={notes} splitOsCardsByDiscipline cronogramaPlaceholder />
+                    : atividadesLoadFallback
               )}
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && (
                 subTab === 'disciplinas'
@@ -3537,7 +3998,9 @@ export default function App() {
               )}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
                 planejamentoSubTab === 'atividades'
-                  ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled notes={notes} />
+                  ? atividadesModuleReady
+                    ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled notes={notes} />
+                    : atividadesLoadFallback
                   : planejamentoSubTab === 'importar'
                     ? <ImportarEAP />
                   : planejamentoSubTab === 'curva-s'
@@ -3553,18 +4016,21 @@ export default function App() {
               )}
               {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && (
                 contratoSubTab === 'disciplinas'
-                  ? notesPage
-                  : <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} />
+                  ? contractNotesPage
+                  : contratoSubTab === 'atividades' && !atividadesModuleReady
+                    ? atividadesLoadFallback
+                    : <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} notes={notes} />
               )}
               {activeTab === 'cronograma' && currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && (
-                userHasTabAccess(currentUser, 'planejamento', roleTabPermissions)
-                    ? <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} viewMode="planning" currentUser={currentUser} onPlannerApprovalSubmit={syncPlannerApprovals} />
-                    : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} />
+                cronogramaPage
               )}
               {activeTab === 'solucoes' && currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions) && (
                 solucoesSubTab === 'cronograma'
                   ? <Cronogramas currentUser={currentUser} usuarios={usuarios} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} preloadedData={effectiveGlobalData} />
                   : notesPage
+              )}
+              {activeTab === 'banco-links' && currentUser && userHasTabAccess(currentUser, 'banco-links', roleTabPermissions) && (
+                <BancoLinksPageV2 links={databaseLinksComSeed} canManage={Boolean(currentUser?.isAdmin)} onSaveLink={currentUser?.isAdmin ? saveDatabaseLinkAndPersist : undefined} />
               )}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
                 nc2SubTab === 'disciplinas'
@@ -3591,7 +4057,7 @@ export default function App() {
               {activeTab === 'administracao' && currentUser?.isAdmin && adminSubTab === 'firebase' && <FirebaseExplorer />}
               {activeTab === 'administracao' && currentUser?.isAdmin && adminSubTab !== 'firebase' && (
                 <Administracao
-                  usuarios={usuarios} disciplinas={disciplinas} disciplineSettings={disciplineSettings} cargos={cargos} alocacoes={alocacoes} terceirizadas={adminTerceirizadas} contratos={contratos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinks} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
+                  usuarios={usuarios} disciplinas={disciplinas} disciplineSettings={disciplineSettings} cargos={cargos} alocacoes={alocacoes} terceirizadas={adminTerceirizadas} contratos={contratos} roleTabPermissions={roleTabPermissions} databaseLinks={databaseLinksComSeed} appTabs={ADMIN_APP_TABS} onRefresh={loadAdminData}
                   onUpdateUsuario={updateUsuarioDraft}
                   onToggleAdmin={toggleUsuarioAdminDraft}
                   onToggleTabPermission={toggleUsuarioTabDraft}
@@ -3724,5 +4190,3 @@ function SubNavItem({ icon, label, active, onClick }: { key?: string; icon: Reac
     </button>
   );
 }
-
-

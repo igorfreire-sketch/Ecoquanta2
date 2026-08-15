@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   DEFAULT_DISCIPLINES, disciplineMatchesSector, getDisciplineSector,
-  getSectorOptions, isDisciplineHidden,
+  getSectorOptions, isDisciplineHidden, getDisciplineGroups,
 } from './disciplineCatalog';
 
 const todas = DEFAULT_DISCIPLINES.map((item) => item.label);
@@ -42,6 +42,18 @@ assert.equal(isDisciplineHidden('Arquitetura'), false);
   assert.deepEqual(getSectorOptions(['Disciplina Inventada', 'Urbanismo']), ['Arquitetura']);
   // Os 6 de Arquitetura viram 1 entrada; a lista tem que ser bem menor que 56.
   assert.ok(setores.length < todas.length, 'agrupar precisa encurtar a lista');
+}
+
+// --- O que o admin cadastra HOJE sao os grupos; nenhum pode sumir do seletor ---
+{
+  const grupos = getDisciplineGroups();
+  assert.deepEqual(
+    getSectorOptions(grupos).sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [...grupos].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    'grupo cadastrado no admin (Estrutural, Elétrico...) tem que sobreviver ao getSectorOptions'
+  );
+  assert.equal(getDisciplineSector('Estrutural'), 'Estrutural', 'grupo sem codigo e o proprio setor');
+  assert.equal(getDisciplineSector('eletrico'), 'Elétrico', 'grafia do cadastro volta canonizada');
 }
 
 // --- Casamento usado pelos filtros ---

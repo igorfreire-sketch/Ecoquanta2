@@ -738,9 +738,12 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
     return visibles.length > 0 ? visibles : disciplinasCadastradas;
   }, [disciplinasCadastradas, preloadedData?.admin?.disciplinas]);
 
-  const disciplinasGraficosSet = React.useMemo(() => {
-    return new Set(disciplinasGraficos.map((item) => normalizeText(item)).filter(Boolean));
-  }, [disciplinasGraficos]);
+  const matchesDisciplinaGrafico = React.useCallback((disciplina: string) => (
+    disciplinasGraficos.some((setor) => (
+      // disciplineMatchesSector is catalog-strict; this preserves matching for raw values that differ only by case/diacritics.
+      disciplineMatchesSector(disciplina, setor) || normalizeText(disciplina) === normalizeText(setor)
+    ))
+  ), [disciplinasGraficos]);
 
   const [filtrosGlobais, setFiltrosGlobais] = React.useState<GlobalDashboardFilters>({
     contrato: filtroContratoGlobal,
@@ -855,8 +858,8 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   }, [tableData, filtrosGlobais]);
 
   const tableComposicaoGraficos = React.useMemo(() => {
-    return tableComposicaoFiltrada.filter((item) => disciplinasGraficosSet.has(normalizeText(item.disciplina)));
-  }, [disciplinasGraficosSet, tableComposicaoFiltrada]);
+    return tableComposicaoFiltrada.filter((item) => matchesDisciplinaGrafico(item.disciplina));
+  }, [matchesDisciplinaGrafico, tableComposicaoFiltrada]);
 
   const tableMatrizBase = React.useMemo(() => {
     return filterByThirdParty(
@@ -895,8 +898,8 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   }, [tableAnaliseBase, filtrosAnalise.importancia, filtrosAnalise.dificuldade]);
 
   const tableAnaliseGraficos = React.useMemo(() => {
-    return tableAnaliseFiltrada.filter((item) => disciplinasGraficosSet.has(normalizeText(item.disciplina)));
-  }, [disciplinasGraficosSet, tableAnaliseFiltrada]);
+    return tableAnaliseFiltrada.filter((item) => matchesDisciplinaGrafico(item.disciplina));
+  }, [matchesDisciplinaGrafico, tableAnaliseFiltrada]);
 
   const tableConsultaFiltrada = React.useMemo(() => {
     const base = filterByThirdParty(
@@ -927,8 +930,8 @@ export default function DashboardEngenharia({ filtrosAtivos, preloadedData, mode
   }, [tableData, filtrosGlobais, consultaSearch]);
 
   const tableConsultaGraficos = React.useMemo(() => {
-    return tableConsultaFiltrada.filter((item) => disciplinasGraficosSet.has(normalizeText(item.disciplina)));
-  }, [disciplinasGraficosSet, tableConsultaFiltrada]);
+    return tableConsultaFiltrada.filter((item) => matchesDisciplinaGrafico(item.disciplina));
+  }, [matchesDisciplinaGrafico, tableConsultaFiltrada]);
 
   const dadosComposicaoFiltrados = React.useMemo(() => {
     return buildComposicaoData(tableComposicaoGraficos, disciplinasGraficos).map((item) => {

@@ -1,0 +1,55 @@
+﻿ago. 5, 2026
+Reunião em 5 de ago. de 2026 às 14:38 GMT-03:00
+Registros da reunião Transcrição 
+
+
+
+
+Resumo
+Reunião de alinhamento com foco em ajustes financeiros e na otimização da interface do painel operacional.
+
+Ajustes Financeiros e Orçamentários
+Decidiu-se que o sistema priorizará valores de orçamento exatos, utilizando estimativas apenas como alternativa automática. A modelagem financeira focará no valor total da obra dividido pelo período de execução.
+
+Otimização de Interface e Dados
+Definiu-se a substituição de widgets por filtros suspensos e a remoção de elementos redundantes na interface. Os dados de topografia serão realocados para a área de contratos, separando-os do mapa principal.
+
+Automação e Controle
+Implementou-se a importação direta de planilhas para o site, substituindo a atualização manual. Estabeleceu-se o controle de acesso por funções vinculado aos domínios de e-mail institucionais dos usuários.
+
+
+
+
+Próximas etapas
+* [Igor Freire] Implementar lógica financeira: Criar campo de orçamento exato que sobrepõe o valor estimado quando preenchido. Priorizar sempre o valor exato no cálculo financeiro anual.
+* [Igor Freire] Ajustar Dashboard: Remover as seções de avanço financeiro e atrasados do resumo. Incluir menus suspensos para filtrar as Ordens de Serviço por status e autarquia.
+* [Igor Freire] Otimizar interface: Remover a legenda OS dos cartões individuais.
+* [Igor Freire] Implementar importação: Adicionar funcionalidade para processamento de planilhas carregadas diretamente via site.
+* [Igor Freire] Modificar gráficos: Transformar o gráfico de linha atual em gráfico de barras exibindo previsões orçamentárias anuais com filtros.
+* [Erick Lima] Alinhar fluxo: Definir com a equipe responsável quem será o encarregado pelo preenchimento dos dados nas Ordens de Serviço.
+* [Igor Freire] Falar com Vinicius: Confirmar agenda com Vinicius para verificar a disponibilidade de horario em relacao a feira.
+* [Igor Freire] Implementar mudancas: Realizar as alteracoes solicitadas no projeto e subir as atualizacoes para o ambiente online.
+* [Igor Freire] Agendar reuniao: Notificar Erick para realizar uma reuniao de validacao apos a entrega das implementacoes.
+
+
+
+
+Detalhes
+* Estimativas Financeiras e Cadastro de Dados: Erick Lima e Igor Freire discutiram a necessidade de utilizar valores estimados para o orçamento de obras até que o orçamento de engenharia exato seja finalizado. Foi decidido que os dados financeiros devem focar no "valor da obra", sem incluir medições contratuais, e que essas estimativas devem ser divididas pelo período de execução para gerar projeções anuais de forma automatizada.
+* Revisão dos Prazos de Conclusão: Surgiu uma incerteza quanto à "previsão de conclusão" das Ordens de Serviço, pois as datas exibidas no sistema apresentavam inconsistências em relação à realidade contratual (00:02:32). Os participantes identificaram a necessidade de ajustar o que está sendo exibido, visto que o sistema mostrava datas divergentes para a conclusão e para as etapas de licitação (00:03:59).
+* Ajustes nos Indicadores Chave de Desempenho: Igor Freire e Erick Lima concordaram em adicionar campos distintos para a "previsão para licitar" e a "previsão de conclusão do projeto" (00:06:15). Ficou definido que a modelagem jurídica e a modelagem econômica são as entregas finais, e as datas correspondentes a esses marcos devem ser refletidas adequadamente no painel de controle (00:07:23).
+* Ferramenta de Tomada de Notas: Igor Freire apresentou uma ferramenta que integra anotações com o calendário e permite o compartilhamento e edição colaborativa, além de possuir a capacidade de resumir as notas via inteligência artificial (00:08:27). A utilização desta ferramenta permanece opcional para os participantes (00:09:59).
+* Gestão e Filtros do Painel de Controle: A equipe abordou os filtros de status das Ordens de Serviço, observando que algumas entradas estavam marcadas como pendentes devido à falta de informação sobre a análise da prefeitura (00:09:59). Decidiu-se refinar as categorias de status para incluir "aprovadas", "em licitação", "licitadas" e "paralisadas", além de remover o widget de "atrasados", pois a informação não foi considerada confiável (00:16:50).
+* Lógica de Cálculo Orçamentário: Foi discutida a lógica para os cálculos das previsões orçamentárias anuais, com o consenso de que o sistema deve priorizar o valor do orçamento exato quando disponível, utilizando o valor estimado apenas na ausência do dado definitivo (00:13:55). Igor Freire comprometeu-se a ajustar a lógica de programação para que o sistema realize esse tratamento automaticamente (00:14:57).
+* Melhorias na Navegação e Interface: Para otimizar a usabilidade, os participantes decidiram substituir widgets estáticos por menus suspensos (dropdowns) para filtrar as Ordens de Serviço por status e por autarquia, como a Codemar (00:19:01). Adicionalmente, decidiu-se remover rótulos redundantes como "OS" dos cards visuais para limpar a interface (00:20:57).
+* Integração de Mapas e Dados Topográficos: Igor Freire explicou que o mapa está funcional e centralizado no município, com estrutura para aceitar novos contratos no futuro. Em relação aos dados de topografia e sondagem, foi decidido que, embora valiosos, esses dados devem ser gerenciados na área de contratos do sistema, em vez de ficarem diretamente expostos no mapa principal destinado aos clientes (00:21:55).
+* Processo de Alimentação de Dados: A equipe discutiu se a atualização dos dados continuaria manual via planilha ou se seria feita diretamente no site (00:27:33). A decisão foi que Igor Freire implementará uma funcionalidade para importar a planilha diretamente para o site, automatizando a atualização dos dados e eliminando a necessidade de um botão para exportação em PDF (00:29:56).
+* Atualização dos Gráficos de Orçamento: Hagata Oliveira e os demais participantes concordaram em substituir o gráfico de "valor acumulado" por gráficos de barras que exibam as previsões orçamentárias anuais (2026, 2027, 2028+) (00:30:46). Serão implementados filtros para que esses dados possam ser visualizados por autarquia ou por Ordem de Serviço específica (00:31:39).
+* Controle de Acesso e Segurança: Discutiu-se a implementação de controle de acesso baseado em funções, permitindo restringir a visualização de abas e dados conforme o cargo ou contrato. Foi definido que os usuários serão pré-cadastrados com base em seus domínios de e-mail (ex: @codemar), o que garantirá acesso automático às informações pertinentes (00:33:35).
+* Próximos Passos e Cronograma: A próxima reunião foi tentativamente agendada para sexta-feira, às 9:30, sujeita a confirmação devido a um evento no Rio de Janeiro. Igor Freire confirmou que realizará as atualizações acordadas no sistema e chamará os participantes para uma revisão antes ou durante a data agendada (00:35:46).
+
+
+
+
+Revise as anotações do Gemini para checar se estão corretas. Confira dicas e saiba como o Gemini faz anotações
+Como está a qualidade de destas observações? Responda a uma breve pesquisa para nos dar seu feedback, incluindo o quanto as observações foram úteis para o que você precisa.

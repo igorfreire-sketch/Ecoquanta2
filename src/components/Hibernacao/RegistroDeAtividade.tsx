@@ -19,8 +19,6 @@ import {
   registerActivitiesInFirebase,
   updateActivitiesInFirebase,
 } from '../../lib/firebaseDb';
-const PLANNING_TODOS_STORAGE_KEY = 'quanta_planejamento_tecnico_itens';
-
 type DifficultyLevel = 'Facil' | 'Moderada' | 'Dificil';
 type EvaluationType =
   | 'Dentro do esperado'
@@ -116,19 +114,6 @@ interface ActivityUpdateDraft {
 interface LocalDraftPayload {
   formData: { contratoCodigo: string; osCodigo: string; setor: string; itemCodigo: string; todoId?: string; profissionaisEmails: string[]; dificuldade: DifficultyLevel | ''; descricao: string; avancoInicial: number; };
   draftQueue: NewActivityDraft[]; pendingChanges: Record<string, ActivityUpdateDraft>; expandedActivities: Record<string, boolean>;
-}
-
-interface RegistroViewCachePayload {
-  contracts?: EapContractOption[];
-  osOptions?: EapOsOption[];
-  itemOptions?: EapItemOption[];
-  hierarchyNodes?: EapHierarchyNode[];
-  childrenByParent?: Record<string, EapHierarchyNode[]>;
-  rootCodes?: string[];
-  professionals?: ProfessionalOption[];
-  activeActivities?: RegistroAtividade[];
-  completedActivities?: RegistroAtividade[];
-  updatedAt?: string;
 }
 
 function normalizeDiscipline(value?: string) {
@@ -242,13 +227,6 @@ function activityMatchesUserDiscipline(activity: Partial<RegistroAtividade> | an
 }
 
 function getPlanningTodoSources(preloadedData: any): any[] {
-  let localItems: any[] = [];
-  try {
-    const raw = localStorage.getItem(PLANNING_TODOS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    localItems = Array.isArray(parsed) ? parsed : [];
-  } catch {}
-
   const registro = preloadedData?.registro || preloadedData || {};
   const planejamento = preloadedData?.planejamento || {};
   const planningTodos = Array.isArray(preloadedData?.planningTodos)
@@ -269,7 +247,7 @@ function getPlanningTodoSources(preloadedData: any): any[] {
     planejamento.todoItems,
   ];
   const jsonItems = candidates.find((item) => Array.isArray(item)) || [];
-  return [...localItems, ...jsonItems];
+  return jsonItems;
 }
 
 function buildTodoOptions(preloadedData: any): TodoOption[] {
@@ -599,35 +577,6 @@ function createLocalId() {
 }
 
 function getDraftStorageKey(email: string) { return `quanta_registro_atividade_${String(email || '').trim().toLowerCase()}`; }
-function getRegistroCacheKey(email: string) { return `quanta_registro_atividade_cache_${String(email || '').trim().toLowerCase()}`; }
-
-function readRegistroCache(email: string): RegistroViewCachePayload | null {
-  try {
-    const raw = localStorage.getItem(getRegistroCacheKey(email));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as RegistroViewCachePayload;
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch (error) {
-    return null;
-  }
-}
-
-function mergeRegistroViewData(serverData: ReturnType<typeof buildRegistroViewModel>, cachedData: RegistroViewCachePayload | null) {
-  if (!cachedData) return serverData;
-
-  return {
-    contracts: serverData.contracts.length ? serverData.contracts : cachedData.contracts || [],
-    osOptions: serverData.osOptions.length ? serverData.osOptions : cachedData.osOptions || [],
-    itemOptions: serverData.itemOptions.length ? serverData.itemOptions : cachedData.itemOptions || [],
-    hierarchyNodes: serverData.hierarchyNodes.length ? serverData.hierarchyNodes : cachedData.hierarchyNodes || [],
-    childrenByParent: Object.keys(serverData.childrenByParent || {}).length ? serverData.childrenByParent : cachedData.childrenByParent || {},
-    rootCodes: serverData.rootCodes.length ? serverData.rootCodes : cachedData.rootCodes || [],
-    professionals: serverData.professionals.length ? serverData.professionals : cachedData.professionals || [],
-    activeActivities: mergeActivitiesWithCache(serverData.activeActivities, cachedData.activeActivities || []),
-    completedActivities: mergeActivitiesWithCache(serverData.completedActivities, cachedData.completedActivities || []),
-  };
-}
-
 function hasLocalDraftPayload(payload: LocalDraftPayload) {
   const draftQueue = Array.isArray(payload?.draftQueue) ? payload.draftQueue : [];
   const pendingChanges = payload?.pendingChanges && typeof payload.pendingChanges === 'object' ? payload.pendingChanges : {};
@@ -639,17 +588,6 @@ function hasLocalDraftPayload(payload: LocalDraftPayload) {
 
 function normalizePercentage(value: number) {
   return Math.max(0, Math.min(100, Number(value) || 0));
-}
-
-function mergeActivitiesWithCache(serverItems: RegistroAtividade[], cachedItems: RegistroAtividade[]) {
-  const byId = new Map<string, RegistroAtividade>();
-  serverItems.map((item) => normalizeRegistroActivity(item)).forEach((item) => { if (item?.id) byId.set(item.id, item); });
-  cachedItems.map((item) => normalizeRegistroActivity(item)).forEach((item) => { if (item?.id) byId.set(item.id, item); });
-  return Array.from(byId.values()).sort((a, b) => {
-    const aTime = parsePtBrDateTime(a.dataRegistro)?.getTime() || 0;
-    const bTime = parsePtBrDateTime(b.dataRegistro)?.getTime() || 0;
-    return bTime - aTime;
-  });
 }
 
 function filterRegistroPayloadByContract<T extends { contracts?: any[]; osOptions?: any[]; itemOptions?: any[]; activitiesList?: any[]; activeActivities?: any[]; completedActivities?: any[] }>(payload: T, contractCode: string): T {
@@ -716,7 +654,7 @@ function MultiProfessionalSelector({ value, options, onChange }: { value: string
 }
 
 export default function RegistroDeAtividade({ currentUser, preloadedData, viewMode = 'registro' }: RegistroDeAtividadeProps) {
-  const initialRegistroData = mergeRegistroViewData(buildRegistroViewModel(preloadedData, currentUser, viewMode), readRegistroCache(currentUser.email));
+  const initialRegistroData = buildRegistroViewModel(preloadedData, currentUser, viewMode);
   const [contracts, setContracts] = useState<EapContractOption[]>(initialRegistroData.contracts);
   const [osOptions, setOsOptions] = useState<EapOsOption[]>(initialRegistroData.osOptions);
   const [itemOptions, setItemOptions] = useState<EapItemOption[]>(initialRegistroData.itemOptions);
@@ -749,15 +687,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
     contratoCodigo: '', osCodigo: '', setor: 'Engenharia', itemCodigo: '', todoId: '', profissionaisEmails: [] as string[], dificuldade: '' as DifficultyLevel | '', descricao: '', avancoInicial: 0,
   });
 
-  const persistRegistroCache = (payload: RegistroViewCachePayload) => {
-    try {
-      localStorage.setItem(getRegistroCacheKey(currentUser.email), JSON.stringify({
-        ...payload,
-        updatedAt: new Date().toISOString(),
-      }));
-    } catch (error) {}
-  };
-
   const applyActivitiesState = (nextActiveActivities: RegistroAtividade[], nextCompletedActivities: RegistroAtividade[]) => {
     setActiveActivities(nextActiveActivities);
     setCompletedActivities(nextCompletedActivities);
@@ -789,7 +718,7 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
 
   useEffect(() => {
     if (preloadedData && Object.keys(preloadedData).length > 0) {
-      const nextData = mergeRegistroViewData(buildRegistroViewModel(preloadedData, currentUser, viewMode), readRegistroCache(currentUser.email));
+      const nextData = buildRegistroViewModel(preloadedData, currentUser, viewMode);
       setContracts(nextData.contracts);
       setOsOptions(nextData.osOptions);
       setItemOptions(nextData.itemOptions);
@@ -809,20 +738,6 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   useEffect(() => {
     setShowRegistroAccordion(viewMode !== 'atividades');
   }, [viewMode]);
-
-  useEffect(() => {
-    persistRegistroCache({
-      contracts,
-      osOptions,
-      itemOptions,
-      hierarchyNodes,
-      childrenByParent,
-      rootCodes,
-      professionals,
-      activeActivities,
-      completedActivities,
-    });
-  }, [contracts, osOptions, itemOptions, hierarchyNodes, childrenByParent, rootCodes, professionals, activeActivities, completedActivities]);
 
   useEffect(() => {
     const lockedContract = String(currentUser.contrato || '').trim();
@@ -879,25 +794,15 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
   const isMissingCoreData = contracts.length === 0 || osOptions.length === 0 || itemOptions.length === 0;
 
   const fetchFreshData = async () => {
-    const cachedData = readRegistroCache(currentUser.email);
-
     try {
       const registroResponse = await fetchRegistroData(currentUser);
       const registro = filterRegistroPayloadByContract<RegistroDataResponse>(registroResponse, currentUser.contrato || '');
       if (!registro) throw new Error('Dados de registro ausentes no Firebase.');
 
-      const nextContracts = Array.isArray(registro.contracts) && registro.contracts.length > 0
-        ? registro.contracts
-        : cachedData?.contracts || [];
-      const nextOsOptions = Array.isArray(registro.osOptions) && registro.osOptions.length > 0
-        ? registro.osOptions
-        : cachedData?.osOptions || [];
-      const nextItemOptions = Array.isArray(registro.itemOptions) && registro.itemOptions.length > 0
-        ? registro.itemOptions
-        : cachedData?.itemOptions || [];
-      const nextRootCodes = Array.isArray(registro.rootCodes) && registro.rootCodes.length > 0
-        ? registro.rootCodes
-        : cachedData?.rootCodes || [];
+      const nextContracts = Array.isArray(registro.contracts) ? registro.contracts : [];
+      const nextOsOptions = Array.isArray(registro.osOptions) ? registro.osOptions : [];
+      const nextItemOptions = Array.isArray(registro.itemOptions) ? registro.itemOptions : [];
+      const nextRootCodes = Array.isArray(registro.rootCodes) ? registro.rootCodes : [];
       const nextHierarchyNodes = normalizeHierarchyNodes(
         registro.hierarchyNodes,
         nextContracts,
@@ -906,20 +811,13 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       );
       const nextChildrenByParent = registro.childrenByParent && Object.keys(registro.childrenByParent).length > 0
         ? registro.childrenByParent
-        : (cachedData?.childrenByParent && Object.keys(cachedData.childrenByParent).length > 0
-          ? cachedData.childrenByParent
-          : buildChildrenMapFromNodes(nextHierarchyNodes));
+        : buildChildrenMapFromNodes(nextHierarchyNodes);
 
       if (nextContracts.length === 0 || nextOsOptions.length === 0 || nextItemOptions.length === 0) {
         throw new Error('EAP sem contratos, OS ou atividades no Firebase.');
       }
 
-      const responseProfessionals = Array.isArray(registro.professionals) ? registro.professionals : [];
-      const nextProfessionals = responseProfessionals.length > 0
-        ? responseProfessionals
-        : (cachedData?.professionals && cachedData.professionals.length > 0
-          ? cachedData.professionals
-          : professionals);
+      const nextProfessionals = Array.isArray(registro.professionals) ? registro.professionals : [];
       const allActivities = Array.isArray((registro as any).activitiesList)
         ? (registro as any).activitiesList
         : [...(registro.activeActivities || []), ...(registro.completedActivities || [])];
@@ -937,10 +835,14 @@ export default function RegistroDeAtividade({ currentUser, preloadedData, viewMo
       setChildrenByParent(nextChildrenByParent);
       setProfessionals(nextProfessionals);
       applyActivitiesState(
-        mergeActivitiesWithCache(mappedActivities.filter((item) => item.status !== 'concluida'), cachedData?.activeActivities || []),
-        mergeActivitiesWithCache(mappedActivities.filter((item) => item.status === 'concluida'), cachedData?.completedActivities || []),
+        mappedActivities.filter((item) => item.status !== 'concluida'),
+        mappedActivities.filter((item) => item.status === 'concluida'),
       );
-    } catch {}
+    } catch (error) {
+      // Sem fallback local: se o Firebase falhar, avisa o usuario em vez de mostrar dado
+      // desatualizado silenciosamente (mesma armadilha do "salvou mas nao salvou de verdade").
+      setBalloonMessage(error instanceof Error ? error.message : 'Falha ao carregar dados do Firebase.');
+    }
   };
 
   useEffect(() => {

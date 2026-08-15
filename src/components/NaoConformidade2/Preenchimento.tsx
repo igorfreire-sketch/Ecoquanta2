@@ -3,14 +3,18 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Send } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
 import { disciplineMatchesSector, getSectorOptions, getUserDisciplineList } from '../../lib/disciplineCatalog';
-import { generateId, saveRecordsBatch, type Nc2Record } from './ncStore';
+import { canEditNc2Record, generateId, getRecordItems, saveRecordsBatch, updateRecord, type Nc2Item, type Nc2Record } from './ncStore';
+import type { TerceirizadaRecord } from '../Administracao';
+import { getDisciplines as getTerceirizadaDisciplines } from '../TerceirizadasCadastro';
 
 type ItemKey = 'carimbo' | 'desenho' | 'relatorio' | 'faltaArquivo';
 
 interface ItemState {
-  checked: boolean;
   c: string;
   t: string;
+  resolucao: '' | 'conformidade' | 'terceiro';
+  observacao: string;
+  historico: Array<{ autor: string; mensagem: string; dataHora: string }>;
 }
 
 const ITEM_LABELS: Record<ItemKey, string> = {
@@ -20,9 +24,9 @@ const ITEM_LABELS: Record<ItemKey, string> = {
   faltaArquivo: 'Falta de Arquivo',
 };
 
-const ITEM_UNIT: Record<ItemKey, 'folha' | 'arquivo'> = {
-  carimbo: 'folha',
-  desenho: 'folha',
+const ITEM_UNIT: Record<ItemKey, Nc2Item['unit']> = {
+  carimbo: 'projeto',
+  desenho: 'projeto',
   relatorio: 'arquivo',
   faltaArquivo: 'arquivo',
 };
@@ -30,10 +34,10 @@ const ITEM_UNIT: Record<ItemKey, 'folha' | 'arquivo'> = {
 const ITEM_KEYS: ItemKey[] = ['carimbo', 'desenho', 'relatorio', 'faltaArquivo'];
 
 const EMPTY_ITENS: Record<ItemKey, ItemState> = {
-  carimbo: { checked: false, c: '', t: '' },
-  desenho: { checked: false, c: '', t: '' },
-  relatorio: { checked: false, c: '', t: '' },
-  faltaArquivo: { checked: false, c: '', t: '' },
+  carimbo: { c: '', t: '', resolucao: '', observacao: '', historico: [] },
+  desenho: { c: '', t: '', resolucao: '', observacao: '', historico: [] },
+  relatorio: { c: '', t: '', resolucao: '', observacao: '', historico: [] },
+  faltaArquivo: { c: '', t: '', resolucao: '', observacao: '', historico: [] },
 };
 
 const selectStyle: React.CSSProperties = {
@@ -65,16 +69,6 @@ type RegistroOs = {
   contractId?: string;
 };
 
-type RegistroItem = {
-  id?: string;
-  code?: string;
-  codigo?: string;
-  name?: string;
-  nome?: string;
-  osCodigo?: string;
-  osCode?: string;
-};
-
 const getContractCode = (contract: RegistroContract) =>
   String(contract.code || contract.codigo || contract.id || '').trim();
 
@@ -90,17 +84,15 @@ const getOsName = (os: RegistroOs) =>
 const getOsContractCode = (os: RegistroOs) =>
   String(os.contractCode || os.contractCodigo || os.contratoCodigo || os.contrato || os.contractId || '').trim();
 
-const getItemCode = (item: RegistroItem) =>
-  String(item.code || item.codigo || item.id || '').trim();
-
-const getItemName = (item: RegistroItem) =>
-  String(item.name || item.nome || getItemCode(item)).trim();
-
-const getItemOsCode = (item: RegistroItem) =>
-  String(item.osCodigo || item.osCode || '').trim();
-
 function normalizeText(value?: string) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+function observationMessages(record: Nc2Record) {
+  if (record.observacoesHistorico?.length) return record.observacoesHistorico;
+  return record.observacoes?.trim()
+    ? [{ autor: record.avaliador || 'Sistema', mensagem: record.observacoes.trim(), dataHora: record.dataHora || '' }]
+    : [];
 }
 
 interface PreenchimentoProps {
@@ -109,14 +101,38 @@ interface PreenchimentoProps {
     registro?: {
       contracts?: RegistroContract[];
       osOptions?: RegistroOs[];
-      itemOptions?: RegistroItem[];
       activitiesList?: any[];
       activeActivities?: any[];
       completedActivities?: any[];
     };
+    eap?: unknown;
   };
   lockedContractCode?: string;
   disciplinas?: string[];
+  terceirizadas?: TerceirizadaRecord[];
+  // Presente = reabrir esse registro pra edicao (vindo do Kanban/Revisoes); ausente = criacao normal.
+  editRecord?: Nc2Record | null;
+  readOnly?: boolean;
+  onFinishEdit?: () => void;
+}
+
+// Reconstroi o formulario a partir de um Nc2Record existente (inverso de buildRecord),
+// pra reabrir o mesmo ID em vez de criar um registro novo.
+function itensFromRecord(record: Nc2Record): Record<ItemKey, ItemState> {
+  const byKey = new Map(getRecordItems(record).map((item) => [item.itemKey, item]));
+  const next = { ...EMPTY_ITENS };
+  ITEM_KEYS.forEach((key) => {
+    const item = byKey.get(key);
+    if (!item) return;
+    next[key] = {
+      c: item.quantidadeC ? String(item.quantidadeC) : '',
+      t: item.quantidadeT ? String(item.quantidadeT) : '',
+      resolucao: item.correcaoOrigem === 'outro_setor' ? 'terceiro' : item.correcaoOrigem === 'conformidade' ? 'conformidade' : '',
+      observacao: item.observacao || '',
+      historico: item.observacoesHistorico || [],
+    };
+  });
+  return next;
 }
 
 export default function Preenchimento({
@@ -124,16 +140,19 @@ export default function Preenchimento({
   preloadedData,
   lockedContractCode,
   disciplinas = [],
+  terceirizadas = [],
+  editRecord = null,
+  readOnly = false,
+  onFinishEdit,
 }: PreenchimentoProps) {
   const currentDisciplines = useMemo(() => getUserDisciplineList(currentUser), [currentUser]);
   const [formData, setFormData] = useState({
     avaliador: currentUser.nome || '',
     contrato: lockedContractCode || currentUser.contrato || '',
     os: '',
-    objetoOs: '',
-    objetoOsCodigo: '',
+    edificacao: '',
     disciplina: currentDisciplines[0] || currentUser.disciplina || '',
-    origemAtividade: '' as '' | 'interno' | 'terceirizado',
+    terceirizadaNome: '',
     observacoes: '',
   });
   const [itens, setItens] = useState<Record<ItemKey, ItemState>>(EMPTY_ITENS);
@@ -142,16 +161,72 @@ export default function Preenchimento({
   const [saved, setSaved] = useState(false);
   const [sending, setSending] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [observationHistory, setObservationHistory] = useState<Array<{ autor: string; mensagem: string; dataHora: string }>>([]);
+  const [editingObservation, setEditingObservation] = useState<number | null>(null);
+  const [editingObservationText, setEditingObservationText] = useState('');
+  const [canonicalActivities, setCanonicalActivities] = useState<{
+    data: PreenchimentoProps['preloadedData'];
+    user: AuthUser;
+    activities: any[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!editRecord) return;
+    setFormData({
+      avaliador: editRecord.avaliador || currentUser.nome || '',
+      contrato: editRecord.contratoCodigo || '',
+      os: editRecord.osCodigo || '',
+      // mesmo .trim() que edificacoesDaOs aplica, senao o valor gravado nao casa com a lista.
+      edificacao: (editRecord.edificacao || '').trim(),
+      disciplina: editRecord.disciplina || '',
+      terceirizadaNome: editRecord.terceirizadaNome || '',
+      observacoes: readOnly ? '' : editRecord.observacoes || '',
+    });
+    setItens(itensFromRecord(editRecord));
+    setObservationHistory(observationMessages(editRecord));
+    setErrorMessage('');
+    // ponytail: so re-preenche quando o ID muda (abrir outro card), nao a cada render.
+  }, [editRecord?.id, readOnly]);
 
   const contracts = preloadedData?.registro?.contracts || [];
   const osOptions = preloadedData?.registro?.osOptions || [];
-  const itemOptions = preloadedData?.registro?.itemOptions || [];
-  const sourceActivities = Array.isArray(preloadedData?.registro?.activitiesList) && preloadedData.registro.activitiesList.length > 0
-    ? preloadedData.registro.activitiesList
-    : [
-        ...(Array.isArray(preloadedData?.registro?.activeActivities) ? preloadedData.registro.activeActivities : []),
-        ...(Array.isArray(preloadedData?.registro?.completedActivities) ? preloadedData.registro.completedActivities : []),
-      ];
+  const fallbackActivities = useMemo(() => (
+    Array.isArray(preloadedData?.registro?.activitiesList) && preloadedData.registro.activitiesList.length > 0
+      ? preloadedData.registro.activitiesList
+      : [
+          ...(Array.isArray(preloadedData?.registro?.activeActivities) ? preloadedData.registro.activeActivities : []),
+          ...(Array.isArray(preloadedData?.registro?.completedActivities) ? preloadedData.registro.completedActivities : []),
+        ]
+  ), [preloadedData]);
+  const sourceActivities = canonicalActivities?.data === preloadedData && canonicalActivities.user === currentUser
+    ? canonicalActivities.activities
+    : fallbackActivities;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!preloadedData?.eap) {
+      setCanonicalActivities(null);
+      return () => { cancelled = true; };
+    }
+
+    void import('../Atividades')
+      .then(({ buildActivitiesFromEap }) => {
+        if (cancelled) return;
+        setCanonicalActivities({
+          data: preloadedData,
+          user: currentUser,
+          activities: buildActivitiesFromEap(preloadedData, currentUser),
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('Falha ao resolver atividades da EAP para Conformidade:', error);
+        setCanonicalActivities(null);
+      });
+
+    return () => { cancelled = true; };
+  }, [currentUser, preloadedData]);
 
   useEffect(() => {
     setFormData((prev) => ({
@@ -181,93 +256,132 @@ export default function Preenchimento({
       : groups;
   }, [disciplinas, formData.disciplina]);
 
+  // Terceirizadas cujo cadastro atende o setor de disciplina selecionado (padrão.md: uma
+  // terceirizada pode atender vários setores, entao ela aparece em cada um dos seus setores).
+  // Valor gravado legado/removido do cadastro entra como opcao sintetica pra nao ficar em branco.
+  const terceirizadaOptions = useMemo(() => {
+    const nomes = new Set<string>();
+    terceirizadas.forEach((item) => {
+      const nome = String(item.nome || '').trim();
+      if (!nome) return;
+      const disciplinasDaTerceirizada = getTerceirizadaDisciplines(item);
+      if (disciplinasDaTerceirizada.some((disciplina) => disciplineMatchesSector(disciplina, formData.disciplina))) {
+        nomes.add(nome);
+      }
+    });
+    if (formData.terceirizadaNome.trim()) nomes.add(formData.terceirizadaNome.trim());
+    return Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [terceirizadas, formData.disciplina, formData.terceirizadaNome]);
+
   const filteredOsOptions = useMemo(() => (
     osOptions.filter((os) => !formData.contrato || normalizeText(getOsContractCode(os)) === normalizeText(formData.contrato))
   ), [formData.contrato, osOptions]);
 
-  const filteredItemOptions = useMemo(() => (
-    itemOptions.filter((item) => !formData.os || normalizeText(getItemOsCode(item)) === normalizeText(formData.os))
-  ), [formData.os, itemOptions]);
+  const edificacoesDaOs = useMemo(() => {
+    if (!formData.contrato || !formData.os) return [];
+    const nomes = new Set<string>();
+    sourceActivities.forEach((activity: any) => {
+      const contractCode = String(activity?.contratoCodigo || activity?.contractCode || '').trim();
+      if (
+        normalizeText(contractCode) === normalizeText(formData.contrato) &&
+        normalizeText(String(activity?.osCodigo || '')) === normalizeText(formData.os) &&
+        String(activity?.edificio || '').trim()
+      ) {
+        nomes.add(String(activity.edificio).trim());
+      }
+    });
+    return Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
+  }, [formData.contrato, formData.os, sourceActivities]);
 
-  const matchedActivity = useMemo(() => {
-    if (!formData.contrato || !formData.os || !formData.objetoOsCodigo || !formData.disciplina) return null;
-
-    return sourceActivities.find((activity: any) => {
-      const contratoCodigo = String(activity?.contratoCodigo || '').trim();
-      const osCodigo = String(activity?.osCodigo || '').trim();
-      const itemCodigo = String(activity?.itemCodigo || '').trim();
-      const disciplina = String(activity?.criadoPorDisciplina || activity?.disciplina || '').trim();
-      const disciplineMatches = currentDisciplines.length === 0
-        ? true
-        : currentDisciplines.some((item) => disciplineMatchesSector(disciplina, item));
-      const sectorMatches = !formData.disciplina || disciplineMatchesSector(disciplina, formData.disciplina);
-
-      return (
-        normalizeText(contratoCodigo) === normalizeText(formData.contrato) &&
-        normalizeText(osCodigo) === normalizeText(formData.os) &&
-        normalizeText(itemCodigo) === normalizeText(formData.objetoOsCodigo) &&
-        disciplineMatches &&
-        sectorMatches
-      );
-    }) || null;
-  }, [currentDisciplines, formData.contrato, formData.disciplina, formData.objetoOsCodigo, formData.os, sourceActivities]);
-
-  const origemAutomatica = useMemo<'' | 'interno' | 'terceirizado'>(() => {
-    if (!matchedActivity) return '';
-    const emails = Array.isArray(matchedActivity?.profissionaisEmails)
-      ? matchedActivity.profissionaisEmails.map((item: any) => String(item || '').trim())
-      : String(matchedActivity?.profissionaisEmails || '').split(' | ').map((item) => item.trim()).filter(Boolean);
-    return emails.some((email: string) => email.toLowerCase().startsWith('terceirizada:'))
-      ? 'terceirizado'
-      : 'interno';
-  }, [matchedActivity]);
-
-  const canChooseOrigemManual = Boolean(
-    formData.contrato && formData.os && formData.objetoOsCodigo && formData.disciplina && !origemAutomatica
-  );
-
+  // ponytail: so ajusta a edificacao; nao limpa itens — toda troca de escopo feita pelo usuario
+  // ja passa por updateScope (que limpa), enquanto este efeito tambem roda quando as atividades
+  // terminam de carregar, o que apagava os itens recem-carregados de um registro em edicao.
   useEffect(() => {
-    if (origemAutomatica) {
-      setFormData((prev) => prev.origemAtividade === origemAutomatica ? prev : { ...prev, origemAtividade: origemAutomatica });
+    // Lista vazia = atividades ainda carregando ou OS sem edificacao: nao ha contra o que validar.
+    if (edificacoesDaOs.length === 0) return;
+    if (edificacoesDaOs.length === 1 && formData.edificacao !== edificacoesDaOs[0]) {
+      setFormData((prev) => ({ ...prev, edificacao: edificacoesDaOs[0] }));
       return;
     }
+    if (!formData.edificacao || edificacoesDaOs.includes(formData.edificacao)) return;
+    setFormData((prev) => ({ ...prev, edificacao: '' }));
+  }, [edificacoesDaOs, formData.edificacao]);
 
-    if (!formData.contrato || !formData.os || !formData.objetoOsCodigo || !formData.disciplina) {
-      setFormData((prev) => prev.origemAtividade ? { ...prev, origemAtividade: '' } : prev);
-    }
-  }, [formData.contrato, formData.disciplina, formData.objetoOsCodigo, formData.os, origemAutomatica]);
+  const generalDataReady = Boolean(
+    formData.avaliador.trim() &&
+    formData.contrato.trim() &&
+    formData.os.trim() &&
+    formData.disciplina.trim() &&
+    (edificacoesDaOs.length === 0 || edificacoesDaOs.includes(formData.edificacao))
+  );
 
-  const checkedItems = ITEM_KEYS.filter((key) => itens[key].checked);
-  const hasInvalidQuantities = checkedItems.some((key) => (
-    (parseInt(itens[key].c, 10) || 0) + (parseInt(itens[key].t, 10) || 0) === 0
+  const matchingActivities = useMemo(() => {
+    if (!formData.contrato || !formData.os || !formData.disciplina) return [];
+    return sourceActivities.filter((activity: any) => {
+      const contractCode = String(activity?.contratoCodigo || activity?.contractCode || '').trim();
+      const discipline = Array.isArray(activity?.disciplinas)
+        ? activity.disciplinas.join(' | ')
+        : String(activity?.criadoPorDisciplina || activity?.disciplina || '').trim();
+      return (
+        normalizeText(contractCode) === normalizeText(formData.contrato) &&
+        normalizeText(String(activity?.osCodigo || '')) === normalizeText(formData.os) &&
+        normalizeText(String(activity?.edificio || '')) === normalizeText(formData.edificacao) &&
+        disciplineMatchesSector(discipline, formData.disciplina)
+      );
+    });
+  }, [formData.contrato, formData.disciplina, formData.edificacao, formData.os, sourceActivities]);
+
+  const origemAutomatica = useMemo<'interno' | 'terceirizado'>(() => {
+    if (matchingActivities.length === 0) return currentUser.onlyThirdParty ? 'terceirizado' : 'interno';
+    // ponytail: mixed/unknown staffing stays internal; persist activity origin if that ceiling changes.
+    const allOutsourced = matchingActivities.every((activity: any) => {
+      const emails = (Array.isArray(activity?.profissionaisEmails)
+        ? activity.profissionaisEmails
+        : String(activity?.profissionaisEmails || '').split(' | '))
+        .map((item: any) => String(item || '').trim())
+        .filter(Boolean);
+      return emails.length > 0 && emails.every((email: string) => email.toLowerCase().startsWith('terceirizada:'));
+    });
+    return allOutsourced ? 'terceirizado' : 'interno';
+  }, [currentUser.onlyThirdParty, matchingActivities]);
+
+  const selectedItems = ITEM_KEYS.filter((key) => (
+    (parseInt(itens[key].c, 10) || 0) + (parseInt(itens[key].t, 10) || 0) > 0
   ));
-  const totalC = checkedItems.reduce((sum, key) => sum + (parseInt(itens[key].c, 10) || 0), 0);
-  const totalT = checkedItems.reduce((sum, key) => sum + (parseInt(itens[key].t, 10) || 0), 0);
-
-  const resultado = checkedItems.length === 0
-    ? null
-    : {
-        detalhes: checkedItems.map((key) => {
-          const c = parseInt(itens[key].c, 10) || 0;
-          const t = parseInt(itens[key].t, 10) || 0;
-          return { label: `${ITEM_LABELS[key]}: C=${c} / T=${t}` };
-        }),
-        totalC,
-        totalT,
-      };
+  const unresolvedItems = selectedItems.filter((key) => !itens[key].resolucao);
+  const totalC = selectedItems.reduce((sum, key) => sum + (parseInt(itens[key].c, 10) || 0), 0);
+  const totalT = selectedItems.reduce((sum, key) => sum + (parseInt(itens[key].t, 10) || 0), 0);
 
   const inputBase = 'w-14 h-9 text-center text-[13px] font-bold rounded-lg border outline-none transition-colors';
 
-  const toggleItem = (key: ItemKey) => {
-    setItens((prev) => ({
-      ...prev,
-      [key]: { ...prev[key], checked: !prev[key].checked, c: '', t: '' },
-    }));
+  const updateScope = (updates: Partial<typeof formData>) => {
+    setFormData((prev) => ({ ...prev, ...updates }));
+    setItens(EMPTY_ITENS);
   };
 
   const setItemQty = (key: ItemKey, field: 'c' | 't', value: string) => {
+    if (!generalDataReady) return;
     const num = value.replace(/\D/g, '').slice(0, 3);
-    setItens((prev) => ({ ...prev, [key]: { ...prev[key], [field]: num } }));
+    setItens((prev) => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        [field]: num,
+        ...(Number(num) === 0 && !((field === 'c' ? prev[key].t : prev[key].c) || '').trim()
+          ? { resolucao: '' as const }
+          : {}),
+      },
+    }));
+  };
+
+  const setItemResolution = (key: ItemKey, resolucao: ItemState['resolucao']) => {
+    if (!generalDataReady) return;
+    setItens((prev) => ({ ...prev, [key]: { ...prev[key], resolucao } }));
+  };
+
+  const setItemObservacao = (key: ItemKey, observacao: string) => {
+    if (!generalDataReady) return;
+    setItens((prev) => ({ ...prev, [key]: { ...prev[key], observacao } }));
   };
 
   const handleLimpar = () => {
@@ -275,10 +389,9 @@ export default function Preenchimento({
       avaliador: currentUser.nome || '',
       contrato: lockedContractCode || currentUser.contrato || '',
       os: '',
-      objetoOs: '',
-      objetoOsCodigo: '',
+      edificacao: '',
       disciplina: currentDisciplines[0] || currentUser.disciplina || '',
-      origemAtividade: '',
+      terceirizadaNome: '',
       observacoes: '',
     });
     setItens(EMPTY_ITENS);
@@ -286,72 +399,100 @@ export default function Preenchimento({
 
   const buildRecord = (): Nc2Record | null => {
     if (
-      !formData.avaliador ||
-      !formData.contrato ||
-      !formData.os ||
-      !formData.disciplina ||
-      !formData.objetoOs ||
-      !formData.origemAtividade ||
-      checkedItems.length === 0 ||
-      hasInvalidQuantities
+      !generalDataReady || unresolvedItems.length > 0
     ) {
       return null;
     }
 
     const selectedContract = contracts.find((item) => normalizeText(getContractCode(item)) === normalizeText(formData.contrato));
     const selectedOs = filteredOsOptions.find((item) => normalizeText(getOsCode(item)) === normalizeText(formData.os));
-    const itensRegistrados = ITEM_KEYS
-      .filter((key) => itens[key].checked)
-      .map((key) => ({
-        itemKey: key,
-        itemLabel: ITEM_LABELS[key],
-        quantidadeC: parseInt(itens[key].c, 10) || 0,
-        quantidadeT: parseInt(itens[key].t, 10) || 0,
-        unit: ITEM_UNIT[key],
-        revisado: false,
-      }));
+    const objetoOs = formData.edificacao || (selectedOs ? getOsName(selectedOs) : formData.os);
+    const objetoOsCodigo = formData.edificacao || formData.os;
+    const terceirizadaNome = formData.terceirizadaNome.trim();
+    const itensRegistrados = ITEM_KEYS.map((key): Nc2Item => {
+        const quantidadeC = parseInt(itens[key].c, 10) || 0;
+        const quantidadeT = parseInt(itens[key].t, 10) || 0;
+        // Editando um item que ja estava corrigido (pela Conformidade no Preenchimento ou
+        // confirmado em Revisoes) sem mudar a via de resolucao: mantem statusCorrecao e o
+        // registro original de quem/quando corrigiu, em vez de reverter/reescrever neste save.
+        const originalItem = editRecord ? getRecordItems(editRecord).find((item) => item.itemKey === key) : undefined;
+        const sameResolution =
+          originalItem?.correcaoOrigem ===
+          (itens[key].resolucao === 'terceiro' ? 'outro_setor' : 'conformidade');
+        const keepsOriginalFix =
+          Boolean(itens[key].resolucao) && originalItem?.statusCorrecao === 'corrigido' && sameResolution;
+        return {
+          itemKey: key,
+          itemLabel: ITEM_LABELS[key],
+          quantidadeC,
+          quantidadeT,
+          unit: ITEM_UNIT[key],
+          revisado: quantidadeT === 0 || itens[key].resolucao === 'conformidade',
+          ...(itens[key].observacao.trim() ? { observacao: itens[key].observacao.trim() } : {}),
+          ...(itens[key].historico.length > 0 ? { observacoesHistorico: itens[key].historico } : {}),
+          ...(itens[key].resolucao
+            ? {
+                correcaoOrigem: itens[key].resolucao === 'terceiro' ? 'outro_setor' as const : 'conformidade' as const,
+                ...(quantidadeT > 0
+                  ? {
+                      statusCorrecao:
+                        keepsOriginalFix || itens[key].resolucao === 'conformidade'
+                          ? ('corrigido' as const)
+                          : ('pendente' as const),
+                      ...(keepsOriginalFix
+                        ? {
+                            corrigidoEm: originalItem!.corrigidoEm || new Date().toISOString(),
+                            corrigidoPor: originalItem!.corrigidoPor || currentUser.nome || currentUser.email || '',
+                          }
+                        : itens[key].resolucao === 'conformidade'
+                          ? {
+                              corrigidoEm: new Date().toISOString(),
+                              corrigidoPor: currentUser.nome || currentUser.email || '',
+                            }
+                          : {}),
+                      // Nota de reabertura e historico da Conformidade: nao some num save do Preenchimento.
+                      ...(originalItem?.reaberturaObservacao
+                        ? { reaberturaObservacao: originalItem.reaberturaObservacao }
+                        : {}),
+                    }
+                  : {}),
+              }
+            : {}),
+        };
+      });
 
     const now = new Date();
-    const dataHora = `${now.toLocaleDateString('pt-BR')} as ${now.toLocaleTimeString('pt-BR', {
+    const dataHora = editRecord?.dataHora || `${now.toLocaleDateString('pt-BR')} as ${now.toLocaleTimeString('pt-BR', {
       hour: '2-digit',
       minute: '2-digit',
     })} por ${formData.avaliador}`;
 
     return {
-      id: generateId(),
+      id: editRecord?.id || generateId(),
       contratoCodigo: formData.contrato,
       contratoNome: selectedContract ? getContractName(selectedContract) : formData.contrato,
-      os: selectedOs ? `${getOsCode(selectedOs)} - ${getOsName(selectedOs)}` : formData.os,
+      os: selectedOs ? getOsName(selectedOs) : formData.os,
       osCodigo: formData.os,
-      objetoOs: formData.objetoOs,
-      objetoOsCodigo: formData.objetoOsCodigo || formData.objetoOs,
+      objetoOs,
+      objetoOsCodigo,
+      edificacao: formData.edificacao,
       disciplina: formData.disciplina,
-      origemAtividade: formData.origemAtividade || undefined,
+      origemAtividade: origemAutomatica,
+      ...(terceirizadaNome ? { terceirizadaNome } : {}),
       avaliador: formData.avaliador,
-      avaliadorEmail: currentUser.email || '',
+      avaliadorEmail: editRecord?.avaliadorEmail || currentUser.email || '',
       observacoes: formData.observacoes,
       dataHora,
       itens: itensRegistrados,
       itensT: itensRegistrados.filter((item) => item.quantidadeT > 0),
-      concluido: itensRegistrados.filter((item) => item.quantidadeT > 0).length === 0,
-      createdAt: now.toISOString(),
+      concluido: itensRegistrados.filter((item) => item.quantidadeT > 0).every(
+        (item) => item.statusCorrecao === 'corrigido',
+      ),
+      createdAt: editRecord?.createdAt || now.toISOString(),
       updatedAt: now.toISOString(),
       updatedByNome: currentUser.nome || '',
       updatedByEmail: currentUser.email || '',
     };
-  };
-
-  const handleRegistrarProxima = () => {
-    const record = buildRecord();
-    if (!record) {
-      setErrorMessage(hasInvalidQuantities
-        ? 'Informe C ou T maior que zero em cada item marcado.'
-        : 'Preencha os campos obrigatorios e marque pelo menos um item verificado.');
-      return;
-    }
-    setErrorMessage('');
-    setDraftRecords((prev) => [record, ...prev]);
-    handleLimpar();
   };
 
   const handleEnviarAtividades = async () => {
@@ -378,18 +519,106 @@ export default function Preenchimento({
     }
   };
 
-  const canRegisterCurrent = Boolean(
-    formData.avaliador && formData.contrato && formData.os && formData.disciplina && formData.objetoOs && formData.origemAtividade && checkedItems.length > 0 && !hasInvalidQuantities
-  );
+  const handleSalvarEdicao = async () => {
+    // Mesmo gate do botao Editar em Revisoes, agora no ponto do save: quem chega aqui por outro
+    // caminho (estado React nao e fronteira de seguranca) tambem e barrado.
+    if (editRecord && !canEditNc2Record(currentUser, editRecord)) {
+      setErrorMessage('Apenas Lider, Coordenador ou o autor do registro pode salvar esta edicao.');
+      return;
+    }
+    const record = buildRecord();
+    if (!record) {
+      setErrorMessage(unresolvedItems.length > 0
+        ? 'Escolha Conformidade ou Terceiro para cada item preenchido.'
+        : 'Preencha os campos obrigatorios e informe C ou T maior que zero em pelo menos um item.');
+      return;
+    }
+    setSending(true);
+    setErrorMessage('');
+    try {
+      await updateRecord(record, { nome: currentUser.nome, email: currentUser.email });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+      onFinishEdit?.();
+    } catch (error) {
+      console.error('Erro ao salvar edicao de conformidade:', error);
+      setErrorMessage('Nao foi possivel salvar no Firebase. Verifique a conexao e tente novamente.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleEnviarObservacao = async () => {
+    if (!editRecord || !readOnly) return;
+    const mensagem = formData.observacoes.trim();
+    if (!mensagem) return;
+    setSending(true);
+    try {
+      await updateRecord(
+        {
+          ...editRecord,
+          observacoesHistorico: [
+            ...observationHistory,
+            { autor: currentUser.nome || currentUser.email || 'Usuário', mensagem, dataHora: new Date().toISOString() },
+          ],
+        },
+        currentUser,
+      );
+      setObservationHistory((prev) => [
+        ...prev,
+        { autor: currentUser.nome || currentUser.email || 'Usuário', mensagem, dataHora: new Date().toISOString() },
+      ]);
+      setFormData((prev) => ({ ...prev, observacoes: '' }));
+      setSaved(true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar a observação.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const isOwnObservation = (autor: string) => {
+    const current = normalizeText(currentUser.nome || currentUser.email);
+    return current !== '' && normalizeText(autor) === current;
+  };
+
+  const handleEditarObservacao = async (index: number) => {
+    if (!editRecord || !readOnly || !editingObservationText.trim()) return;
+    const history = observationHistory.map((item, itemIndex) => itemIndex === index
+      ? { ...item, mensagem: editingObservationText.trim() }
+      : item);
+    setSending(true);
+    try {
+      await updateRecord({ ...editRecord, observacoesHistorico: history }, currentUser);
+      setObservationHistory(history);
+      setEditingObservation(null);
+      setEditingObservationText('');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível editar a observação.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleExcluirObservacao = async (index: number) => {
+    if (!editRecord || !readOnly || !isOwnObservation(observationHistory[index]?.autor || '')) return;
+    const history = observationHistory.filter((_, itemIndex) => itemIndex !== index);
+    setSending(true);
+    try {
+      await updateRecord({ ...editRecord, observacoesHistorico: history }, currentUser);
+      setObservationHistory(history);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível excluir a observação.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const canRegisterCurrent = generalDataReady && unresolvedItems.length === 0;
+  const isEditing = Boolean(editRecord);
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-[980px] mx-auto animate-in fade-in duration-500 pb-10">
-      <div>
-        <p className="text-[10px] font-extrabold uppercase tracking-[1.2px] text-[#94A3B8]">CONFORMIDADE</p>
-        <h2 className="text-[18px] font-black text-[#2D2D2D]">Registro de Conformidade</h2>
-        <p className="mt-1 text-[15px] font-medium text-[#757575]">Preenchimento da analise documental</p>
-      </div>
-
       <div className="rounded-xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
         <div className="mb-6">
           <h3 className="text-[16px] font-bold text-[#2D2D2D]">Dados Gerais da Analise</h3>
@@ -409,8 +638,8 @@ export default function Preenchimento({
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Contrato *</label>
               <SearchableSelect
                 value={formData.contrato}
-                onChange={(e) => setFormData({ ...formData, contrato: e.target.value, os: '', objetoOs: '', objetoOsCodigo: '', origemAtividade: '' })}
-                disabled={Boolean(lockedContractCode)}
+                onChange={(e) => updateScope({ contrato: e.target.value, os: '', edificacao: '' })}
+                disabled={readOnly || Boolean(lockedContractCode)}
                 className="w-full h-11 px-3 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer"
                 style={selectStyle}
               >
@@ -430,7 +659,8 @@ export default function Preenchimento({
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">OS *</label>
               <SearchableSelect
                 value={formData.os}
-                onChange={(e) => setFormData({ ...formData, os: e.target.value, objetoOs: '', objetoOsCodigo: '', origemAtividade: '' })}
+                onChange={(e) => updateScope({ os: e.target.value, edificacao: '' })}
+                disabled={readOnly}
                 className={`w-full h-11 px-3 bg-[#F9FAFB] border ${formData.os ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'} rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer`}
                 style={selectStyle}
               >
@@ -439,35 +669,7 @@ export default function Preenchimento({
                   const code = getOsCode(os);
                   return (
                     <option key={code} value={code}>
-                      {code} - {getOsName(os)}
-                    </option>
-                  );
-                })}
-              </SearchableSelect>
-            </div>
-
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Atividade *</label>
-              <SearchableSelect
-                value={formData.objetoOsCodigo}
-                onChange={(e) => {
-                  const selected = filteredItemOptions.find((item) => normalizeText(getItemCode(item)) === normalizeText(e.target.value));
-                  setFormData({
-                    ...formData,
-                    objetoOsCodigo: e.target.value,
-                    objetoOs: selected ? getItemName(selected) : '',
-                    origemAtividade: '',
-                  });
-                }}
-                className={`w-full h-11 px-3 bg-[#F9FAFB] border ${formData.objetoOs ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'} rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer`}
-                style={selectStyle}
-              >
-                <option value="">Selecione...</option>
-                {filteredItemOptions.map((item) => {
-                  const code = getItemCode(item);
-                  return (
-                    <option key={code} value={code}>
-                      {code} - {getItemName(item)}
+                      {getOsName(os)} ({code})
                     </option>
                   );
                 })}
@@ -475,10 +677,30 @@ export default function Preenchimento({
             </div>
 
             <div className="space-y-2">
+              <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">
+                Edificação {edificacoesDaOs.length > 0 ? '*' : ''}
+              </label>
+              <SearchableSelect
+                value={formData.edificacao}
+                onChange={(e) => updateScope({ edificacao: e.target.value })}
+                disabled={readOnly || edificacoesDaOs.length === 0}
+                searchPlaceholder="Pesquisar edificação..."
+                className={`w-full h-11 px-3 border ${formData.edificacao ? 'border-[#F05D28] ring-1 ring-[#F05D28]/20' : 'border-[#E5E7EB]'} rounded-lg text-[13px] outline-none focus:border-[#F05D28] transition-colors appearance-none ${edificacoesDaOs.length === 0 ? 'cursor-not-allowed bg-[#F3F4F6] text-[#9CA3AF]' : 'cursor-pointer bg-[#F9FAFB] text-[#2D2D2D]'}`}
+                style={selectStyle}
+              >
+                <option value="">{edificacoesDaOs.length === 0 ? 'Sem edificação nesta OS' : 'Selecione...'}</option>
+                {edificacoesDaOs.map((edificacao) => (
+                  <option key={edificacao} value={edificacao}>{edificacao}</option>
+                ))}
+              </SearchableSelect>
+            </div>
+
+            <div className="space-y-2">
               <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Disciplina *</label>
               <SearchableSelect
                 value={formData.disciplina}
-                onChange={(e) => setFormData({ ...formData, disciplina: e.target.value, origemAtividade: '' })}
+                onChange={(e) => updateScope({ disciplina: e.target.value })}
+                disabled={readOnly}
                 className="w-full h-11 px-3 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer"
                 style={selectStyle}
               >
@@ -490,58 +712,24 @@ export default function Preenchimento({
                 ))}
               </SearchableSelect>
             </div>
-          </div>
 
-          <div className="mb-8">
-            <div className="flex flex-col gap-3">
-              <div>
-                <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">Classificacao da atividade</label>
-                <p className="mt-1 text-[12px] text-[#757575]">
-                  A classificacao fica automatica quando a atividade ja existe na Area Tecnica. Se ainda nao existir, escolha manualmente.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-3">
-                <label className={`inline-flex items-center gap-3 rounded-xl border px-4 py-3 text-[13px] font-semibold transition-colors ${
-                  formData.origemAtividade === 'interno'
-                    ? 'border-[#1D4ED8] bg-[#EFF6FF] text-[#1D4ED8]'
-                    : canChooseOrigemManual
-                      ? 'border-[#E5E7EB] bg-white text-[#2D2D2D]'
-                      : 'border-[#E5E7EB] bg-[#F3F4F6] text-[#9CA3AF]'
-                }`}>
-                  <input
-                    type="checkbox"
-                    checked={formData.origemAtividade === 'interno'}
-                    disabled={!canChooseOrigemManual || Boolean(origemAutomatica)}
-                    onChange={() => setFormData((prev) => ({ ...prev, origemAtividade: prev.origemAtividade === 'interno' ? '' : 'interno' }))}
-                    className="h-4 w-4 accent-[#1D4ED8]"
-                  />
-                  Interno
-                </label>
-
-                <label className={`inline-flex items-center gap-3 rounded-xl border px-4 py-3 text-[13px] font-semibold transition-colors ${
-                  formData.origemAtividade === 'terceirizado'
-                    ? 'border-[#F05D28] bg-[#FFF7ED] text-[#C2410C]'
-                    : canChooseOrigemManual
-                      ? 'border-[#E5E7EB] bg-white text-[#2D2D2D]'
-                      : 'border-[#E5E7EB] bg-[#F3F4F6] text-[#9CA3AF]'
-                }`}>
-                  <input
-                    type="checkbox"
-                    checked={formData.origemAtividade === 'terceirizado'}
-                    disabled={!canChooseOrigemManual || Boolean(origemAutomatica)}
-                    onChange={() => setFormData((prev) => ({ ...prev, origemAtividade: prev.origemAtividade === 'terceirizado' ? '' : 'terceirizado' }))}
-                    className="h-4 w-4 accent-[#F05D28]"
-                  />
-                  Terceirizado
-                </label>
-              </div>
-
-              {origemAutomatica && (
-                <div className="text-[12px] font-medium text-[#757575]">
-                  Classificacao automatica pela Area Tecnica: <span className="font-bold text-[#2D2D2D]">{origemAutomatica === 'terceirizado' ? 'Terceirizado' : 'Interno'}</span>
-                </div>
-              )}
+            <div className="space-y-2">
+              <label className="text-[11px] font-bold text-[#757575] uppercase tracking-wider">
+                Nome da terceirizada (opcional)
+              </label>
+              <SearchableSelect
+                value={formData.terceirizadaNome}
+                onChange={(e) => setFormData({ ...formData, terceirizadaNome: e.target.value })}
+                disabled={readOnly}
+                searchPlaceholder="Pesquisar terceirizada..."
+                className="w-full h-11 px-3 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors appearance-none cursor-pointer"
+                style={selectStyle}
+              >
+                <option value="">Selecione...</option>
+                {terceirizadaOptions.map((nome) => (
+                  <option key={nome} value={nome}>{nome}</option>
+                ))}
+              </SearchableSelect>
             </div>
           </div>
 
@@ -556,15 +744,21 @@ export default function Preenchimento({
         </div>
       </div>
 
-      <div className="rounded-xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6">
+      <div
+        aria-disabled={!generalDataReady}
+        className={`rounded-xl shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6 ${generalDataReady ? 'bg-white' : 'bg-[#F8F9FA]'}`}
+      >
         <div className="mb-6">
           <h3 className="text-[16px] font-bold text-[#2D2D2D] mb-1">Itens verificados no documento</h3>
-          <p className="text-[13px] text-[#757575]">Marque carimbo, desenho, relatorio, falta de arquivo e os quantitativos encontrados.</p>
+          {!generalDataReady && (
+            <p className="mt-2 text-[12px] font-semibold text-[#64748B]">
+              Preencha os Dados Gerais da Analise para liberar os itens.
+            </p>
+          )}
         </div>
 
-        <div className="w-full">
-          <div className="inline-grid grid-cols-[160px_32px_56px_56px] gap-x-3 items-center px-2 mb-1">
-            <span />
+        <div className={`w-full transition-opacity ${generalDataReady ? '' : 'opacity-50'}`}>
+          <div className="grid w-full grid-cols-[minmax(180px,220px)_56px_56px_minmax(240px,1fr)] gap-x-3 items-center px-2 mb-1">
             <span />
             <span className="text-[12px] font-bold text-[#2D2D2D] text-center">C</span>
             <span className="text-[12px] font-bold text-[#2D2D2D] text-center">T</span>
@@ -573,42 +767,79 @@ export default function Preenchimento({
           <div className="flex flex-col gap-1">
             {ITEM_KEYS.map((key) => {
               const item = itens[key];
+              const isSelected = (parseInt(item.c, 10) || 0) + (parseInt(item.t, 10) || 0) > 0;
               return (
-                <div key={key} className="inline-grid grid-cols-[160px_32px_56px_56px] gap-x-3 items-center px-2 py-2.5">
+                <div key={key} className="grid w-full grid-cols-[minmax(180px,220px)_56px_56px_minmax(240px,1fr)] gap-x-3 items-center px-2 py-2.5">
                   <div>
-                    <span className={`text-[13px] font-medium transition-colors ${item.checked ? 'text-[#2D2D2D]' : 'text-[#9CA3AF]'}`}>
+                    <span className={`text-[13px] font-medium transition-colors ${isSelected ? 'text-[#2D2D2D]' : 'text-[#757575]'}`}>
                       {ITEM_LABELS[key]}
                     </span>
-                    <span className={`ml-2 text-[10px] font-bold uppercase tracking-wide ${item.checked ? 'text-[#F05D28]' : 'text-[#D1D5DB]'}`}>
+                    <span className={`ml-2 text-[10px] font-bold uppercase tracking-wide ${isSelected ? 'text-[#F05D28]' : 'text-[#9CA3AF]'}`}>
                       {ITEM_UNIT[key]}
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => toggleItem(key)}
-                    className={`w-7 h-7 rounded-md border flex items-center justify-center transition-all ${item.checked ? 'bg-[#F05D28] border-[#F05D28]' : 'bg-white border-[#D1D5DB]'}`}
-                  >
-                    {item.checked && (
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                        <path d="M3 7.2L5.8 10L11 4.8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    )}
-                  </button>
-
                   <input
                     value={item.c}
                     onChange={(e) => setItemQty(key, 'c', e.target.value)}
-                    disabled={!item.checked}
-                    className={`${inputBase} ${item.checked ? 'border-[#E5E7EB] bg-white text-[#2D2D2D] focus:border-[#F05D28]' : 'border-[#F3F4F6] bg-[#F9FAFB] text-[#D1D5DB]'}`}
+                    disabled={readOnly || !generalDataReady}
+                    inputMode="numeric"
+                    aria-label={`${ITEM_LABELS[key]} C`}
+                    placeholder="0"
+                    className={`${inputBase} ${generalDataReady ? 'border-[#E5E7EB] bg-white text-[#2D2D2D] focus:border-[#F05D28]' : 'cursor-not-allowed border-[#E5E7EB] bg-[#F3F4F6] text-[#9CA3AF]'}`}
                   />
 
                   <input
                     value={item.t}
                     onChange={(e) => setItemQty(key, 't', e.target.value)}
-                    disabled={!item.checked}
-                    className={`${inputBase} ${item.checked ? 'border-[#E5E7EB] bg-white text-[#2D2D2D] focus:border-[#F05D28]' : 'border-[#F3F4F6] bg-[#F9FAFB] text-[#D1D5DB]'}`}
+                    disabled={readOnly || !generalDataReady}
+                    inputMode="numeric"
+                    aria-label={`${ITEM_LABELS[key]} T`}
+                    placeholder="0"
+                    className={`${inputBase} ${generalDataReady ? 'border-[#E5E7EB] bg-white text-[#2D2D2D] focus:border-[#F05D28]' : 'cursor-not-allowed border-[#E5E7EB] bg-[#F3F4F6] text-[#9CA3AF]'}`}
                   />
+
+                  {isSelected && (
+                    <div className="col-start-4 row-start-1 col-span-1 row-span-2 flex flex-wrap items-center gap-3 rounded-lg bg-[#F8FAFC] px-3 py-2">
+                      <span className="text-[10px] font-extrabold uppercase tracking-[0.8px] text-[#64748B]">
+                        Resolvido por
+                      </span>
+                      {([
+                        ['conformidade', 'Já foi resolvido pela Conformidade'],
+                        ['terceiro', 'Terceiro'],
+                      ] as const).map(([value, label]) => (
+                        <label key={value} className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] font-bold text-[#475569]">
+                          <input
+                            type="radio"
+                            name={`resolucao-${key}`}
+                            value={value}
+                            checked={item.resolucao === value}
+                            onChange={() => setItemResolution(key, value)}
+                            disabled={readOnly || !generalDataReady}
+                            className="h-3.5 w-3.5 accent-[#F05D28]"
+                          />
+                          {label}
+                        </label>
+                      ))}
+                      {!item.resolucao && (
+                        <span className="text-[10px] font-semibold text-[#B45309]">selecione uma opção</span>
+                      )}
+                      {item.historico.map((mensagem, index) => (
+                        <p key={`${mensagem.dataHora}-${index}`} className="w-full basis-full rounded-md bg-white px-2 py-1 text-[11px] text-[#475569]">
+                          <strong>{mensagem.autor}:</strong> {mensagem.mensagem}
+                        </p>
+                      ))}
+                      <textarea
+                        value={item.observacao}
+                        onChange={(e) => setItemObservacao(key, e.target.value)}
+                        disabled={readOnly || !generalDataReady}
+                        placeholder="Observação do item (opcional)"
+                        rows={1}
+                        aria-label={`${ITEM_LABELS[key]} observação`}
+                        className="w-full basis-full h-9 px-3 py-1.5 bg-white border border-[#E5E7EB] rounded-lg text-[13px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors resize-none"
+                      />
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -617,70 +848,92 @@ export default function Preenchimento({
       </div>
 
       <div className="rounded-xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6">
-        <div className="flex flex-col gap-4">
-          <div>
-            <h3 className="text-[16px] font-bold text-[#2D2D2D] mb-1">Resultado da analise</h3>
-            <p className="text-[13px] text-[#757575]">Resumo automatico com base nos itens marcados.</p>
-          </div>
-
-          {resultado ? (
-            <div className="space-y-3">
-              <div className="flex flex-col gap-2">
-                {resultado.detalhes.map((detalhe) => (
-                  <div key={detalhe.label} className="px-4 py-3 rounded-xl bg-[#F8F9FA] text-[13px] font-medium text-[#2D2D2D]">
-                    {detalhe.label}
+        <label className="block text-[11px] font-bold text-[#757575] uppercase tracking-wider mb-3">
+          {readOnly ? 'Observações / conversa' : 'Observacoes'}
+        </label>
+        {readOnly && editRecord && (
+          <div className="mb-3 space-y-2">
+            {observationHistory.map((item, index) => (
+              <div key={`${item.dataHora}-${index}`} className="rounded-lg bg-[#F8FAFC] px-3 py-2 text-[12px] text-[#475569]">
+                {editingObservation === index ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={editingObservationText}
+                      onChange={(event) => setEditingObservationText(event.target.value)}
+                      className="min-w-0 flex-1 rounded-md border border-[#E5E7EB] bg-white px-2 py-1 outline-none focus:border-[#F05D28]"
+                    />
+                    <button type="button" onClick={() => void handleEditarObservacao(index)} className="text-[11px] font-bold text-[#F05D28]">Salvar</button>
+                    <button type="button" onClick={() => setEditingObservation(null)} className="text-[11px] font-bold text-[#94A3B8]">Cancelar</button>
                   </div>
-                ))}
+                ) : (
+                  <div className="flex items-start justify-between gap-3">
+                    <span><strong>{item.autor}:</strong> {item.mensagem}</span>
+                    {isOwnObservation(item.autor) && (
+                      <span className="flex shrink-0 gap-2">
+                        <button type="button" onClick={() => { setEditingObservation(index); setEditingObservationText(item.mensagem); }} className="text-[10px] font-bold text-[#64748B] hover:text-[#F05D28]">Editar</button>
+                        <button type="button" onClick={() => void handleExcluirObservacao(index)} className="text-[10px] font-bold text-[#94A3B8] hover:text-[#B91C1C]">Excluir</button>
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="rounded-xl bg-[#F8F9FA] p-4">
-                  <span className="text-[12px] font-bold text-[#757575] uppercase tracking-wide">Sem nao conformidade</span>
-                  <p className="text-[24px] font-bold text-[#2D2D2D] mt-2">{resultado.totalC}</p>
-                </div>
-                <div className="rounded-xl bg-[#FFF3EC] p-4">
-                  <span className="text-[12px] font-bold text-[#F05D28] uppercase tracking-wide">Com nao conformidade</span>
-                  <p className="text-[24px] font-bold text-[#F05D28] mt-2">{resultado.totalT}</p>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-xl bg-[#F8F9FA] p-6 text-[14px] text-[#94A3B8] text-center">
-              Selecione os itens avaliados para gerar o resumo.
-            </div>
+            ))}
+          </div>
+        )}
+        <div className="flex items-end gap-2">
+          <textarea
+            value={formData.observacoes}
+            onChange={(e) => setFormData({ ...formData, observacoes: e.target.value })}
+            disabled={false}
+            rows={5}
+            placeholder="Adicione observacoes, explique a nao conformidade ou registre orientacoes de correcao..."
+            className="min-w-0 flex-1 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3 text-[14px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors resize-y"
+          />
+          {readOnly && (
+            <button
+              type="button"
+              onClick={() => void handleEnviarObservacao()}
+              disabled={sending || !formData.observacoes.trim()}
+              aria-label="Enviar observação"
+              className="mb-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F05D28]/10 text-[#F05D28] transition-colors hover:bg-[#F05D28]/20 disabled:opacity-40"
+            >
+              <Send size={14} />
+            </button>
           )}
         </div>
       </div>
 
-      <div className="rounded-xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6">
-        <label className="block text-[11px] font-bold text-[#757575] uppercase tracking-wider mb-3">Observacoes</label>
-        <textarea
-          value={formData.observacoes}
-          onChange={(e) => setFormData({ ...formData, observacoes: e.target.value })}
-          rows={5}
-          placeholder="Adicione observacoes, explique a nao conformidade ou registre orientacoes de correcao..."
-          className="w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3 text-[14px] text-[#2D2D2D] outline-none focus:border-[#F05D28] transition-colors resize-y"
-        />
-      </div>
-
-      <div className="flex flex-col sm:flex-row gap-3 justify-end">
-        <button
-          type="button"
-          onClick={handleLimpar}
-          className="h-12 px-6 rounded-xl border border-[#E5E7EB] bg-white text-[#757575] text-[14px] font-bold hover:bg-[#F9FAFB] transition-colors"
-        >
-          Limpar
-        </button>
-        <button
-          type="button"
-          onClick={handleRegistrarProxima}
-          disabled={!canRegisterCurrent}
-          className="h-12 px-6 rounded-xl border border-[#F05D28] bg-white text-[#F05D28] text-[14px] font-bold hover:bg-[#FFF7ED] transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          <Plus size={16} />
-          Registrar proxima atividade +
-        </button>
-      </div>
+      {isEditing && !readOnly ? (
+        <div className="flex flex-col sm:flex-row gap-3 justify-end">
+          <button
+            type="button"
+            onClick={() => onFinishEdit?.()}
+            disabled={sending}
+            className="h-12 px-6 rounded-xl border border-[#E5E7EB] bg-white text-[#757575] text-[14px] font-bold hover:bg-[#F9FAFB] transition-colors disabled:opacity-50"
+          >
+            Cancelar edição
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSalvarEdicao()}
+            disabled={sending || !canRegisterCurrent}
+            className="h-12 px-6 rounded-2xl bg-[#FACC15] text-[#5B4300] text-[14px] font-black shadow-xl shadow-[#FACC15]/30 inline-flex items-center justify-center gap-2 hover:bg-[#EAB308] disabled:opacity-60"
+          >
+            <Send size={16} />
+            {sending ? 'Salvando...' : 'Salvar alterações'}
+          </button>
+        </div>
+      ) : !readOnly ? (
+        <div className="flex flex-col sm:flex-row gap-3 justify-end">
+          <button
+            type="button"
+            onClick={handleLimpar}
+            className="h-12 px-6 rounded-xl border border-[#E5E7EB] bg-white text-[#757575] text-[14px] font-bold hover:bg-[#F9FAFB] transition-colors"
+          >
+            Limpar
+          </button>
+        </div>
+      ) : null}
 
       {errorMessage && (
         <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">
@@ -688,13 +941,13 @@ export default function Preenchimento({
         </div>
       )}
 
-      {(draftRecords.length > 0 || canRegisterCurrent) && (
+      {!isEditing && (draftRecords.length > 0 || canRegisterCurrent) && (
         <div className="sticky bottom-6 z-20 flex justify-end">
           <button
             type="button"
             onClick={() => void handleEnviarAtividades()}
             disabled={sending || (!canRegisterCurrent && draftRecords.length === 0)}
-            className="h-14 px-6 rounded-2xl bg-[#FACC15] text-[#5B4300] text-[14px] font-black shadow-xl shadow-[#FACC15]/30 inline-flex items-center justify-center gap-2 hover:bg-[#EAB308] disabled:opacity-60"
+            className="h-14 px-6 rounded-2xl bg-[#F05D28] text-white text-[14px] font-black shadow-xl shadow-black/20 inline-flex items-center justify-center gap-2 hover:bg-[#D94E1F] disabled:opacity-60"
           >
             <Send size={18} />
             {sending ? 'Enviando atividade...' : 'Enviar atividade'}
@@ -702,12 +955,12 @@ export default function Preenchimento({
         </div>
       )}
 
-      {draftRecords.length > 0 && (
+      {!isEditing && draftRecords.length > 0 && (
         <div className="rounded-xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] p-6">
           <div className="flex items-center justify-between gap-4 mb-4">
             <div>
-              <h3 className="text-[16px] font-bold text-[#2D2D2D]">Atividades registradas nessa janela</h3>
-              <p className="text-[13px] text-[#757575]">Essas atividades serao enviadas para Revisoes.</p>
+              <h3 className="text-[16px] font-bold text-[#2D2D2D]">Analises registradas nessa janela</h3>
+              <p className="text-[13px] text-[#757575]">Essas analises serao enviadas para Revisoes.</p>
             </div>
             <span className="rounded-full bg-[#FFF3EC] px-3 py-1 text-[11px] font-bold text-[#F05D28]">
               {draftRecords.length} pendente(s)

@@ -24,6 +24,7 @@ interface CronogramasProps {
   onSaveNote?: (sheet: AnnotationSheet) => Promise<void>;
   onDeleteNote?: (id: string) => Promise<void>;
   preloadedData?: any;
+  onAbrirNotas?: () => void;
 }
 
 // Mesma logica de deteccao de SolucoesDigitais.tsx: aponta a causa real (regra do Firestore nao
@@ -53,7 +54,7 @@ function copiarCronograma(origem: CronogramaDoc, autor: { nome: string; email: s
 // autor, botao .MD, abas Meus/Publicos, card com menu de 3 pontos) + o botao/modal de criacao
 // no estilo de Notes.tsx, adaptados ao que CronogramaDoc realmente tem (sem contrato/OS/
 // disciplina/edificação — esses campos nao existem no modelo, entao nao entraram nos filtros).
-export default function Cronogramas({ currentUser, usuarios = [], notes = [], onSaveNote, onDeleteNote, preloadedData }: CronogramasProps) {
+export default function Cronogramas({ currentUser, usuarios = [], notes = [], onSaveNote, onDeleteNote, preloadedData, onAbrirNotas }: CronogramasProps) {
   const [cronogramas, setCronogramas] = useState<CronogramaDoc[]>([]);
   const [abertoId, setAbertoId] = useState<string | null>(null);
   const [carregado, setCarregado] = useState(false);
@@ -247,14 +248,26 @@ export default function Cronogramas({ currentUser, usuarios = [], notes = [], on
   return (
     <div className="rounded-2xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
       <div className="mb-5 flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={abrirNovo}
-          className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F05D28] px-4 text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F] cursor-pointer"
-        >
-          <Plus size={15} />
-          Novo Cronograma
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={abrirNovo}
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F05D28] px-4 text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F] cursor-pointer"
+          >
+            <Plus size={15} />
+            Novo Cronograma
+          </button>
+          {onAbrirNotas && (
+            <button
+              type="button"
+              onClick={onAbrirNotas}
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#F05D28] px-4 text-[13px] font-bold text-[#F05D28] transition-colors hover:bg-[#FFF3EC] cursor-pointer"
+            >
+              <FileText size={15} />
+              Notas
+            </button>
+          )}
+        </div>
       </div>
 
       {erroAcao && (

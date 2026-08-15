@@ -1,6 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Globe, Lock, Network, Plus } from 'lucide-react';
+import { Calendar, FileText, Globe, Lock, Network, Plus } from 'lucide-react';
 import { getDisciplineDisplayName, buildActivitiesFromEap } from '../Atividades';
 import SearchableSelect from '../SearchableSelect';
 import { disciplineMatchesSector, getSectorOptions } from '../../lib/disciplineCatalog';
@@ -32,9 +32,10 @@ interface NotesProps {
   noteIdsComCronograma?: Set<string>;
   contractScopeCode?: string;
   readOnly?: boolean;
+  onAbrirProject?: () => void;
 }
 
-export default function Notes({ disciplinas, notes, osOptions, currentUser, preloadedData, usuarios = [], abrirNota, onNotaAberta, onSaveNote, onDeleteNote, noteIdsComCronograma, contractScopeCode = '', readOnly = false }: NotesProps) {
+export default function Notes({ disciplinas, notes, osOptions, currentUser, preloadedData, usuarios = [], abrirNota, onNotaAberta, onSaveNote, onDeleteNote, noteIdsComCronograma, contractScopeCode = '', readOnly = false, onAbrirProject }: NotesProps) {
   const [mapaAberto, setMapaAberto] = React.useState(false);
   // Nota aberta no editor por um botao daqui (Nova nota) ou por um no do Mapa Mental.
   const [sheetAberta, setSheetAberta] = React.useState<AnnotationSheet | null>(null);
@@ -193,6 +194,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
   return (
     <div className="rounded-2xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
       <div className="mb-5 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
         {!readOnly && (
           <button
             type="button"
@@ -203,6 +205,17 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
             Nova nota
           </button>
         )}
+        {onAbrirProject && (
+          <button
+            type="button"
+            onClick={onAbrirProject}
+            className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#F05D28] px-4 text-[13px] font-bold text-[#F05D28] transition-colors hover:bg-[#FFF3EC] cursor-pointer"
+          >
+            <Calendar size={15} />
+            Project
+          </button>
+        )}
+        </div>
         <button
           type="button"
           onClick={() => setMapaAberto(true)}

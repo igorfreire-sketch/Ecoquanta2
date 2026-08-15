@@ -1,6 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, Check, ChevronLeft, ChevronRight, Clock, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, CalendarClock, Check, ChevronLeft, ChevronRight, Clock, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, History, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
 import SearchableSelect from '../SearchableSelect';
 import CampoDialog from '../CampoDialog';
 import PdfExportDialog from '../PdfExportDialog';
@@ -15,6 +15,15 @@ import {
   remapStyles, spliceSizes, type BancoMerge, type CellStyle,
 } from '../../lib/bancoGrid';
 import { aquecerCorretor, sugerirCorrecoes, trocarPalavra, type SugestaoOrtografica } from '../../lib/spellcheck';
+import {
+  isNoteOwner,
+  previewNoteProposal,
+  proposalChangesCell,
+  type NoteProposal,
+  type NoteSaveIntent,
+} from '../../lib/noteProposals';
+import type { CronogramaDoc } from '../SolucoesDigitais';
+import { addDias, criarLinhaVazia, diffDias, proximoSeq, type CronoRow } from '../../lib/cronoRow';
 import CronogramaResumo from './CronogramaResumo';
 import MindMap from './MindMap';
 
@@ -91,9 +100,16 @@ export interface AnnotationSheet {
   marcadosUsuarios?: string[];
   // Coluna do Kanban de "Minhas Notas". Ausente = tratado como 'criado' (nota antiga sem o campo).
   status?: 'criado' | 'iniciado' | 'concluido';
+  // Nome de quem arrastou a nota por ultimo. Ausente = nota nunca movida por drag (nao inventar nome).
+  movidoPor?: string;
   // Edificacao especifica dentro da OS vinculada (ver activities[].edificio, populado via
   // eap.edificioPorItem). Opcional - so faz sentido quando a OS em osCodigo tem edificacoes.
   edificacao?: string;
+  // Vinculo leve: o Project continua sendo um documento proprio em `cronogramas`.
+  projectId?: string;
+  // Proposta unica e opcional; notas antigas continuam validas sem este campo.
+  pendingProposal?: NoteProposal;
+  historicoSalvamentos?: Array<{ titulo: string; salvoEm: string; salvoPor: string }>;
   // Legado: antes de suportar varios blocos de notas, o texto livre unico ficava aqui. Migrado por getSheetTextos.
   texto?: string;
   // Legado: antes de suportar varios bancos, a tabela unica ficava aqui. Migrada por getSheetBancos.
@@ -118,6 +134,20 @@ export function getSheetTextos(sheet: AnnotationSheet): AnnotationTextBlock[] {
 // Status de uma nota no Kanban - ausente (nota antiga) = 'criado'.
 export function getSheetStatus(sheet: AnnotationSheet): 'criado' | 'iniciado' | 'concluido' {
   return sheet.status || 'criado';
+}
+
+// Fonte unica da troca de coluna de uma nota: o Kanban de "Minhas Notas" (aqui) e o Kanban da
+// Principal (NaoConformidade2/Kanban.tsx) chamam esta funcao, entao a persistencia nunca diverge.
+export function moveSheetStatus(
+  sheet: AnnotationSheet,
+  status: 'criado' | 'iniciado' | 'concluido',
+  movidoPor: string,
+  onSave: (sheet: AnnotationSheet) => Promise<void>,
+) {
+  if (getSheetStatus(sheet) === status) return;
+  void onSave({ ...sheet, status, movidoPor, updatedAt: new Date().toISOString() }).catch((error) => {
+    window.alert(error instanceof Error ? error.message : 'Nao foi possivel mover a nota.');
+  });
 }
 
 // Concluida ha 10 dias ou mais (sem alteracao): sai do Kanban e vai pra aba "Notas Concluidas".
@@ -178,7 +208,7 @@ interface AnotacoesProps {
   activities?: EngineeringActivity[];
   // Lista de usuarios do sistema pra marcar numa nota (ver Vincular Usuarios).
   usuarios?: Array<{ nome: string; email: string }>;
-  onSave: (sheet: AnnotationSheet) => Promise<void>;
+  onSave: (sheet: AnnotationSheet, intent?: NoteSaveIntent) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   // Usados quando a nota e aberta de fora do fluxo normal (ex: clique num no do Mapa Mental).
   controlledSheet?: AnnotationSheet | null;
@@ -187,6 +217,16 @@ interface AnotacoesProps {
   noteIdsComCronograma?: Set<string>;
   readOnly?: boolean;
 }
+
+interface NoteProjectsContextValue {
+  projects: CronogramaDoc[];
+  onCreateProject?: (title: string, origemNotaId?: string) => Promise<CronogramaDoc>;
+  // Grava o Project editado pelo bloco embutido na nota (mesmo doc da colecao `cronogramas`).
+  onSaveProject?: (project: CronogramaDoc) => Promise<void>;
+  loadError?: string;
+}
+
+export const NoteProjectsContext = React.createContext<NoteProjectsContextValue>({ projects: [] });
 
 type ContextMenuState = { bancoIndex: number; row: number; col: number; x: number; y: number } | null;
 type CellSelection = { bancoIndex: number; r1: number; c1: number; r2: number; c2: number };
@@ -263,6 +303,8 @@ export function copiarNota(origem: AnnotationSheet, autor: { nome: string; email
     })),
     linkedNoteIds: [],
     marcadosUsuarios: [],
+    projectId: undefined,
+    pendingProposal: undefined,
     updatedAt: new Date().toISOString(),
     criadoEm: new Date().toISOString(),
     autorNome: autor.nome,
@@ -277,7 +319,7 @@ function formatOsLabel(os: { codigo: string; nome: string }) {
   return `${os.codigo} - ${os.nome}`;
 }
 
-function GoogleIcon({ size = 14 }: { size?: number }) {
+export function GoogleIcon({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 18 18">
       <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.68-3.88 2.68-6.62z" />
@@ -407,7 +449,13 @@ export function encontrarRascunhoOrfao(email: string, sheets: AnnotationSheet[],
 export default function Anotacoes({
   filter, sheets, osOptions, disciplinaOptions, contractOptions = [], currentUser, activities = [], usuarios = [], onSave, onDelete, controlledSheet, onCloseControlled, noteIdsComCronograma, readOnly = false,
 }: AnotacoesProps) {
-  const normalizeForEditing = (sheet: AnnotationSheet): AnnotationSheet => ({ ...sheet, bancos: getSheetBancos(sheet).map(normalizeBancoForEditing), textos: getSheetTextos(sheet) });
+  const noteProjects = React.useContext(NoteProjectsContext);
+  const normalizeForEditing = (sheet: AnnotationSheet): AnnotationSheet => {
+    const source = sheet.pendingProposal && isNoteOwner(sheet, currentUser.email)
+      ? previewNoteProposal(sheet)
+      : sheet;
+    return { ...source, bancos: getSheetBancos(source).map(normalizeBancoForEditing), textos: getSheetTextos(source) };
+  };
   const [editing, setEditing] = React.useState<AnnotationSheet | null>(() => (controlledSheet ? normalizeForEditing(controlledSheet) : null));
   const [contextMenu, setContextMenu] = React.useState<ContextMenuState>(null);
   // Posicao/altura reais do menu de contexto, medidas apos montar (a altura varia com o
@@ -425,7 +473,10 @@ export default function Anotacoes({
   }, [contextMenu]);
   const [sugestoesOrtografia, setSugestoesOrtografia] = React.useState<SugestaoOrtografica[]>([]);
   const [saving, setSaving] = React.useState(false);
+  const [saveError, setSaveError] = React.useState('');
+  const [saveNotice, setSaveNotice] = React.useState('');
   const [configOpen, setConfigOpen] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
   const [exportMenuOpen, setExportMenuOpen] = React.useState(false);
   // Selecao retangular de celulas (clicar e arrastar). Base do menu de formatacao,
   // da limpeza em massa, da mesclagem e do pincel.
@@ -452,6 +503,16 @@ export default function Anotacoes({
   const [osPickerSearch, setOsPickerSearch] = React.useState('');
   const [disciplinaPickerOpen, setDisciplinaPickerOpen] = React.useState(false);
   const [disciplinaPickerSearch, setDisciplinaPickerSearch] = React.useState('');
+  const [projectPickerOpen, setProjectPickerOpen] = React.useState(false);
+  const [projectSearch, setProjectSearch] = React.useState('');
+  const [newProjectTitle, setNewProjectTitle] = React.useState('');
+  const [creatingProject, setCreatingProject] = React.useState(false);
+  const [projectError, setProjectError] = React.useState('');
+  // Rascunho do Project embutido: a nota NAO guarda as linhas (elas moram no doc de `cronogramas`),
+  // so as edita aqui e grava com o botao Salvar do bloco — mesmo modelo de save explicito da
+  // tela solta do Project.
+  const [projectDraft, setProjectDraft] = React.useState<CronogramaDoc | null>(null);
+  const [savingProject, setSavingProject] = React.useState(false);
   const [openCardMenuId, setOpenCardMenuId] = React.useState<string | null>(null);
   // Aba do painel direito do editor. null = segue a primeira disponivel (OS > Disciplina > Mapa).
   const [sidebarTab, setSidebarTab] = React.useState<'os' | 'disciplina' | 'mapa' | null>(null);
@@ -535,7 +596,10 @@ export default function Anotacoes({
       return;
     }
     const savedSheet = sheets.find((sheet) => sheet.id === editing.id);
-    const podeSalvar = !savedSheet || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios);
+    const podeSalvar = !savedSheet || (
+      !savedSheet.pendingProposal
+      && canEditNote(currentUser, savedSheet.autorEmail, savedSheet.marcadosUsuarios)
+    );
     if (!podeSalvar) return;
     // So abrir a nota (sem editar nada, nova ou salva) nao pode virar rascunho "pendente" -
     // senao o aviso "continuar de onde parou" reaparece so por ter dado uma olhada na nota.
@@ -603,6 +667,12 @@ export default function Anotacoes({
     setDimAtivo(false);
     dimRef.current = false;
     setConfigOpen(false);
+    setProjectPickerOpen(false);
+    setProjectSearch('');
+    setNewProjectTitle('');
+    setProjectError('');
+    setSaveError('');
+    setSaveNotice('');
   };
   const openNote = (sheet: AnnotationSheet) => { setEditing(normalizeForEditing(sheet)); resetEditorFields(); };
 
@@ -1035,8 +1105,8 @@ export default function Anotacoes({
       ? true
       : filter.type === 'disciplina' ? getSheetDisciplinas(sheet).includes(filter.value) : getSheetOsCodigos(sheet).includes(filter.value);
     if (!matchesFilter) return false;
-    // Regra unica: nota propria sempre, nota de outro so se publica.
-    if (sheet.autorEmail === currentUser.email) return true;
+    // Autor e vinculados veem a nota mesmo se privada; demais usuarios so quando publica.
+    if (canEditNote(currentUser, sheet.autorEmail, sheet.marcadosUsuarios)) return true;
     return sheet.publica !== false;
   });
 
@@ -1053,7 +1123,7 @@ export default function Anotacoes({
   const listaFiltrada = visiveis
     .filter((sheet) => {
       if (!listaAutor) return true;
-      if (listaAutor === AUTOR_EU) return sheet.autorEmail === currentUser.email;
+      if (listaAutor === AUTOR_EU) return isNoteOwner(sheet, currentUser.email);
       return sheet.autorEmail === listaAutor;
     })
     .filter((sheet) => !listaContrato || getSheetOsCodigos(sheet).some((codigo) => codigosDoContrato.has(codigo)))
@@ -1063,13 +1133,8 @@ export default function Anotacoes({
     .filter((sheet) => !listaDisciplina || getSheetDisciplinas(sheet).some((item) => disciplineMatchesSector(item, listaDisciplina)))
     .filter((sheet) => listaVinculo !== 'vinculado' || (sheet.marcadosUsuarios || []).includes(currentUser.email))
     .filter((sheet) => noteMatchesTextSearch(sheet, listaTextoBusca))
-    // Mais recente primeiro; nota sem criadoEm (registro antigo) vai pro fim, nao pro topo.
-    // Mesmo criadoEm: desempata por titulo (pt-BR, ignorando maiusculas/acentos).
-    .sort((a, b) => {
-      const byCreatedAt = (b.criadoEm || '').localeCompare(a.criadoEm || '');
-      if (byCreatedAt !== 0) return byCreatedAt;
-      return normalizeText(a.titulo || '').localeCompare(normalizeText(b.titulo || ''), 'pt-BR');
-    });
+    // Ordem alfabetica por titulo (pt-BR, ignorando maiusculas/acentos).
+    .sort((a, b) => normalizeText(a.titulo || '').localeCompare(normalizeText(b.titulo || ''), 'pt-BR'));
   const temFiltroLista = Boolean(listaAutor || listaContrato || listaOs || listaEdificacao || listaDisciplina || listaVinculo || listaTextoBusca);
   const limparFiltroLista = () => { setListaAutor(''); setListaContrato(''); setListaOs(''); setListaEdificacao(''); setListaDisciplina(''); setListaVinculo(''); setListaTextoBusca(''); };
   // Autores que aparecem no seletor: os cadastrados no sistema, sem o proprio usuario
@@ -1091,10 +1156,16 @@ export default function Anotacoes({
     const textos = editing.textos ?? [];
     const checklists = editing.checklists ?? [];
     const selectedDisciplinas = getSheetDisciplinas(editing);
-    // Nota existente so e editavel pelo autor, admin ou usuario vinculado. Nota recem-criada
-    // (ainda nao salva, sem autor gravado) e sempre editavel por quem esta criando.
-    const notaJaSalva = sheets.some((sheet) => sheet.id === editing.id);
-    const podeEditar = !readOnly && (!notaJaSalva || canEditNote(currentUser, editing.autorEmail, editing.marcadosUsuarios));
+    const savedSheet = sheets.find((sheet) => sheet.id === editing.id);
+    const ownerReview = Boolean(savedSheet?.pendingProposal && isNoteOwner(savedSheet, currentUser.email));
+    const pendingProposal = savedSheet?.pendingProposal;
+    // Enquanto uma proposta existe, o conteudo aceito fica imutavel ate o autor decidir.
+    const podeEditar = !readOnly && !pendingProposal && (
+      !savedSheet || canEditNote(currentUser, savedSheet.autorEmail, savedSheet.marcadosUsuarios)
+    );
+    const changedField = (field: string) => Boolean(ownerReview && pendingProposal?.changedFields.includes(field));
+    const metadataChanged = ['osCodigo', 'osCodigos', 'disciplinas', 'disciplina', 'linkedNoteIds', 'marcadosUsuarios', 'edificacao']
+      .some(changedField);
 
     const updateTitulo = (titulo: string) => setEditing((prev) => (prev ? { ...prev, titulo } : prev));
     // Pede (de novo) o login Google com escopo de Agenda - gesto real do usuario, popup nao
@@ -1185,6 +1256,107 @@ export default function Anotacoes({
       const next = atual.includes(email) ? atual.filter((item) => item !== email) : [...atual, email];
       return { ...prev, marcadosUsuarios: next };
     });
+    const linkedProject = projectDraft && projectDraft.id === editing.projectId
+      ? projectDraft
+      : noteProjects.projects.find((project) => project.id === editing.projectId);
+    const projectRows = linkedProject?.rows ?? [];
+    const patchProjectRow = (rowId: string, patch: Partial<CronoRow>) => setProjectDraft((prev) => {
+      const base = prev && prev.id === editing.projectId ? prev : linkedProject;
+      if (!base) return prev;
+      return { ...base, rows: base.rows.map((row) => (row.id === rowId ? { ...row, ...patch } : row)) };
+    });
+    // Mesma prioridade de campo da tela solta (SolucoesDigitais.tsx onEditarInicio/onEditarFim/onEditarDuracao):
+    // duracao ja definida manda no fim ao editar o inicio; sem duracao, o fim que ja existia recalcula a duracao.
+    const editarInicioProject = (row: CronoRow, valor: string) => {
+      if (row.duracaoDias != null) {
+        patchProjectRow(row.id, { dataInicio: valor, dataFim: valor ? addDias(valor, row.duracaoDias) : '' });
+      } else if (row.dataFim) {
+        patchProjectRow(row.id, { dataInicio: valor, duracaoDias: diffDias(valor, row.dataFim) });
+      } else {
+        patchProjectRow(row.id, { dataInicio: valor });
+      }
+    };
+    const editarFimProject = (row: CronoRow, valor: string) => {
+      if (row.dataInicio) {
+        patchProjectRow(row.id, { dataFim: valor, duracaoDias: valor ? diffDias(row.dataInicio, valor) : null });
+      } else {
+        patchProjectRow(row.id, { dataFim: valor });
+      }
+    };
+    const editarDuracaoProject = (row: CronoRow, valorTexto: string) => {
+      const duracao = valorTexto === '' ? null : Number(valorTexto);
+      const duracaoValida = duracao !== null && Number.isFinite(duracao) ? duracao : null;
+      if (row.dataInicio && duracaoValida != null) {
+        patchProjectRow(row.id, { duracaoDias: duracaoValida, dataFim: addDias(row.dataInicio, duracaoValida) });
+      } else {
+        patchProjectRow(row.id, { duracaoDias: duracaoValida });
+      }
+    };
+    // Mesma validacao de ciclo de 1 nivel da tela solta (onEditarPredecessora).
+    const editarPredecessoraProject = (row: CronoRow, predecessoraId: string) => {
+      if (predecessoraId) {
+        if (predecessoraId === row.id) return;
+        const alvo = projectRows.find((r) => r.id === predecessoraId);
+        if (alvo && alvo.predecessoraId === row.id) return;
+      }
+      const predecessora = projectRows.find((r) => r.id === predecessoraId);
+      const sugerirInicio = predecessora?.dataFim && !row.dataInicio ? predecessora.dataFim : row.dataInicio;
+      patchProjectRow(row.id, { predecessoraId, dataInicio: sugerirInicio });
+    };
+    const addProjectRow = () => setProjectDraft((prev) => {
+      const base = prev && prev.id === editing.projectId ? prev : linkedProject;
+      if (!base) return prev;
+      return { ...base, rows: [...base.rows, { ...criarLinhaVazia(proximoSeq(base.rows)), ordem: base.rows.length }] };
+    });
+    const removeProjectRow = (rowId: string) => setProjectDraft((prev) => {
+      const base = prev && prev.id === editing.projectId ? prev : linkedProject;
+      if (!base) return prev;
+      return { ...base, rows: base.rows.filter((row) => row.id !== rowId) };
+    });
+    const saveProject = async () => {
+      if (!linkedProject) return;
+      if (!noteProjects.onSaveProject) {
+        setProjectError('Salvar Project indisponivel nesta tela.');
+        return;
+      }
+      setSavingProject(true);
+      setProjectError('');
+      try {
+        await noteProjects.onSaveProject(linkedProject);
+      } catch (error) {
+        setProjectError(error instanceof Error ? error.message : 'Nao foi possivel salvar o Project.');
+      } finally {
+        setSavingProject(false);
+      }
+    };
+    const visibleProjects = noteProjects.projects
+      .filter((project) => normalizeText(project.autorEmail) === normalizeText(currentUser.email) || project.publica !== false)
+      .filter((project) => !projectSearch || normalizeText(project.titulo).includes(normalizeText(projectSearch)))
+      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    const linkProject = (projectId: string) => {
+      setEditing((prev) => (prev ? { ...prev, projectId: projectId || undefined } : prev));
+      setProjectPickerOpen(false);
+      setProjectError('');
+    };
+    const createProject = async () => {
+      if (!noteProjects.onCreateProject) {
+        setProjectError('Criacao de Project indisponivel nesta tela.');
+        return;
+      }
+      setCreatingProject(true);
+      setProjectError('');
+      try {
+        // Passa a nota de origem: o Project e um doc de verdade em `cronogramas` (aparece na lista
+        // Project como qualquer outro), mas la ele fica somente leitura.
+        const project = await noteProjects.onCreateProject(newProjectTitle, editing.id);
+        linkProject(project.id);
+        setNewProjectTitle('');
+      } catch (error) {
+        setProjectError(error instanceof Error ? error.message : 'Nao foi possivel criar o Project.');
+      } finally {
+        setCreatingProject(false);
+      }
+    };
 
     const addTextoBlock = () => setEditing((prev) => (
       prev ? { ...prev, textos: [...(prev.textos ?? []), { id: makeId('nota'), texto: '' }] } : prev
@@ -1244,10 +1416,31 @@ export default function Anotacoes({
     const handleSave = async () => {
       if (readOnly) return;
       setSaving(true);
+      setSaveError('');
+      setSaveNotice('');
       try {
         // Salvar so persiste - fica na nota. Sair e o botao "Fechar" (closeEditing), separado.
         await onSave({ ...editing, updatedAt: new Date().toISOString() });
         removerRascunho(editing.id || 'nova');
+        setSaveNotice(savedSheet && !isNoteOwner(savedSheet, currentUser.email)
+          ? 'Proposta enviada ao autor. O conteudo aceito nao foi substituido.'
+          : 'Nota salva.');
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : 'Nao foi possivel salvar a nota.');
+      } finally {
+        setSaving(false);
+      }
+    };
+    const reviewProposal = async (proposalDecision: 'accept' | 'reject') => {
+      if (!savedSheet?.pendingProposal || !ownerReview) return;
+      setSaving(true);
+      setSaveError('');
+      try {
+        await onSave(savedSheet, { proposalDecision });
+        removerRascunho(editing.id || 'nova');
+        closeEditing();
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : 'Nao foi possivel revisar a proposta.');
       } finally {
         setSaving(false);
       }
@@ -1275,7 +1468,7 @@ export default function Anotacoes({
     const backlinkNotes = sheets.filter((sheet) => sheet.id !== editing.id && (sheet.linkedNoteIds || []).includes(editing.id));
     const linkPickerResults = sheets.filter((sheet) => {
       if (sheet.id === editing.id) return false;
-      const isVisible = sheet.publica !== false || sheet.autorEmail === currentUser.email;
+      const isVisible = sheet.publica !== false || canEditNote(currentUser, sheet.autorEmail, sheet.marcadosUsuarios);
       if (!isVisible) return false;
       const query = normalizeText(linkSearch);
       return !query || normalizeText(sheet.titulo).includes(query);
@@ -1347,7 +1540,7 @@ export default function Anotacoes({
             {!podeEditar && (
               <span className="inline-flex items-center gap-1 rounded-full border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 py-1 text-[11px] font-bold text-[#64748B]">
                 <Lock size={11} />
-                Somente leitura
+                {ownerReview ? 'Revisao pendente' : pendingProposal ? 'Proposta pendente' : 'Somente leitura'}
               </span>
             )}
           </div>
@@ -1390,9 +1583,50 @@ export default function Anotacoes({
                         <ListChecks size={14} />
                         + Checklist
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => { setHistoryOpen(true); setConfigOpen(false); }}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                      >
+                        <History size={14} />
+                        Histórico de salvamentos
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProjectPickerOpen(true);
+                          setProjectSearch('');
+                          setProjectError('');
+                          setConfigOpen(false);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                      >
+                        <CalendarClock size={14} />
+                        + Project
+                      </button>
                     </div>
                   </>
                 )}
+              </div>
+            )}
+            {historyOpen && (
+              <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/30 p-4" onClick={() => setHistoryOpen(false)}>
+                <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-[16px] font-black text-[#2D2D2D]">Histórico de salvamentos</h3>
+                    <button type="button" onClick={() => setHistoryOpen(false)} className="text-[#94A3B8] hover:text-[#2D2D2D]"><X size={16} /></button>
+                  </div>
+                  <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
+                    {(editing.historicoSalvamentos || []).length === 0 ? (
+                      <p className="rounded-xl bg-[#F8FAFC] px-3 py-4 text-[12px] text-[#94A3B8]">Nenhum salvamento anterior.</p>
+                    ) : (editing.historicoSalvamentos || []).slice().reverse().map((item, index) => (
+                      <div key={`${item.salvoEm}-${index}`} className="rounded-xl border border-[#E5E7EB] px-3 py-2 text-[12px] text-[#475569]">
+                        <strong>{item.titulo || 'Sem título'}</strong>
+                        <div className="mt-1 text-[11px] text-[#94A3B8]">{item.salvoPor} · {new Date(item.salvoEm).toLocaleString('pt-BR')}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
             <button
@@ -1431,6 +1665,48 @@ export default function Anotacoes({
               </div>
             </div>
           )}
+          {noteProjects.loadError && (
+            <p role="alert" className="mb-3 rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[12px] font-semibold text-[#B91C1C]">
+              {noteProjects.loadError}
+            </p>
+          )}
+          {ownerReview && pendingProposal && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#99CCFF] bg-[#EFF8FF] px-4 py-3">
+              <div>
+                <p className="text-[12px] font-bold text-[#1E3A5F]">Alteracao proposta por {pendingProposal.proposerName || pendingProposal.proposerEmail}</p>
+                <p className="mt-0.5 text-[11px] text-[#64748B]">Os campos marcados em vermelho mostram exatamente o que sera alterado.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void reviewProposal('accept')}
+                  disabled={saving}
+                  aria-label={`Aceitar alteracoes de ${pendingProposal.proposerName || pendingProposal.proposerEmail}`}
+                  title="Aceitar alteracoes"
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#16A34A] text-white hover:bg-[#15803D] disabled:opacity-60"
+                >
+                  <Check size={18} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void reviewProposal('reject')}
+                  disabled={saving}
+                  aria-label={`Rejeitar alteracoes de ${pendingProposal.proposerName || pendingProposal.proposerEmail}`}
+                  title="Rejeitar alteracoes"
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#DC2626] text-white hover:bg-[#B91C1C] disabled:opacity-60"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+          )}
+          {pendingProposal && !ownerReview && (
+            <p className="mb-3 rounded-xl border border-[#99CCFF] bg-[#EFF8FF] px-4 py-3 text-[12px] font-semibold text-[#1E3A5F]">
+              Existe uma proposta aguardando a decisao do autor. Novas alteracoes ficam bloqueadas ate a revisao.
+            </p>
+          )}
+          {saveError && <p role="alert" className="mb-3 rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[12px] font-semibold text-[#B91C1C]">{saveError}</p>}
+          {saveNotice && <p role="status" className="mb-3 rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] px-4 py-3 text-[12px] font-semibold text-[#166534]">{saveNotice}</p>}
           <div className="flex flex-wrap items-center gap-3">
             <input
               value={editing.titulo}
@@ -1439,9 +1715,9 @@ export default function Anotacoes({
               readOnly={!podeEditar}
               spellCheck
               lang="pt-BR"
-              className="h-11 min-w-[220px] flex-1 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[14px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+              className={`h-11 min-w-[220px] flex-1 rounded-xl border bg-white px-3 text-[14px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28] ${changedField('titulo') ? 'border-[#DC2626] ring-2 ring-[#DC2626]/40' : 'border-[#E5E7EB]'}`}
             />
-            <label className="flex h-11 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] cursor-pointer">
+            <label className={`flex h-11 items-center gap-2 rounded-xl border bg-white px-3 text-[13px] font-medium text-[#2D2D2D] cursor-pointer ${changedField('publica') ? 'border-[#DC2626] ring-2 ring-[#DC2626]/40' : 'border-[#E5E7EB]'}`}>
               <input
                 type="checkbox"
                 checked={editing.publica !== false}
@@ -1463,7 +1739,7 @@ export default function Anotacoes({
             )}
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[#64748B]">
+          <div className={`mt-2 flex flex-wrap items-center gap-2 rounded-lg text-[12px] text-[#64748B] ${changedField('googleEventUrl') || changedField('geminiNotesUrl') ? 'ring-2 ring-[#DC2626]/60' : ''}`}>
             <GoogleIcon size={14} />
             {editing.googleEventUrl ? (
               <a href={editing.googleEventUrl} target="_blank" rel="noopener noreferrer" className="font-bold text-[#F05D28] hover:underline">
@@ -1497,13 +1773,13 @@ export default function Anotacoes({
             {editing.publica === false ? 'Privada: só visível para quem criou. ' : 'Pública: visível para todos. '}
             {podeEditar
               ? 'Clique e arraste para selecionar células, botão direito para formatar. Arraste a borda da linha/coluna para redimensionar.'
-              : 'Você não tem permissão para alterar esta nota.'}
+              : pendingProposal ? 'A nota fica bloqueada enquanto a proposta aguarda revisão.' : 'Você não tem permissão para alterar esta nota.'}
           </p>
 
           {bancos.length > 0 && (
             <div className="mt-3 flex flex-col gap-4">
               {bancos.map((banco, bancoIndex) => (
-                <div key={banco.id} className="overflow-hidden rounded-xl border border-[#E5E7EB]">
+                <div key={banco.id} className={`overflow-hidden rounded-xl border border-[#E5E7EB] ${ownerReview && pendingProposal?.changedBancoBlockIds.includes(banco.id) ? 'ring-2 ring-[#DC2626]/60' : ''}`}>
                   <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
                     <div className="flex items-center gap-2">
                       {podeEditar ? (
@@ -1588,6 +1864,7 @@ export default function Anotacoes({
                               const chave = cellKey(r, c);
                               const estilo = banco.styles?.[cellKey(r, c)];
                               const selecionada = naSelecao(bancoIndex, r, c);
+                              const cellChanged = Boolean(pendingProposal) && proposalChangesCell(pendingProposal, banco.id, r, c);
                               const checklistItens = banco.cellChecklists?.[chave] ?? [];
                               // Altura explicita na celula (nao so na linha): "height" em % nao
                               // resolve dentro de <td>, entao o textarea h-full ficava preso ao
@@ -1628,8 +1905,8 @@ export default function Anotacoes({
                                     if (alvo.tipo === 'row') moveRow(bancoIndex, alvo.indice, r);
                                     else moveCol(bancoIndex, alvo.indice, c);
                                   }}
-                                  style={{ backgroundColor: estilo?.bg || (r === 0 ? '#F3F4F6' : '#FFFFFF'), height: `${alturaCelulaPx}px` }}
-                                  className={`relative border border-[#E5E7EB] p-0 ${selecionada ? 'shadow-[inset_0_0_0_2px_#F05D28]' : ''} ${pincel ? 'cursor-copy' : ''}`}
+                                  style={{ backgroundColor: cellChanged ? '#FEF2F2' : (estilo?.bg || (r === 0 ? '#F3F4F6' : '#FFFFFF')), height: `${alturaCelulaPx}px` }}
+                                  className={`relative border border-[#E5E7EB] p-0 ${cellChanged ? 'shadow-[inset_0_0_0_2px_#DC2626]' : selecionada ? 'shadow-[inset_0_0_0_2px_#F05D28]' : ''} ${pincel ? 'cursor-copy' : ''}`}
                                 >
                                   {/* Celula de checklist (coluna inteira via checklistCols OU celula avulsa via
                                       checklistCells), r>=1: checkbox + texto lado a lado. r===0 continua
@@ -1849,7 +2126,7 @@ export default function Anotacoes({
           {checklists.length > 0 && (
             <div className="mt-4 flex flex-col gap-4">
               {checklists.map((lista, index) => (
-                <div key={lista.id} className="rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)]">
+                <div key={lista.id} className={`rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)] ${ownerReview && pendingProposal?.changedChecklistBlockIds.includes(lista.id) ? 'ring-2 ring-[#DC2626]/60' : ''}`}>
                   <div className="mb-2 flex items-center justify-between">
                     <h4 className="flex items-center text-[13px] font-bold text-[#2D2D2D]">
                       {podeEditar ? (
@@ -1927,7 +2204,7 @@ export default function Anotacoes({
               {textos.map((bloco, index) => {
                 const links = Array.from(bloco.texto.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g));
                 return (
-                  <div key={bloco.id} className="rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)]">
+                  <div key={bloco.id} className={`rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)] ${ownerReview && pendingProposal?.changedTextBlockIds.includes(bloco.id) ? 'ring-2 ring-[#DC2626]/60' : ''}`}>
                     <div className="mb-2 flex items-center justify-between">
                       {podeEditar ? (
                         <input
@@ -1993,7 +2270,7 @@ export default function Anotacoes({
             </div>
           ) : null}
 
-          <div className="mt-4 rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)]">
+          <div className={`mt-4 rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)] ${ownerReview && metadataChanged ? 'ring-2 ring-[#DC2626]/60' : ''}`}>
             {podeEditar && (
               <div className="flex items-center gap-4">
                 <button
@@ -2042,6 +2319,179 @@ export default function Anotacoes({
                   >
                     {sincronizandoAgenda ? 'Buscando...' : 'Vincular Gemini'}
                   </button>
+                )}
+              </div>
+            )}
+            {/* Bloco Project embutido: mesma moldura do bloco Banco (cabecalho cinza + tabela +
+                rodape "+ Linha"), mas as linhas sao as do doc de `cronogramas` vinculado — a nota
+                nunca guarda copia, so o `projectId`. */}
+            {editing.projectId && (
+              <div className={`mt-3 overflow-hidden rounded-xl border ${changedField('projectId') ? 'border-[#DC2626] ring-2 ring-[#DC2626]/40' : 'border-[#E5E7EB]'}`}>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <CalendarClock size={14} className="flex-shrink-0 text-[#F05D28]" />
+                    <span className="truncate text-[11px] font-bold text-[#64748B]">{linkedProject?.titulo || 'Project nao encontrado'}</span>
+                  </div>
+                  {podeEditar && (
+                    <div className="flex items-center gap-3">
+                      {linkedProject && noteProjects.onSaveProject && (
+                        <button
+                          type="button"
+                          onClick={() => void saveProject()}
+                          disabled={savingProject}
+                          className="text-[12px] font-bold text-[#F05D28] hover:underline disabled:opacity-60"
+                        >
+                          {savingProject ? 'Salvando...' : 'Salvar Project'}
+                        </button>
+                      )}
+                      <button type="button" onClick={() => setProjectPickerOpen(true)} className="text-[11px] font-bold text-[#F05D28] hover:underline">Trocar</button>
+                      <button type="button" onClick={() => linkProject('')} className="text-[11px] font-bold text-[#DC2626] hover:underline">Desvincular</button>
+                    </div>
+                  )}
+                </div>
+                {projectError && !projectPickerOpen && (
+                  <p role="alert" className="border-b border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-[12px] font-semibold text-[#B91C1C]">{projectError}</p>
+                )}
+                {linkedProject ? (
+                  <>
+                    <div className="overflow-auto">
+                      <table className="min-w-full text-[12px] text-[#2D2D2D]">
+                        <thead className="border-b border-[#E5E7EB] bg-white">
+                          <tr>
+                            <th className="px-3 py-1.5 text-left font-medium">ID</th>
+                            <th className="px-3 py-1.5 text-left font-medium">Atividade</th>
+                            <th className="px-3 py-1.5 text-left font-medium">Predecessora</th>
+                            <th className="px-3 py-1.5 text-left font-medium">Início</th>
+                            <th className="px-3 py-1.5 text-left font-medium">Duração (dias)</th>
+                            <th className="px-3 py-1.5 text-left font-medium">Fim</th>
+                            <th className="px-3 py-1.5 text-left font-medium">Responsável</th>
+                            <th className="px-3 py-1.5 text-left font-medium">% Concluído</th>
+                            <th className="px-3 py-1.5 text-left font-medium">Atividade agenda</th>
+                            <th className="px-3 py-1.5" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {projectRows.map((row) => (
+                            <tr key={row.id} className="border-b border-[#E5E7EB] last:border-b-0" style={{ backgroundColor: row.corLinha }}>
+                              <td className="px-3 py-1 text-[#94A3B8]">#{row.seq}</td>
+                              <td className="px-3 py-1">
+                                <input
+                                  value={row.nome}
+                                  readOnly={!podeEditar}
+                                  onChange={(event) => patchProjectRow(row.id, { nome: event.target.value })}
+                                  placeholder="Nome da atividade"
+                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1"
+                                />
+                              </td>
+                              <td className="px-3 py-1">
+                                <select
+                                  value={row.predecessoraId}
+                                  disabled={!podeEditar}
+                                  onChange={(event) => editarPredecessoraProject(row, event.target.value)}
+                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1"
+                                >
+                                  <option value="">Nenhuma</option>
+                                  {projectRows.filter((r) => r.id !== row.id).map((r) => (
+                                    <option key={r.id} value={r.id}>#{r.seq} - {r.nome || '(sem nome)'}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="px-3 py-1">
+                                <input
+                                  type="date"
+                                  value={row.dataInicio}
+                                  disabled={!podeEditar}
+                                  onChange={(event) => editarInicioProject(row, event.target.value)}
+                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1"
+                                />
+                              </td>
+                              <td className="px-3 py-1">
+                                <input
+                                  type="number"
+                                  value={row.duracaoDias ?? ''}
+                                  disabled={!podeEditar}
+                                  onChange={(event) => editarDuracaoProject(row, event.target.value)}
+                                  className="w-24 rounded border border-[#E5E7EB] px-2 py-1"
+                                />
+                              </td>
+                              <td className="px-3 py-1">
+                                <input
+                                  type="date"
+                                  value={row.dataFim}
+                                  disabled={!podeEditar}
+                                  onChange={(event) => editarFimProject(row, event.target.value)}
+                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1"
+                                />
+                              </td>
+                              <td className="px-3 py-1">
+                                {/* ponytail: sem filtro por disciplina "solucoes digitais" como na tela solta -
+                                    o prop `usuarios` da nota nao carrega `disciplinas`; lista o time inteiro. */}
+                                <select
+                                  value={row.responsavelEmail}
+                                  disabled={!podeEditar}
+                                  onChange={(event) => patchProjectRow(row.id, { responsavelEmail: event.target.value })}
+                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1"
+                                >
+                                  <option value="">Sem responsável</option>
+                                  {usuarios.map((u) => <option key={u.email} value={u.email}>{u.nome}</option>)}
+                                </select>
+                              </td>
+                              <td className="px-3 py-1">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  value={row.percentualConcluido ?? ''}
+                                  disabled={!podeEditar}
+                                  onChange={(event) => patchProjectRow(row.id, { percentualConcluido: event.target.value === '' ? null : Number(event.target.value) })}
+                                  className="w-20 rounded border border-[#E5E7EB] px-2 py-1"
+                                  placeholder="%"
+                                />
+                              </td>
+                              <td className="px-3 py-1">
+                                <SearchableSelect
+                                  value={row.atividadeId || ''}
+                                  disabled={!podeEditar}
+                                  onChange={(event) => patchProjectRow(row.id, { atividadeId: event.target.value })}
+                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1 bg-white"
+                                  searchPlaceholder="Sem vínculo"
+                                >
+                                  <option value="">Sem vínculo</option>
+                                  {activities.map((a) => <option key={a.id} value={a.id}>{a.osCodigo} - {a.atividade || a.itemNome || '(sem nome)'}</option>)}
+                                </SearchableSelect>
+                              </td>
+                              <td className="px-3 py-1 text-center">
+                                {podeEditar && (
+                                  <button
+                                    type="button"
+                                    title="Excluir linha"
+                                    onClick={() => removeProjectRow(row.id)}
+                                    className="flex h-5 w-5 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#FEE2E2] hover:text-[#DC2626]"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                          {projectRows.length === 0 && (
+                            <tr>
+                              <td colSpan={10} className="px-3 py-3 text-center text-[#94A3B8]">Nenhuma atividade neste Project ainda.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    {podeEditar && (
+                      <div className="border-t border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
+                        <button type="button" onClick={addProjectRow} className="text-[12px] font-bold text-[#F05D28] hover:underline">
+                          + Linha
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="px-3 py-3 text-[12px] text-[#94A3B8]">Project {editing.projectId} nao encontrado.</p>
                 )}
               </div>
             )}
@@ -2484,6 +2934,65 @@ export default function Anotacoes({
           </>
         )}
 
+        {projectPickerOpen && (
+          <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setProjectPickerOpen(false)}>
+            <div role="dialog" aria-modal="true" aria-labelledby="project-picker-title" className="flex max-h-[75vh] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
+              <h3 id="project-picker-title" className="text-[14px] font-black text-[#2D2D2D]">Vincular Project</h3>
+              <input
+                autoFocus
+                type="search"
+                value={projectSearch}
+                onChange={(event) => setProjectSearch(event.target.value)}
+                placeholder="Buscar Project existente..."
+                aria-label="Buscar Project existente"
+                className="mt-3 h-10 rounded-lg border border-[#E5E7EB] px-3 text-[13px] outline-none focus:border-[#F05D28]"
+              />
+              <div className="mt-2 min-h-0 flex-1 overflow-auto">
+                {visibleProjects.length === 0 ? (
+                  <p className="px-1 py-3 text-[12px] text-[#94A3B8]">Nenhum Project encontrado.</p>
+                ) : visibleProjects.map((project) => (
+                  <button
+                    key={project.id}
+                    type="button"
+                    onClick={() => linkProject(project.id)}
+                    className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left hover:bg-[#F9FAFB] ${editing.projectId === project.id ? 'bg-[#FFF3EC]' : ''}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-bold text-[#2D2D2D]">{project.titulo || 'Sem titulo'}</span>
+                      <span className="block truncate text-[11px] text-[#94A3B8]">{project.autorNome || project.autorEmail}</span>
+                    </span>
+                    {editing.projectId === project.id && <Check size={15} className="flex-shrink-0 text-[#16A34A]" />}
+                  </button>
+                ))}
+              </div>
+              {noteProjects.onCreateProject && (
+                <div className="mt-3 border-t border-[#E5E7EB] pt-3">
+                  <label htmlFor="new-note-project-title" className="text-[11px] font-bold uppercase tracking-wide text-[#64748B]">Novo Project</label>
+                  <div className="mt-1.5 flex gap-2">
+                    <input
+                      id="new-note-project-title"
+                      value={newProjectTitle}
+                      onChange={(event) => setNewProjectTitle(event.target.value)}
+                      placeholder="Titulo do Project"
+                      className="h-10 min-w-0 flex-1 rounded-lg border border-[#E5E7EB] px-3 text-[13px] outline-none focus:border-[#F05D28]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void createProject()}
+                      disabled={creatingProject || !newProjectTitle.trim()}
+                      className="h-10 rounded-lg bg-[#F05D28] px-4 text-[12px] font-bold text-white hover:bg-[#D94E1F] disabled:opacity-50"
+                    >
+                      {creatingProject ? 'Criando...' : 'Criar e vincular'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {projectError && <p role="alert" className="mt-2 text-[12px] font-semibold text-[#DC2626]">{projectError}</p>}
+              <button type="button" onClick={() => setProjectPickerOpen(false)} className="mt-3 h-9 rounded-lg border border-[#E5E7EB] text-[12px] font-bold text-[#64748B] hover:text-[#2D2D2D]">Cancelar</button>
+            </div>
+          </div>
+        )}
+
         {linkPickerOpen && (
           <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setLinkPickerOpen(false)}>
             <div className="flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-xl bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
@@ -2707,8 +3216,8 @@ export default function Anotacoes({
     );
   }
 
-  const minhasNotasTodas = listaFiltrada.filter((sheet) => sheet.autorEmail === currentUser.email);
-  const notasDeOutros = listaFiltrada.filter((sheet) => sheet.autorEmail !== currentUser.email);
+  const minhasNotasTodas = listaFiltrada.filter((sheet) => isNoteOwner(sheet, currentUser.email));
+  const notasDeOutros = listaFiltrada.filter((sheet) => !isNoteOwner(sheet, currentUser.email));
   // Concluidas ha 10+ dias saem do Kanban e vao pra aba propria.
   const minhasNotasKanban = minhasNotasTodas.filter((sheet) => !isConcluidaAntiga(sheet));
   const minhasNotasConcluidas = minhasNotasTodas.filter(isConcluidaAntiga);
@@ -2718,8 +3227,7 @@ export default function Anotacoes({
   // Move a nota pra outra coluna do Kanban (drag-and-drop ou clique nos botoes de status).
   const moverStatus = (sheet: AnnotationSheet, status: 'criado' | 'iniciado' | 'concluido') => {
     if (readOnly) return;
-    if (getSheetStatus(sheet) === status) return;
-    void onSave({ ...sheet, status, updatedAt: new Date().toISOString() });
+    moveSheetStatus(sheet, status, currentUser.nome, onSave);
   };
   const KANBAN_COLUNAS: Array<{ key: 'criado' | 'iniciado' | 'concluido'; label: string }> = [
     { key: 'criado', label: 'Criado' },
@@ -2729,7 +3237,11 @@ export default function Anotacoes({
 
   const handleDeleteSheet = (sheet: AnnotationSheet) => {
     setOpenCardMenuId(null);
-    if (window.confirm(`Excluir a anotação "${sheet.titulo || 'Sem título'}"?`)) void onDelete(sheet.id);
+    if (window.confirm(`Excluir a anotação "${sheet.titulo || 'Sem título'}"?`)) {
+      void onDelete(sheet.id).catch((error) => {
+        window.alert(error instanceof Error ? error.message : 'Nao foi possivel excluir a nota.');
+      });
+    }
   };
 
   const openPdfExport = (sheet: AnnotationSheet) => {
@@ -2752,9 +3264,10 @@ export default function Anotacoes({
     const disciplinaIcon = sheetDisciplinas.length === 1 ? getDisciplineIconInfo(sheetDisciplinas[0]) : null;
     const DisciplinaIcon = disciplinaIcon?.icon;
     const marcadoParaMim = (sheet.marcadosUsuarios || []).includes(currentUser.email);
+    const hasPendingProposal = Boolean(sheet.pendingProposal);
 
     return (
-      <div key={sheet.id} className={`relative overflow-hidden rounded-xl p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)] transition-colors ${marcadoParaMim ? 'bg-[#FFF3EC]' : 'bg-white'}`}>
+      <div key={sheet.id} className={`relative overflow-hidden rounded-xl p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)] transition-colors ${hasPendingProposal ? 'bg-[#99CCFF]' : marcadoParaMim ? 'bg-[#FFF3EC]' : 'bg-white'}`}>
         {/* Selo redondo no canto, sem a faixa cinza que cortava o card ao meio. */}
         {disciplinaIcon && (
           <div
@@ -2792,9 +3305,11 @@ export default function Anotacoes({
             {noteIdsComCronograma?.has(sheet.id) && (
               <Clock size={12} className="flex-shrink-0 text-[#64748B]" title="Vinculada a um cronograma" />
             )}
+            {sheet.projectId && <CalendarClock size={12} className="flex-shrink-0 text-[#F05D28]" aria-label="Vinculada a um Project" />}
           </div>
           <p className="mt-1 text-[11px] font-medium text-[#94A3B8]">{subtitulo}</p>
           {autorData && <p className="mt-0.5 text-[11px] text-[#94A3B8]">{autorData}</p>}
+          {hasPendingProposal && <p className="mt-1 text-[10px] font-black uppercase tracking-wide text-[#1E3A5F]">Alteracao pendente</p>}
         </div>
 
         <button
@@ -2860,6 +3375,11 @@ export default function Anotacoes({
 
   return (
     <div>
+      {noteProjects.loadError && (
+        <p role="alert" className="mb-4 rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-[12px] font-semibold text-[#B91C1C]">
+          {noteProjects.loadError}
+        </p>
+      )}
       {visiveis.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <SearchableSelect

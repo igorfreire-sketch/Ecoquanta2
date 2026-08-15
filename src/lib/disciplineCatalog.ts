@@ -110,10 +110,17 @@ export function normalizeDisciplineEntry(value: string) {
 // Grupos oficiais NAO sao reescritos para o label "COD - Nome" de uma disciplina fina homonima
 // (ex.: "Desenvolvimento" nao vira "DEV - Desenvolvimento"). Sem isso, marcar um grupo no cadastro
 // gravava um valor diferente da opcao exibida e o seletor "marcava e nao desmarcava".
-let _gruposNormalizados: Set<string> | null = null;
+let _gruposNormalizados: Map<string, string> | null = null;
+// Devolve a grafia oficial do grupo (ou '' se nao for grupo). Serve tanto pro teste "e grupo?"
+// quanto pra canonizar "eletrico" -> "Eletrico" vindo do cadastro do admin.
+function grupoOficial(value: string) {
+  if (!_gruposNormalizados) {
+    _gruposNormalizados = new Map(getDisciplineGroups().map((g) => [normalizeText(g), g]));
+  }
+  return _gruposNormalizados.get(normalizeText(value)) || '';
+}
 function isGrupoOficial(value: string) {
-  if (!_gruposNormalizados) _gruposNormalizados = new Set(getDisciplineGroups().map((g) => normalizeText(g)));
-  return _gruposNormalizados.has(normalizeText(value));
+  return Boolean(grupoOficial(value));
 }
 
 export function resolveDisciplineEntry(value?: string) {
@@ -225,16 +232,19 @@ export function isDisciplineHidden(value?: string) {
 // limpo, nao o label "COD - Nome", pra ficar do mesmo jeito que os setores agrupados.
 export function getDisciplineSector(value?: string) {
   const codigo = codigoDe(value);
-  if (!codigo) return normalizeDisciplineEntry(value);
+  // Setor agrupado (Estrutural, Eletrico...) nao e disciplina fina: nao tem codigo, mas e o
+  // proprio setor - devolve na grafia oficial do catalogo de grupos.
+  if (!codigo) return grupoOficial(String(value || '')) || normalizeDisciplineEntry(value);
   return SETOR_POR_CODIGO[codigo] || ENTRADA_POR_CODIGO.get(codigo)?.name || '';
 }
 
-// Unica lista que os filtros de disciplina podem exibir. Nome fora do catalogo NAO entra:
-// cadastro livre no admin vazava pro filtro e furava o agrupamento.
+// Unica lista que os filtros de disciplina podem exibir: disciplina fina do catalogo OU grupo
+// oficial (e o que o admin cadastra hoje). Nome fora dos dois NAO entra - cadastro livre no
+// admin vazava pro filtro e furava o agrupamento.
 export function getSectorOptions(disciplinas: string[]) {
   const setores = new Set<string>();
   disciplinas.forEach((item) => {
-    if (!codigoDe(item)) return;
+    if (!codigoDe(item) && !isGrupoOficial(item)) return;
     if (isDisciplineHidden(item)) return;
     const setor = getDisciplineSector(item);
     if (setor) setores.add(setor);

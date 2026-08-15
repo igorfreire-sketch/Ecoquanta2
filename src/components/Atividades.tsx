@@ -25,6 +25,9 @@ import { AnimatePresence, motion } from 'motion/react';
 import { DEFAULT_DISCIPLINES, DISCIPLINAS_FILHAS_DE_ENGENHARIA, disciplineMatchesSector, expandEngenhariaNaSelecao, getDisciplineSector, getSectorOptions, getUserDisciplineList, resolveDisciplineEntry } from '../lib/disciplineCatalog';
 import CronogramaResumo from './CoordenacaoEngenharia/CronogramaResumo';
 import { getSheetDisciplinas, getSheetTextos, type AnnotationSheet } from './CoordenacaoEngenharia/Anotacoes';
+import { fetchFirebaseCollection, isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
+import { applyLeaderEventsToActivities, type LeaderActivityEvent } from '../lib/leaderActivity';
+import { sameContractCode } from '../lib/contractCode';
 
 export type ProductionStatus =
   | 'Não iniciado'
@@ -120,6 +123,7 @@ interface AtividadesProps {
     email?: string;
     disciplina?: string;
     disciplinas?: string[];
+    role?: string;
     contrato?: string;
     onlyThirdParty?: boolean;
   } | null;
@@ -139,7 +143,7 @@ interface AtividadesProps {
   cronogramaPlaceholder?: boolean;
 }
 
-const STORAGE_KEY = 'quanta_producao_tecnica_cards';
+const LEADER_EVENTS_COLLECTION = 'atividadesLiderHistorico';
 const TODAY = new Date();
 const RESPONSAVEIS = ['Vinicius', 'Beatriz', 'Carlos', 'Mariana', 'Rodrigo', 'Fernanda'];
 const TECHNICAL_STEPS: TechnicalStep[] = ['Inicial', 'NF Início de Contrato', 'Modelagem', 'NF Intermediária', 'Revisão', 'NF Final'];
@@ -713,22 +717,6 @@ const INITIAL_MOCK_ACTIVITIES = [
 
 const clampPercentage = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
-const safeGetLocalStorageValue = (key: string) => {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-};
-
-const safeSetLocalStorageValue = (key: string, value: string) => {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Mantemos a aba funcional mesmo se o storage estiver bloqueado.
-  }
-};
-
 const parseDate = (value?: string) => {
   if (!value) return new Date(TODAY);
   if (/^\d{11,13}$/.test(String(value).trim())) {
@@ -1008,10 +996,6 @@ const getActivityOsCode = (activity: Partial<EngineeringActivity> & Record<strin
   if (!sourceCode) return '';
 
   return getHierarchyCodePrefix(sourceCode, 2);
-};
-
-const sameContractCode = (first?: string, second?: string) => {
-  return normalizeText(first) === normalizeText(second);
 };
 
 const getDisciplineAbbreviation = (value: string) => {
@@ -1492,23 +1476,6 @@ const normalizeActivityList = (rawList: unknown, knownDisciplineTokens = new Set
       if (isManualActivity(activity)) return true;
       return isLeafActivityCode(getActivityRenderableCode(activity));
     });
-};
-
-const mergeSavedActivitiesWithSource = (savedActivities: EngineeringActivity[], sourceActivities: EngineeringActivity[]) => {
-  const savedById = new Map(savedActivities.map((activity) => [activity.id, activity]));
-  return sourceActivities.map((activity) => {
-    const saved = savedById.get(activity.id);
-    if (!saved) return activity;
-
-    return {
-      ...activity,
-      ...saved,
-      disciplinas: Array.isArray(saved.disciplinas) && saved.disciplinas.length > 0 ? saved.disciplinas : activity.disciplinas,
-      executadoPor: Array.isArray(saved.executadoPor) ? saved.executadoPor : activity.executadoPor,
-      porcentagemAtividade: typeof saved.porcentagemAtividade === 'number' ? saved.porcentagemAtividade : activity.porcentagemAtividade,
-      leaderEdited: Boolean(saved.leaderEdited || activity.leaderEdited)
-    };
-  });
 };
 
 const hasBoardActivityDiscipline = (activity: EngineeringActivity) => {
@@ -1995,7 +1962,10 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
 
 // Campos de detalhamento de uma atividade — reusado pelo modal separado (selectedActivity)
 // e pelo card inline dentro da tela cheia de OS (evita duplicar a marcação).
-function ActivityDetailFields({ activity }: { activity: EngineeringActivity }) {
+function ActivityDetailFields({ activity }: { activity?: EngineeringActivity }) {
+  if (!activity) {
+    return <div className="rounded-2xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-6 text-center text-[13px] text-[#64748B]">Nenhuma atividade disponível para este filtro.</div>;
+  }
   const displayCode = extractVisualOsCode(activity) || activity.osCodigo || getActivityRenderableCode(activity) || activity.origemItem || '';
   const effectiveStatus = getLeaderStatusLabel(activity);
 
@@ -2704,6 +2674,21 @@ export default function Atividades({
   cronogramaPlaceholder = false,
 }: AtividadesProps) {
   const sourceActivities = useMemo(() => buildActivitiesFromEap(preloadedData, currentUser), [preloadedData, currentUser]);
+  const canEditLeaderFields = useMemo(() => {
+    const role = normalizeText(currentUser?.role);
+    return role === 'lider' || role.startsWith('coordenador');
+  }, [currentUser?.role]);
+  const [leaderEvents, setLeaderEvents] = useState<LeaderActivityEvent[]>([]);
+  useEffect(() => {
+    let active = true;
+    if (!isFirebaseConfigured()) return () => { active = false; };
+    void fetchFirebaseCollection<LeaderActivityEvent>(LEADER_EVENTS_COLLECTION)
+      .then((events) => { if (active) setLeaderEvents(events); })
+      .catch((error) => console.error('Erro ao carregar marcos do líder:', error));
+    return () => { active = false; };
+  }, []);
+  // ponytail: history is read whole for now; query by itemCodigo or add a latest projection when volume matters.
+  const sourceActivitiesWithLeader = useMemo(() => applyLeaderEventsToActivities(sourceActivities, leaderEvents), [leaderEvents, sourceActivities]);
   const eapRegistry = useMemo(() => getUnifiedEapRegistry(preloadedData), [preloadedData]);
   const fixedContractFilter = String(fixedContractCode || '').trim();
   const boardScrollRef = useRef<HTMLDivElement | null>(null);
@@ -2724,7 +2709,7 @@ export default function Atividades({
     }
   });
   const [activities, setActivities] = useState<EngineeringActivity[]>(() => {
-    return sourceActivities;
+    return sourceActivitiesWithLeader;
   });
   const [searchText, setSearchText] = useState('');
   const [filterSemana, setFilterSemana] = useState(getCurrentWeekKey());
@@ -2846,8 +2831,8 @@ export default function Atividades({
   );
 
   useEffect(() => {
-    setActivities(sourceActivities);
-  }, [sourceActivities]);
+    setActivities(sourceActivitiesWithLeader);
+  }, [sourceActivitiesWithLeader]);
 
   useEffect(() => {
     if (fixedContractFilter && !sameContractCode(fixedContractFilter, 'Todos') && !sameContractCode(filterContrato, fixedContractFilter)) {
@@ -3249,26 +3234,36 @@ export default function Atividades({
   const executadoPorOptions = useMemo(() => buildProfessionalOptions(preloadedData, currentUser, showAllDisciplines), [currentUser, preloadedData, showAllDisciplines]);
 
   const updateSelectedActivity = (patch: Partial<EngineeringActivity>) => {
-    if (!selectedActivity) return;
+    if (!selectedActivity || !canEditLeaderFields) return;
 
-    setActivities((previous) => previous.map((activity) => {
-      if (activity.id !== selectedActivity.id) return activity;
-      const next = { ...activity, ...patch };
-      const touched = Boolean(
-        next.leaderEdited ||
-        (Array.isArray(next.executadoPor) && next.executadoPor.length > 0) ||
-        String(next.statusDaAtividade || '').trim() ||
-        String(next.dificuldadeAtividade || '').trim() ||
-        String(next.observacaoLider || '').trim() ||
-        typeof next.porcentagemAtividade === 'number'
-      );
+    const candidate = { ...selectedActivity, ...patch };
+    const touched = Boolean(
+      candidate.leaderEdited ||
+      (Array.isArray(candidate.executadoPor) && candidate.executadoPor.length > 0) ||
+      String(candidate.statusDaAtividade || '').trim() ||
+      String(candidate.dificuldadeAtividade || '').trim() ||
+      String(candidate.observacaoLider || '').trim() ||
+      typeof candidate.porcentagemAtividade === 'number'
+    );
+    const next = { ...candidate, status: touched ? 'Em execução' : 'Não iniciado', leaderEdited: touched };
+    setActivities((previous) => previous.map((activity) => activity.id === selectedActivity.id ? next : activity));
+  };
 
-      return {
-        ...next,
-        status: touched ? 'Em execução' : 'Não iniciado',
-        leaderEdited: touched
-      };
-    }));
+  const commitSelectedActivity = () => {
+    if (!selectedActivity || !canEditLeaderFields || !isFirebaseConfigured()) return;
+    const event: LeaderActivityEvent = {
+      itemCodigo: String(selectedActivity.itemCodigo || selectedActivity.origemItem || selectedActivity.id || '').trim(),
+      autorEmail: String(currentUser?.email || '').trim().toLowerCase(),
+      criadoEm: new Date().toISOString(),
+      executadoPor: Array.isArray(selectedActivity.executadoPor) ? selectedActivity.executadoPor : [],
+      status: selectedActivity.statusDaAtividade,
+      dificuldade: selectedActivity.dificuldadeAtividade,
+      percentual: selectedActivity.porcentagemAtividade,
+      observacao: String(selectedActivity.observacaoLider || ''),
+    };
+    void setFirebaseDocument(LEADER_EVENTS_COLLECTION, crypto.randomUUID(), event)
+      .then(() => setLeaderEvents((previous) => [...previous, event]))
+      .catch((error) => console.error('Erro ao salvar marco do líder:', error));
   };
 
   useEffect(() => {
@@ -3748,12 +3743,12 @@ export default function Atividades({
 
               <div className="flex-1 overflow-y-auto px-6 py-5">
                 <div className="space-y-5">
-                {false && (
+                {canEditLeaderFields && (
                 <div className="rounded-[24px] border border-[#E5E7EB] bg-[#F8FAFC] p-4">
                   <div className="mb-3 flex items-start justify-between gap-3">
                     <div>
                       <p className="text-[11px] font-extrabold uppercase tracking-[0.8px] text-[#F05D28]">Preenchimento do líder</p>
-                      <p className="mt-1 text-[12px] text-[#64748B]">Esses campos entram antes do detalhamento técnico e ficam salvos localmente.</p>
+                      <p className="mt-1 text-[12px] text-[#64748B]">Preencha os campos e registre um marco explícito.</p>
                     </div>
                     <span className="rounded-full border border-[#F7C7B7] bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-[0.5px] text-[#D15B2C]">
                       Campos obrigatórios
@@ -3827,6 +3822,15 @@ export default function Atividades({
                         Mínimo de 30 caracteres.
                       </p>
                     </div>
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={commitSelectedActivity}
+                      className="h-10 rounded-xl bg-[#F05D28] px-4 text-[12px] font-bold text-white transition-colors hover:bg-[#D94E1F]"
+                    >
+                      Registrar marco
+                    </button>
                   </div>
                 </div>
                 )}
@@ -4182,9 +4186,7 @@ export default function Atividades({
                 <p className="mb-3 text-[11px] font-extrabold uppercase tracking-[0.8px] text-[#F05D28]">Cronograma</p>
               )}
               {cronogramaPlaceholder ? (
-                <div className="flex flex-1 min-h-[200px] items-center justify-center rounded-[16px] border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-6 text-center">
-                  <p className="text-[12px] font-semibold text-[#94A3B8]">Área de preenchimento futuro</p>
-                </div>
+                <ActivityDetailFields activity={cardInlineDiscGroup?.activities[0] || selectedGroupDiscipline?.activities[0] || selectedOsGroup.activities[0]} />
               ) : (
                 <CronogramaResumo
                   activities={cardInlineDiscGroup ? cardInlineDiscGroup.activities : selectedGroupDiscipline ? selectedGroupDiscipline.activities : selectedOsGroup.activities}

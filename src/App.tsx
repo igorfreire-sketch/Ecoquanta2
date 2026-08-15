@@ -11,7 +11,6 @@ import {
   Bell,
   AtSign,
   X,
-  ExternalLink,
   LayoutDashboard,
   TrendingUp,
   LayoutGrid,
@@ -26,10 +25,8 @@ import {
   Sparkles,
   Moon,
   Sun,
-  ClipboardPaste,
+  CalendarDays,
   CalendarClock,
-  Cpu,
-  Plus,
 } from 'lucide-react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import type {
@@ -44,8 +41,16 @@ import type {
 } from './components/Administracao';
 import { ProjectVbaConfigCard } from './components/Administracao';
 import LoginScreen, { AuthUser } from './components/LoginScreen';
-import { getSheetDisciplinas, type AnnotationBanco, type AnnotationSheet } from './components/CoordenacaoEngenharia/Anotacoes';
+import CampoDialog from './components/CampoDialog';
+import {
+  getSheetDisciplinas,
+  isConcluidaAntiga,
+  NoteProjectsContext,
+  type AnnotationBanco,
+  type AnnotationSheet,
+} from './components/CoordenacaoEngenharia/Anotacoes';
 import type { CronogramaDoc } from './components/SolucoesDigitais';
+import { isNc2Leader, type Nc2Record } from './components/NaoConformidade2/ncStore';
 // ponytail: string literal em vez de importar CRONOGRAMAS_COLLECTION (runtime, nao so tipo) de
 // SolucoesDigitais.tsx — esse import puxaria o modulo inteiro (Atividades.tsx, CampoDialog etc.)
 // pro bundle principal em vez de ficar so no chunk lazy de <Cronogramas/>. O `import type` acima
@@ -54,31 +59,52 @@ const CRONOGRAMAS_COLLECTION = 'cronogramas';
 import Notificacoes from './components/Notificacoes';
 import FirebaseExplorer from './components/FirebaseExplorer';
 import Principal from './components/Principal';
+import BancoLinksPage from './components/BancoLinksPage';
 
 // Firestore rejects nested arrays, so `rows: string[][]` (legado) and `bancos` (cada um com seu
 // proprio rows: string[][]) sao JSON-encoded em strings unicas para storage.
-type WireAnnotationSheet = Omit<AnnotationSheet, 'rows' | 'bancos'> & { rowsJson: string; bancosJson: string };
+type WireAnnotationSheet = Omit<AnnotationSheet, 'rows' | 'bancos'> & {
+  rowsJson?: string;
+  bancosJson?: string;
+  rows?: string[][];
+  bancos?: AnnotationBanco[];
+};
+type NotesDocument = { sheets?: WireAnnotationSheet[]; [key: string]: unknown };
 
 function toWireAnnotationSheet(sheet: AnnotationSheet): WireAnnotationSheet {
   const { rows, bancos, ...rest } = sheet;
-  return { ...rest, rowsJson: JSON.stringify(rows || []), bancosJson: JSON.stringify(bancos || []) };
+  try {
+    return { ...rest, rowsJson: JSON.stringify(rows || []), bancosJson: JSON.stringify(bancos || []) };
+  } catch {
+    throw new Error(`A nota "${sheet.titulo || sheet.id}" contem dados que nao podem ser serializados.`);
+  }
 }
 
 function fromWireAnnotationSheet(sheet: WireAnnotationSheet): AnnotationSheet {
-  const { rowsJson, bancosJson, ...rest } = sheet;
-  let rows: string[][] = [];
+  const { rowsJson, bancosJson, rows: rawRows, bancos: rawBancos, ...rest } = sheet;
+  const label = String(sheet.titulo || sheet.id || 'sem identificacao');
+  let rows: unknown = rawRows || [];
   try {
-    rows = JSON.parse(rowsJson || '[]');
+    if (rowsJson !== undefined) rows = JSON.parse(rowsJson || '[]');
   } catch {
-    rows = [];
+    throw new Error(`A nota "${label}" possui rowsJson invalido. Nenhum dado foi alterado.`);
   }
-  let bancos: AnnotationBanco[] = [];
+  if (!Array.isArray(rows) || rows.some((row) => !Array.isArray(row) || row.some((cell) => typeof cell !== 'string'))) {
+    throw new Error(`A nota "${label}" possui linhas em formato invalido. Nenhum dado foi alterado.`);
+  }
+  let bancos: unknown = rawBancos || [];
   try {
-    bancos = JSON.parse(bancosJson || '[]');
+    if (bancosJson !== undefined) bancos = JSON.parse(bancosJson || '[]');
   } catch {
-    bancos = [];
+    throw new Error(`A nota "${label}" possui bancosJson invalido. Nenhum dado foi alterado.`);
   }
-  return { ...rest, rows, bancos };
+  if (!Array.isArray(bancos) || bancos.some((banco) => (
+    !banco || typeof banco !== 'object' || !Array.isArray((banco as AnnotationBanco).rows)
+    || (banco as AnnotationBanco).rows.some((row) => !Array.isArray(row) || row.some((cell) => typeof cell !== 'string'))
+  ))) {
+    throw new Error(`A nota "${label}" possui bancos em formato invalido. Nenhum dado foi alterado.`);
+  }
+  return { ...rest, rows: rows as string[][], bancos: bancos as AnnotationBanco[] };
 }
 
 import { getAppVersionLabel } from './config/appVersion';
@@ -86,7 +112,12 @@ import { PATCH_NOTES } from './config/patchNotes';
 import { applyAcessibilidade, getStoredAcessibilidade, type Acessibilidade } from './lib/theme';
 import { estadoNotificacao, notificarDesktop, pedirPermissaoNotificacao, type PermissaoNotificacao } from './lib/desktopNotify';
 import { getLatestEapDisplayDate } from './lib/eapDate';
-import { getDisciplinePatch, getRoleTabs } from './lib/adminAccess';
+import {
+  applyUserAccessPatch,
+  getDisciplinePatch,
+  hasPersistedTabAccess,
+  mergeDirtyUserRecords,
+} from './lib/adminAccess';
 import KonamiGame from './components/KonamiGame';
 import {
   DEFAULT_DISCIPLINE_SETTINGS,
@@ -97,6 +128,12 @@ import {
   splitDisciplineValues,
 } from './lib/disciplineCatalog';
 import {
+  acceptNoteProposal,
+  applyNoteSave,
+  rejectNoteProposal,
+  type NoteSaveIntent,
+} from './lib/noteProposals';
+import {
   fetchBootstrapDataFromFirebase,
   fetchFirebaseAppData,
   fetchCronogramaDataFromFirebase,
@@ -105,18 +142,22 @@ import {
   fetchRegistroDataFromFirebase,
   isFirebaseConfigured,
   hashPasswordLikeAppsScript,
+  mutateFirebaseAppData,
+  subscribeFirebaseAppData,
   replaceFirebaseAppData,
   canDeleteNote,
-  canEditNote,
   ensureGoogleFirebaseAuth,
   signInWithGooglePopup,
   signOutFirebase,
+  setFirebaseDocument,
 } from './lib/firebaseDb';
 
 const Atividades = React.lazy(() => import('./components/Atividades'));
 const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEngenharia'));
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
+// Kanban vive na Principal; o clique no card atravessa pra aba de Conformidade (Preenchimento).
+const Nc2Kanban = React.lazy(() => import('./components/NaoConformidade2/Kanban'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
 const Cronogramas = React.lazy(() => import('./components/Cronogramas'));
 const Notes = React.lazy(() => import('./components/CoordenacaoEngenharia/Notes'));
@@ -124,7 +165,7 @@ const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Con
 const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
 const Administracao = React.lazy(() => import('./components/Administracao'));
 // Importacao semi-automatica da EAP: o planejamento cola o bloco do MS Project e recebe de volta conferido.
-const ImportarEAP = React.lazy(() => import('./components/Planejamento/ImportarEAP'));
+const PCronograma = React.lazy(() => import('./components/Planejamento/PCronograma'));
 
 const EAP_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
 const APP_VERSION_LABEL = getAppVersionLabel();
@@ -199,11 +240,12 @@ function shouldLockUserToContract(user?: AuthUser | null) {
 }
 
 type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'solucoes' | 'banco-links' | 'administracao';
-type AreaTecnicaSubTab = 'atividades' | 'disciplinas';
-type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas';
-type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas' | 'importar';
-type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'disciplinas';
-type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | 'disciplinas';
+// 'project' e irma de 'disciplinas' (Notas): as duas sao paginas globais, iguais em toda area.
+type AreaTecnicaSubTab = 'atividades' | 'disciplinas' | 'project';
+type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas' | 'project';
+type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas' | 'p-cronograma' | 'project';
+type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'disciplinas' | 'project';
+type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | 'disciplinas' | 'project';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro' | 'firebase';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
@@ -212,7 +254,8 @@ const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'planejamento', label: 'Planejamento' },
   { key: 'contrato', label: 'Contrato' },
   { key: 'cronograma', label: 'Cronograma' },
-  { key: 'solucoes', label: 'Soluções digitais' },
+  // Chave historica 'solucoes': agora libera a sub-aba Project (a area propria deixou de existir).
+  { key: 'solucoes', label: 'Project' },
   { key: 'banco-links', label: 'Banco de Links' },
   { key: 'administracao', label: 'Administração' },
 ];
@@ -748,176 +791,6 @@ async function verifyPasswordHash(password: string, storedHash: string) {
   return false;
 }
 
-// Admin(s) "bootstrap": ao entrar com o e-mail + a senha-mestre abaixo, o usuario e
-// autenticado e TODA a lista de recuperacao (RECOVERY_USERS) e regravada no Firebase,
-// restaurando os logins perdidos. So serve como gatilho/senha de recuperacao.
-// IMPORTANTE: a senha aqui e PROVISORIA. Apos recuperar o acesso e trocar a senha,
-// REMOVA esta entrada (exige novo build), senao ela continua valendo como recuperacao.
-const BOOTSTRAP_ADMINS: Array<{ email: string; passwordHash: string }> = [
-  {
-    email: 'igor.freire@quantaconsultoria.com',
-    // sha256 de "19061994" (formato atual, sem salt).
-    passwordHash: 'sha256:ee6fc628799552ba839baf9a3cf2912922063908e72e976f864e7228476274a2',
-  },
-];
-
-type RecoveryAuthRecord = {
-  id: string;
-  data: string;
-  nome: string;
-  email: string;
-  role: string;
-  cargo: string;
-  disciplina: string;
-  disciplinas: string[];
-  contrato: string;
-  contract: string;
-  status: string;
-  alocacao: string;
-  allowedTabs: string[];
-  abas: string[];
-  isAdmin: boolean;
-  online: boolean;
-  onlyThirdParty: boolean;
-  showInCharts: boolean;
-  sessionVersion: string;
-  passwordHash: string;
-  resetCode: string;
-  resetExpires: string;
-  lastSeen: string;
-};
-
-function makeRecoveryUser(input: {
-  data: string;
-  nome: string;
-  email: string;
-  role: string;
-  disciplinas: string[];
-  abas: string[];
-  passwordHash: string;
-  isAdmin: boolean;
-  alocacao?: string;
-  contrato?: string;
-  sessionVersion: string;
-  lastSeen?: string;
-}): RecoveryAuthRecord {
-  return {
-    id: input.email,
-    data: input.data,
-    nome: input.nome,
-    email: input.email,
-    role: input.role,
-    cargo: input.role,
-    disciplina: input.disciplinas[0] || '',
-    disciplinas: input.disciplinas,
-    contrato: input.contrato || '',
-    contract: input.contrato || '',
-    status: 'approved',
-    alocacao: input.alocacao || '',
-    allowedTabs: input.abas,
-    abas: input.abas,
-    isAdmin: input.isAdmin,
-    online: false,
-    onlyThirdParty: false,
-    showInCharts: true,
-    sessionVersion: input.sessionVersion,
-    passwordHash: input.passwordHash,
-    resetCode: '',
-    resetExpires: '',
-    lastSeen: input.lastSeen || '',
-  };
-}
-
-// Backup dos usuarios que existiam antes da troca de banco. As senhas continuam sendo as
-// originais (hash legado salt:hash), exceto o Igor, cuja senha foi definida como "19061994".
-const RECOVERY_USERS: RecoveryAuthRecord[] = [
-  makeRecoveryUser({
-    data: '10/03/2026, 12:36:30', nome: 'Igor Freire', email: 'igor.freire@quantaconsultoria.com',
-    role: 'Líder', disciplinas: ['Desenvolvimento', 'ELET - Elétrica'],
-    abas: ['registro', 'controle', 'alocacoes', 'contratos', 'nc', 'cronograma', 'administracao', 'contrato', 'nc2'],
-    passwordHash: 'sha256:ee6fc628799552ba839baf9a3cf2912922063908e72e976f864e7228476274a2',
-    isAdmin: true, sessionVersion: '1780325717969-75fe1236', lastSeen: '1780682464638',
-  }),
-  makeRecoveryUser({
-    data: '10/03/2026, 13:21:12', nome: 'Gabriel Silveira Meurer', email: 'gabriel.meurer@quantaconsultoria.com',
-    role: 'Líder', disciplinas: ['Planejamento'],
-    abas: ['registro', 'controle', 'contratos', 'nc', 'cronograma', 'contrato'],
-    passwordHash: 'd2708308678f4e83:7604009e361193908c1b7d96744075a04c31b653e8da7e11893e63c47f217457',
-    isAdmin: true, sessionVersion: '1778766809960-c0baa1b3', lastSeen: '1778777006603',
-  }),
-  makeRecoveryUser({
-    data: '10/03/2026, 14:09:09', nome: 'Hágata Almeida', email: 'hagata.oliveira@quantaconsultoria.com',
-    role: 'Líder', disciplinas: ['Desenvolvimento'],
-    abas: ['administracao', 'cronograma', 'nc', 'contratos', 'controle', 'registro', 'contrato'],
-    passwordHash: '831b458a9ba24848:5fccaeb664c79aec0d3906a3735822382faf30528adfd0b2bc78c22f050f729b',
-    isAdmin: true, sessionVersion: '1778246707151-8579b52f', lastSeen: '1779286086051',
-  }),
-  makeRecoveryUser({
-    data: '11/03/2026, 17:27:27', nome: 'Vinícius Delgado', email: 'vinicius.delgado@quantaconsultoria.com',
-    role: 'Coordenador De Contrato', disciplinas: [],
-    abas: ['registro', 'controle', 'contratos', 'nc', 'cronograma', 'administracao', 'contrato'],
-    passwordHash: '59f296ec6be64cb4:f68f0ef604096f8a9a9908d8863efed137436a2603d37183bdfc36b429783e49',
-    isAdmin: true, sessionVersion: '1779216845131-f0cba1f5', lastSeen: '1780071770866',
-  }),
-  makeRecoveryUser({
-    data: '30/04/2026, 16:57:29', nome: 'coord.engenharia', email: 'coord.engenharia@quantaconsultoria.com',
-    role: 'Coordenador', disciplinas: ['ENG - Engenharia'],
-    abas: ['controle', 'contrato'],
-    passwordHash: 'a2eb40f5261e49a2:4a32b043851bd947b4f111ee38aa550b2c2b0373c74f3601ef6ebe017a9bed2d',
-    isAdmin: false, sessionVersion: '1777586730091-c12e029a',
-  }),
-  makeRecoveryUser({
-    data: '18/05/2026, 10:43:47', nome: 'Tarcísio Merino Marques', email: 'tarcisio.marques@quantaconsultoria.com',
-    role: '', disciplinas: [], abas: [],
-    passwordHash: '46476ca49a9e4eed:962d4fc28cb3b34132fd38933ce6881d911c98ddfed29a74b0b376cf9e0e6887',
-    isAdmin: false, sessionVersion: '1779118866110-244036d7',
-  }),
-  makeRecoveryUser({
-    data: '29/05/2026, 11:04:48', nome: 'Matheus de Souza Ferreira', email: 'matheus.ferreira@quantaconsultoria.com',
-    role: '', disciplinas: ['DREN - Drenagem', 'HIDA - Hidráulica', 'HIDS - Hidrossanitário'],
-    abas: ['registro'],
-    passwordHash: '6762c93f11974732:821de785e41fd676ef90b2e6fff70a9e7e6fa2e5dc0866f7d3399777efe31b23',
-    isAdmin: false, alocacao: 'Rio de Janeiro', sessionVersion: '1780086167598-a589949a', lastSeen: '1780086880635',
-  }),
-  makeRecoveryUser({
-    data: '29/05/2026, 12:48:14', nome: 'Tiago Ricardo Carlos', email: 'tiago.carlos@quantaconsultoria.com',
-    role: '', disciplinas: ['TERR - Terraplanagem'], abas: ['registro'],
-    passwordHash: '4c43580c32884d88:f4f22c071fe288977378afd34dd00178948c63e97124ff314aeed12dba8fc86c',
-    isAdmin: false, alocacao: 'Rio de Janeiro', sessionVersion: '1780079293145-158af5c9', lastSeen: '1780429461956',
-  }),
-];
-
-// Regrava (merge) os usuarios de recuperacao no appData/auth do Firebase. Preserva quem ja
-// existir no banco (nao sobrescreve cadastros mais novos), exceto os admins bootstrap, cujo
-// registro e forcado para garantir o acesso com a senha-mestre. Best-effort.
-async function seedAuthRecoveryToFirebase() {
-  if (!isFirebaseConfigured()) return;
-  try {
-    const existingAuth = await fetchFirebaseAppData<any>('auth');
-    const byEmail = new Map<string, any>();
-    getAuthUsersList(existingAuth).forEach((item: any) => {
-      const key = normalizeUserText(item?.email || item?.id);
-      if (key) byEmail.set(key, item);
-    });
-    RECOVERY_USERS.forEach((user) => {
-      const key = normalizeUserText(user.email);
-      if (!key) return;
-      const isBootstrap = BOOTSTRAP_ADMINS.some((item) => normalizeUserText(item.email) === key);
-      if (isBootstrap || !byEmail.has(key)) byEmail.set(key, user);
-    });
-    const baseAuth =
-      existingAuth && typeof existingAuth === 'object' && !Array.isArray(existingAuth) ? existingAuth : {};
-    await replaceFirebaseAppData('auth', {
-      ...baseAuth,
-      users: Array.from(byEmail.values()),
-      publishedAt: new Date().toISOString(),
-      source: 'EcoQuanta-Web-Recovery',
-    });
-  } catch (error) {
-    console.error('Falha ao restaurar usuarios no Firebase:', error);
-  }
-}
-
 function createDraftId(prefix: string) {
   try {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}:${crypto.randomUUID()}`;
@@ -932,138 +805,6 @@ function TabLoadingFallback() {
         <span className="h-4 w-4 rounded-full border-2 border-[#F05D28] border-t-transparent animate-spin" />
         Carregando aba...
       </div>
-    </div>
-  );
-}
-
-function BancoLinksPageV2({
-  links,
-  canManage,
-  onSaveLink,
-}: {
-  links: DatabaseLinkRecord[];
-  canManage: boolean;
-  onSaveLink?: (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => Promise<void> | void;
-}) {
-  const [search, setSearch] = useState('');
-  const [formOpen, setFormOpen] = useState(false);
-  const [nome, setNome] = useState('');
-  const [link, setLink] = useState('');
-  const [error, setError] = useState('');
-
-  const filteredLinks = links.filter((item) => (
-    `${item.nome} ${item.link} ${item.descricao || ''}`.toLowerCase().includes(search.trim().toLowerCase())
-  ));
-
-  const resetForm = () => {
-    setNome('');
-    setLink('');
-    setError('');
-    setFormOpen(false);
-  };
-
-  const handleSave = async () => {
-    const trimmedNome = nome.trim();
-    const trimmedLink = link.trim();
-    if (!trimmedNome || !trimmedLink) {
-      setError('Preencha nome e URL.');
-      return;
-    }
-    if (!onSaveLink) return;
-    await onSaveLink({ nome: trimmedNome, link: trimmedLink, descricao: '' });
-    resetForm();
-  };
-
-  return (
-    <div className="space-y-6">
-      <section className="space-y-4 rounded-2xl bg-white p-6 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] lg:p-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <h1 className="text-[24px] font-bold text-[#2D2D2D]">Banco de Links</h1>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <input
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Pesquisar link"
-              className="h-11 min-w-[240px] rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-4 text-[13px] text-[#2D2D2D] outline-none transition focus:border-[#F05D28] focus:bg-white"
-            />
-            {canManage && (
-              <button
-                type="button"
-                onClick={() => {
-                  setError('');
-                  setFormOpen((prev) => !prev);
-                }}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#F05D28] px-4 text-[13px] font-bold text-white transition hover:opacity-90"
-              >
-                <Plus size={15} />
-                <span>Link</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {canManage && formOpen && (
-          <div className="grid grid-cols-1 gap-3 rounded-2xl border border-[#FDE3D5] bg-[#FFF8F4] p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_auto]">
-            <input
-              type="text"
-              value={nome}
-              onChange={(event) => setNome(event.target.value)}
-              placeholder="Nome"
-              className="h-11 rounded-xl border border-[#E5E7EB] bg-white px-4 text-[13px] text-[#2D2D2D] outline-none transition focus:border-[#F05D28]"
-            />
-            <input
-              type="url"
-              value={link}
-              onChange={(event) => setLink(event.target.value)}
-              placeholder="URL ou local"
-              className="h-11 rounded-xl border border-[#E5E7EB] bg-white px-4 text-[13px] text-[#2D2D2D] outline-none transition focus:border-[#F05D28]"
-            />
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => { void handleSave(); }}
-                className="inline-flex h-11 items-center justify-center rounded-xl bg-[#F05D28] px-4 text-[13px] font-bold text-white transition hover:opacity-90"
-              >
-                Registrar
-              </button>
-              <button
-                type="button"
-                onClick={resetForm}
-                className="inline-flex h-11 items-center justify-center rounded-xl border border-[#E5E7EB] bg-white px-4 text-[13px] font-semibold text-[#757575] transition hover:border-[#CBD5E1] hover:text-[#2D2D2D]"
-              >
-                Cancelar
-              </button>
-            </div>
-            {error && <p className="text-[12px] font-semibold text-[#DC2626] lg:col-span-3">{error}</p>}
-          </div>
-        )}
-      </section>
-
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-        {filteredLinks.map((item) => (
-          <a
-            key={item.id || item.link}
-            href={item.link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-2xl border border-transparent bg-white p-5 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)] transition-colors hover:border-[#F05D28]/30"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <h2 className="truncate text-[15px] font-bold text-[#2D2D2D]">{item.nome}</h2>
-                <p className="mt-3 truncate text-[12px] text-[#F05D28]">{item.link}</p>
-              </div>
-              <ExternalLink size={17} className="shrink-0 text-[#F05D28]" />
-            </div>
-          </a>
-        ))}
-        {filteredLinks.length === 0 && (
-          <div className="rounded-2xl bg-white p-5 text-[13px] font-medium text-[#757575] shadow-[0_10px_30px_-22px_rgba(15,23,42,0.45)]">
-            Nenhum link encontrado.
-          </div>
-        )}
-      </section>
     </div>
   );
 }
@@ -1256,29 +997,33 @@ function getUserInitials(nome: string) {
 function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleTabPermissions = {}) {
   if (tab === 'principal') return true; // Principal e a casa de todo usuario logado.
   if (user.isAdmin) return true;
+  // Dominio corporativo ja entra liberado nessas 3 abas, sem depender de permissao do admin.
+  if (isCorporateEmail(user.email || '') && (tab === 'registro' || tab === 'cronograma' || tab === 'banco-links')) {
+    return true;
+  }
   const userTabs = Array.isArray(user.abas) ? user.abas.map(String) : [];
   if (tab === 'registro') {
-    return userTabs.includes('registro');
+    return hasPersistedTabAccess(userTabs, 'registro');
   }
   if (tab === 'nc2') {
-    return userTabs.includes('nc2') || userTabs.includes('nc');
+    return hasPersistedTabAccess(userTabs, 'nc2', ['nc']);
   }
   if (tab === 'controle') {
-    return userTabs.includes('controle') || userTabs.includes('alocacoes');
+    return hasPersistedTabAccess(userTabs, 'controle', ['alocacoes']);
   }
   if (tab === 'planejamento') {
     // Planejamento e uma aba propria — NAO deve ser liberada so por ter 'controle'.
-    return userTabs.includes('planejamento');
+    return hasPersistedTabAccess(userTabs, 'planejamento');
   }
   if (tab === 'contrato') {
-    return userTabs.includes('contrato') || userTabs.includes('contratos');
+    return hasPersistedTabAccess(userTabs, 'contrato', ['contratos']);
   }
   if (tab === 'solucoes') {
-    if (userTabs.includes('solucoes')) return true;
+    if (hasPersistedTabAccess(userTabs, 'solucoes')) return true;
     const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
     return getUserDisciplineList(user).some((d) => norm(d).includes('solucoes digitais'));
   }
-  return userTabs.includes(tab);
+  return hasPersistedTabAccess(userTabs, tab);
 }
 
 // Entrar no sistema (login ou sessao restaurada) sempre cai na Principal.
@@ -1378,24 +1123,32 @@ function mergeAdminStateWithRemote(
   draftState: AdminSnapshotState,
   existingAdmin: any,
   existingAuth: any,
+  baseUsers: UserAccessRecord[],
+  dirtyUserIds: readonly string[],
+  deletedUserEmails: readonly string[],
 ): AdminSnapshotState {
   const remoteAdminState = getAdminState({ admin: existingAdmin || {} });
   const remoteAuthUsers = getAuthUsersList(existingAuth);
-  const mergedUsers = mergeUserAccessRecords(
-    draftState.usuarios,
-    remoteAdminState.usuarios,
-    remoteAuthUsers,
-  );
+  const remoteUsers = mergeUserAccessRecords(remoteAdminState.usuarios, remoteAuthUsers);
+  const mergedUsers = mergeDirtyUserRecords({
+    remoteUsers,
+    baseUsers,
+    draftUsers: draftState.usuarios,
+    dirtyUserIds,
+    deletedUserEmails,
+  });
   const remoteUserCount = remoteAdminState.usuarios.length + remoteAuthUsers.length;
 
   if (remoteUserCount > 0 && mergedUsers.length === 0) {
     throw new Error('Protecao de dados: o salvamento administrativo tentou publicar uma lista vazia de usuarios.');
   }
 
-  const draftHasField = (field: Exclude<AdminEditableField, 'roleTabPermissions'>) =>
-    draftState.editedFields?.includes(field) || draftState[field].length > 0;
-  const draftHasObject = (field: 'roleTabPermissions') =>
-    draftState.editedFields?.includes(field) || hasObjectEntries(draftState[field]);
+  const draftHasField = (field: Exclude<AdminEditableField, 'roleTabPermissions'>) => draftState.editedFields
+    ? draftState.editedFields.includes(field)
+    : draftState[field].length > 0;
+  const draftHasObject = (field: 'roleTabPermissions') => draftState.editedFields
+    ? draftState.editedFields.includes(field)
+    : hasObjectEntries(draftState[field]);
 
   return {
     usuarios: mergedUsers,
@@ -1864,14 +1617,16 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
 
   const [activeTab, setActiveTab] = React.useState<AppTab>('principal');
+  const [principalSubTab, setPrincipalSubTab] = React.useState<'inicio' | 'project'>('inicio');
   const [areaTecnicaSubTab, setAreaTecnicaSubTab] = React.useState<AreaTecnicaSubTab>('atividades');
   const [subTab, setSubTab] = React.useState<ControleSubTab>('planejamento');
   const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('atividades');
   const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
+  // Registro clicado no Kanban da Principal: fica aqui ate a Conformidade montar e consumir.
+  const [pendingNc2EditRecord, setPendingNc2EditRecord] = React.useState<Nc2Record | null>(null);
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('atividades');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [cronogramaSubTab, setCronogramaSubTab] = React.useState<'cronograma' | 'disciplinas'>('cronograma');
-  const [solucoesSubTab, setSolucoesSubTab] = React.useState<'notas' | 'cronograma'>('cronograma');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [globalData, setGlobalData] = useState<GlobalData>({});
 
@@ -1910,7 +1665,43 @@ export default function App() {
   const [roleTabPermissions, setRoleTabPermissions] = useState<RoleTabPermissions>({});
   const [databaseLinks, setDatabaseLinks] = useState<DatabaseLinkRecord[]>([]);
   const [preRegistrations, setPreRegistrations] = useState<PreRegistrationRecord[]>([]);
+  // Auto-aceite por dominio corporativo sem pre-cadastro: pausa o login e pede a disciplina
+  // antes de criar o usuario, senao ele entra "fantasma" (sem contexto pro admin distribuir depois).
+  const [pendingCorporateSignup, setPendingCorporateSignup] = useState<{
+    email: string;
+    normalizedEmail: string;
+    preRegistration: any;
+    authData: any;
+    adminState: ReturnType<typeof getAdminState>;
+    rememberMode: boolean;
+  } | null>(null);
+  const [corporateDisciplinaChoice, setCorporateDisciplinaChoice] = useState('');
+  const [corporateSignupSubmitting, setCorporateSignupSubmitting] = useState(false);
+  const [adminConfirmationOpen, setAdminConfirmationOpen] = useState(false);
+  const pendingAdminConfirmationRef = React.useRef<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null>(null);
+  const requestAdminConfirmation = useCallback(() => new Promise<void>((resolve, reject) => {
+    pendingAdminConfirmationRef.current = { resolve, reject };
+    setAdminConfirmationOpen(true);
+  }), []);
+  const finishAdminConfirmation = useCallback((values: Record<string, string>) => {
+    const pending = pendingAdminConfirmationRef.current;
+    pendingAdminConfirmationRef.current = null;
+    setAdminConfirmationOpen(false);
+    if (!pending) return;
+    if (values.confirmacao === 'CONFIRMAR') pending.resolve();
+    else pending.reject(new Error('Alteracao administrativa cancelada.'));
+  }, []);
+  const cancelAdminConfirmation = useCallback(() => {
+    const pending = pendingAdminConfirmationRef.current;
+    pendingAdminConfirmationRef.current = null;
+    setAdminConfirmationOpen(false);
+    pending?.reject(new Error('Alteracao administrativa cancelada.'));
+  }, []);
   const [dirtyUserIds, setDirtyUserIds] = useState<string[]>([]);
+  const dirtyUserIdsRef = React.useRef<Set<string>>(new Set());
   const [moduleErrors, setModuleErrors] = useState<Record<string, string>>({});
   const [moduleLoading, setModuleLoading] = useState<Record<string, boolean>>({});
   const moduleLoadingRef = React.useRef<Set<string>>(new Set());
@@ -1920,19 +1711,44 @@ export default function App() {
   const adminAutoLoadAttemptRef = React.useRef(false);
   const adminDraftVersionRef = React.useRef(0);
   const adminDraftRef = React.useRef<AdminSnapshotState | null>(null);
+  const adminUserBaselineRef = React.useRef<UserAccessRecord[]>([]);
   const deletedUserEmailsRef = React.useRef<Set<string>>(new Set());
   const databaseLinksComSeed = React.useMemo(() => withSeedDatabaseLinks(databaseLinks), [databaseLinks]);
 
+  const markUserDirty = useCallback((userId: string) => {
+    dirtyUserIdsRef.current.add(userId);
+    setDirtyUserIds((prev) => prev.includes(userId) ? prev : [...prev, userId]);
+  }, []);
+
   // ANOTACOES (Disciplinas)
   const [notes, setNotes] = useState<AnnotationSheet[]>([]);
-  const notesLoadAttemptRef = React.useRef(false);
-  // noteId de toda linha de todo cronograma - so pro icone de relogio no card da nota (ela "sabe"
-  // que um cronograma aponta pra ela). Mesmo padrao 1x-por-sessao das notas.
-  // ponytail: Cronogramas.tsx faz sua PROPRIA leitura da colecao (dona da migracao da colecao
-  // legada) - essa aqui e uma leitura duplicada, de proposito: e mais barato reler uma colecao
-  // pequena do que arriscar mexer no fluxo de criar/migrar que ja funciona. Se um dia incomodar,
-  // o upgrade e subir o load pro App e passar pros dois lugares.
-  const [noteIdsComCronograma, setNoteIdsComCronograma] = useState<Set<string>>(new Set());
+  const [notesLoadError, setNotesLoadError] = useState('');
+  // Notas que aparecem no Kanban da Principal, sem as concluidas ha 10+ dias (essas vivem na aba
+  // "Notas Concluidas" de Anotacoes.tsx). As do seu setor so pra lider/coordenador (isNc2Leader,
+  // mesmo gate dos cards de conformidade); as que te marcaram, ou privadas suas, aparecem pra
+  // qualquer usuario (dono ve a propria nota privada, mas ela nao vaza pro setor).
+  const notasKanbanPrincipal = React.useMemo(() => {
+    if (!currentUser) return [];
+    const ehLider = isNc2Leader(currentUser);
+    const minhasDisciplinas = new Set(getUserDisciplineList(currentUser));
+    return notes.filter((sheet) => (
+      !isConcluidaAntiga(sheet)
+      && (
+        (sheet.autorEmail !== currentUser.email && ehLider && sheet.publica !== false && getSheetDisciplinas(sheet).some((item) => minhasDisciplinas.has(item)))
+        || (sheet.marcadosUsuarios || []).includes(currentUser.email)
+        || (sheet.publica === false && sheet.autorEmail === currentUser.email)
+      )
+    ));
+  }, [notes, currentUser]);
+  // Documentos completos alimentam o seletor Note -> Project; Cronogramas.tsx continua dono do
+  // editor/migracao e faz a leitura propria sem acoplar seu fluxo a este estado.
+  const [noteProjects, setNoteProjects] = useState<CronogramaDoc[]>([]);
+  const [noteProjectsLoadError, setNoteProjectsLoadError] = useState('');
+  const noteIdsComCronograma = React.useMemo(() => {
+    const ids = new Set<string>();
+    noteProjects.forEach((project) => (project.rows || []).forEach((row) => { if (row.noteId) ids.add(row.noteId); }));
+    return ids;
+  }, [noteProjects]);
   const cronogramasLoadAttemptRef = React.useRef(false);
 
   // Aba do usuario: pedido de outras disciplinas, aprovado/negado pelo admin.
@@ -2044,10 +1860,11 @@ export default function App() {
     };
   }, [getAdminSnapshotState]);
 
-  const buildAuthFirebaseSnapshot = useCallback((sourceUsers?: UserAccessRecord[], existingAuth?: any) => {
+  const buildAuthFirebaseSnapshot = useCallback((sourceUsers?: UserAccessRecord[], existingAuth?: any, deletedUserEmails: readonly string[] = []) => {
     const users = sourceUsers || usuarios;
     const existingUsers = getAuthUsersList(existingAuth);
     const existingByEmail = new Map(existingUsers.map((item: any) => [normalizeUserText(item?.email), item]));
+    const deletedEmails = new Set(deletedUserEmails.map(normalizeUserText));
 
     const mappedUsers = users.map((user) => {
       const existing = existingByEmail.get(normalizeUserText(user.email)) || {};
@@ -2081,7 +1898,7 @@ export default function App() {
     const mappedEmails = new Set(mappedUsers.map((user: any) => normalizeUserText(user.email)).filter(Boolean));
     const preservedExistingUsers = existingUsers.filter((item: any) => {
       const email = normalizeUserText(item?.email || item?.id);
-      return email && !mappedEmails.has(email) && !deletedUserEmailsRef.current.has(email);
+      return email && !mappedEmails.has(email) && !deletedEmails.has(email);
     });
 
     return {
@@ -2092,24 +1909,36 @@ export default function App() {
   }, [usuarios]);
 
   const prepareAdminSnapshotForSave = useCallback(async (draftState: AdminSnapshotState) => {
+    const dirtyUserIdsForSave: string[] = Array.from(dirtyUserIdsRef.current);
+    const deletedUserEmailsForSave: string[] = Array.from(deletedUserEmailsRef.current);
+    const baseUsersForSave = adminUserBaselineRef.current;
     const [existingAdmin, existingAuth] = isFirebaseConfigured()
       ? await Promise.all([
           fetchFirebaseAppData<any>('admin'),
           fetchFirebaseAppData<any>('auth'),
         ])
       : [null, null];
-    const mergedState = mergeAdminStateWithRemote(draftState, existingAdmin, existingAuth);
-    const safeMergedState = deletedUserEmailsRef.current.size > 0
-      ? { ...mergedState, usuarios: mergedState.usuarios.filter((user) => !deletedUserEmailsRef.current.has(normalizeUserText(user.email || user.id))) }
-      : mergedState;
-    const existingUsers = mergeUserAccessRecords(
-      getAdminState({ admin: existingAdmin || {} }).usuarios,
-      getAuthUsersList(existingAuth),
+    const safeMergedState = mergeAdminStateWithRemote(
+      draftState,
+      existingAdmin,
+      existingAuth,
+      baseUsersForSave,
+      dirtyUserIdsForSave,
+      deletedUserEmailsForSave,
     );
-    const risk = getCriticalAdminMutationRisk(existingUsers, safeMergedState.usuarios, currentUser?.email || '', Boolean(currentUser?.isAdmin));
-    if (risk.blocked) throw new Error(risk.blocked);
-    if (risk.requiresConfirmation && window.prompt('Digite CONFIRMAR para concluir alteracoes destrutivas em outro administrador.') !== 'CONFIRMAR') {
-      throw new Error('Alteracao administrativa cancelada.');
+    // Guard de admin destrutivo (EQ-13) so faz sentido quando a edicao realmente mexeu em
+    // `usuarios` -- pre-cadastro e outros campos (cargos, disciplinas, links...) nunca tocam
+    // nisso, mas antes rodavam o mesmo check e disparavam o prompt bloqueante por engano
+    // (a lista local de usuarios ficava defasada da remota so' de reabrir a aba).
+    const usuariosEdited = !draftState.editedFields || draftState.editedFields.includes('usuarios');
+    if (usuariosEdited) {
+      const existingUsers = mergeUserAccessRecords(
+        getAdminState({ admin: existingAdmin || {} }).usuarios,
+        getAuthUsersList(existingAuth),
+      );
+      const risk = getCriticalAdminMutationRisk(existingUsers, safeMergedState.usuarios, currentUser?.email || '', Boolean(currentUser?.isAdmin));
+      if (risk.blocked) throw new Error(risk.blocked);
+      if (risk.requiresConfirmation) await requestAdminConfirmation();
     }
     const snapshot = buildAdminFirebaseSnapshot(safeMergedState);
 
@@ -2117,8 +1946,9 @@ export default function App() {
       snapshot,
       state: safeMergedState,
       existingAuth,
+      deletedUserEmails: deletedUserEmailsForSave,
     };
-  }, [buildAdminFirebaseSnapshot, currentUser]);
+  }, [buildAdminFirebaseSnapshot, currentUser, requestAdminConfirmation]);
 
   const writeAdminSnapshotToFirebase = useCallback(async (snapshot: Record<string, any>) => {
     if (!isFirebaseConfigured()) return;
@@ -2135,10 +1965,10 @@ export default function App() {
     return snapshot;
   }, [getAdminSnapshotState, prepareAdminSnapshotForSave, writeAdminSnapshotToFirebase]);
 
-  const syncAuthSnapshotToFirebase = useCallback(async (overrideUsers?: UserAccessRecord[], existingAuthOverride?: any) => {
+  const syncAuthSnapshotToFirebase = useCallback(async (overrideUsers?: UserAccessRecord[], existingAuthOverride?: any, deletedUserEmails: readonly string[] = []) => {
     if (!isFirebaseConfigured()) return;
     const existingAuth = existingAuthOverride ?? await fetchFirebaseAppData<any>('auth');
-    await replaceFirebaseAppData('auth', buildAuthFirebaseSnapshot(overrideUsers, existingAuth));
+    await replaceFirebaseAppData('auth', buildAuthFirebaseSnapshot(overrideUsers, existingAuth, deletedUserEmails));
   }, [buildAuthFirebaseSnapshot]);
 
   const syncAdminSnapshotToAppsScript = useCallback(async () => {
@@ -2181,9 +2011,11 @@ export default function App() {
         databaseLinks: adminState.databaseLinks,
         preRegistrations: adminState.preRegistrations,
       };
+      adminUserBaselineRef.current = adminState.usuarios;
       setCurrentUser((prev) => prev ? applyAdminUserContext(prev, normalizedData.admin) : prev);
     }
     setDirtyUserIds([]);
+    dirtyUserIdsRef.current = new Set();
     setAdminHasPendingChanges(false);
     deletedUserEmailsRef.current = new Set();
   }, []);
@@ -2433,6 +2265,9 @@ export default function App() {
           setGlobalData({});
           setLoadedModules({});
           setDirtyUserIds([]);
+          dirtyUserIdsRef.current = new Set();
+          adminUserBaselineRef.current = [];
+          deletedUserEmailsRef.current = new Set();
           setPendingTerceirizadas([]);
           setAdminHasPendingChanges(false);
           setIsSavingAdminChanges(false);
@@ -2518,20 +2353,24 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || preloading) return;
 
-    const wantsCronograma = activeTab === 'cronograma';
+    const wantsCronograma = activeTab === 'cronograma'
+      || (activeTab === 'planejamento' && planejamentoSubTab === 'p-cronograma');
 
     const wantsEap =
       (activeTab === 'controle' && subTab === 'curva-s') ||
       (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ||
-      (activeTab === 'planejamento' && (planejamentoSubTab === 'atividades' || planejamentoSubTab === 'curva-s')) ||
-      (activeTab === 'contrato' && contratoSubTab === 'atividades');
+      (activeTab === 'planejamento' && (planejamentoSubTab === 'atividades' || planejamentoSubTab === 'curva-s' || planejamentoSubTab === 'p-cronograma')) ||
+      (activeTab === 'contrato' && contratoSubTab === 'atividades') ||
+      (activeTab === 'nc2' && nc2SubTab === 'preenchimento');
     const wantsRegistro =
       activeTab === 'registro' ||
       activeTab === 'controle' ||
       activeTab === 'planejamento' ||
       activeTab === 'contrato' ||
       activeTab === 'nc2' ||
-      activeTab === 'cronograma';
+      activeTab === 'cronograma' ||
+      // Kanban da Principal usa contratos/OS pra mostrar nome no lugar do codigo.
+      activeTab === 'principal';
 
     if (wantsRegistro) void loadFirebaseModule('registro');
     if (wantsCronograma) {
@@ -2570,10 +2409,12 @@ export default function App() {
         snapshot: adminSnapshot,
         state: safeDraftState,
         existingAuth,
+        deletedUserEmails,
       } = await prepareAdminSnapshotForSave(draftState);
+      if (adminDraftVersionRef.current !== versionToSave) return;
       await Promise.all([
         writeAdminSnapshotToFirebase(adminSnapshot),
-        syncAuthSnapshotToFirebase(safeDraftState.usuarios, existingAuth),
+        syncAuthSnapshotToFirebase(safeDraftState.usuarios, existingAuth, deletedUserEmails),
       ]);
       syncAdminSnapshotToAppsScriptInBackground(adminSnapshot);
 
@@ -2599,9 +2440,11 @@ export default function App() {
           databaseLinks: savedAdminState.databaseLinks,
           preRegistrations: savedAdminState.preRegistrations,
         };
+        adminUserBaselineRef.current = savedAdminState.usuarios;
         setGlobalData((prev) => mergeGlobalData(prev, { admin: adminSnapshot }));
         setCurrentUser((prev) => prev ? applyAdminUserContext(prev, adminSnapshot) : prev);
         setDirtyUserIds([]);
+        dirtyUserIdsRef.current = new Set();
         setAdminHasPendingChanges(false);
         deletedUserEmailsRef.current = new Set();
       }
@@ -2676,7 +2519,10 @@ export default function App() {
     const normalizedAdmin = normalizeLoadedAdmin(globalData.admin, globalData);
     const adminState = getAdminState({ ...globalData, admin: normalizedAdmin });
 
-    if (usuarios.length === 0 && adminState.usuarios.length > 0) setUsuarios(adminState.usuarios);
+    if (usuarios.length === 0 && adminState.usuarios.length > 0) {
+      setUsuarios(adminState.usuarios);
+      adminUserBaselineRef.current = adminState.usuarios;
+    }
     if (disciplinas.length === 0 && adminState.disciplinas.length > 0) setDisciplinas(adminState.disciplinas);
     if (disciplineSettings.length === 0 && adminState.disciplineSettings.length > 0) setDisciplineSettings(adminState.disciplineSettings);
     if (cargos.length === 0 && adminState.cargos.length > 0) setCargos(adminState.cargos);
@@ -2711,25 +2557,52 @@ export default function App() {
     void loadAdminData();
   }, [activeTab, currentUser?.isAdmin, disciplinas.length, loadAdminData, usuarios.length]);
 
-  const saveAnnotationSheet = useCallback(async (sheet: AnnotationSheet) => {
-    if (!currentUser) return;
-    const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ sheets: WireAnnotationSheet[] }>('notes') : null;
-    const baseline = remote?.sheets ? remote.sheets.map(fromWireAnnotationSheet) : notes;
-    // Guarda real: a checagem da UI so esconde os campos, aqui e onde todo caller passa.
-    // Nota nova (ainda nao existe na base) qualquer um cria; alterar exige permissao.
-    const anterior = baseline.find((item) => item.id === sheet.id);
-    if (anterior && !canEditNote(currentUser, anterior.autorEmail, anterior.marcadosUsuarios)) {
-      window.alert('Apenas o autor, um administrador ou um usuário vinculado pode alterar esta nota.');
-      return;
-    }
-    const merged = [...baseline.filter((item) => item.id !== sheet.id), sheet];
-    if (isFirebaseConfigured()) await replaceFirebaseAppData('notes', { sheets: merged.map(toWireAnnotationSheet) });
+  const saveAnnotationSheet = useCallback(async (sheet: AnnotationSheet, intent: NoteSaveIntent = {}) => {
+    if (!currentUser) throw new Error('Sessao encerrada. Entre novamente antes de salvar.');
+    const now = new Date().toISOString();
+    const mutateNotes = (current: NotesDocument | null): NotesDocument => {
+      if (current?.sheets !== undefined && !Array.isArray(current.sheets)) {
+        throw new Error('O documento de notas tem formato invalido. Nenhum dado foi alterado.');
+      }
+      const baseline = (current?.sheets || []).map(fromWireAnnotationSheet);
+      const existing = baseline.find((item) => item.id === sheet.id);
+      let saved: AnnotationSheet;
+
+      if (intent.proposalDecision) {
+        if (!existing) throw new Error('A nota desta proposta nao foi encontrada.');
+        saved = intent.proposalDecision === 'accept'
+          ? acceptNoteProposal(existing, currentUser.email, now)
+          : rejectNoteProposal(existing, currentUser.email);
+      } else {
+        saved = applyNoteSave(existing, sheet, currentUser, now);
+        if (existing) {
+          saved = {
+            ...saved,
+            historicoSalvamentos: [
+              ...(existing.historicoSalvamentos || []),
+              { titulo: existing.titulo, salvoEm: existing.updatedAt || now, salvoPor: currentUser.nome || currentUser.email },
+            ],
+          };
+        }
+      }
+
+      const merged = existing
+        ? baseline.map((item) => (item.id === saved.id ? saved : item))
+        : [...baseline, saved];
+      return { ...(current || {}), sheets: merged.map(toWireAnnotationSheet) };
+    };
+
+    if (!isFirebaseConfigured()) throw new Error('Firebase indisponivel. A nota nao foi salva.');
+    const result = await mutateFirebaseAppData<NotesDocument>('notes', mutateNotes);
+    const merged = (result.sheets || []).map(fromWireAnnotationSheet);
     setNotes(merged);
-  }, [notes, currentUser]);
+    setNotesLoadError('');
+  }, [currentUser]);
 
   // Todas as areas usam a mesma chave de sub-aba pra pagina Notes.
   const subAbaAtual = ({
     registro: areaTecnicaSubTab,
+    principal: principalSubTab,
     controle: subTab,
     planejamento: planejamentoSubTab,
     contrato: contratoSubTab,
@@ -2737,7 +2610,6 @@ export default function App() {
     cronograma: cronogramaSubTab,
     administracao: adminSubTab,
   } as Record<string, string>)[activeTab];
-  const notesPageOpen = subAbaAtual === 'disciplinas';
 
   // Leva pra pagina de Notas sem sair da area em que a pessoa esta (toda area tem essa sub-aba).
   const irParaNotas = () => {
@@ -2899,32 +2771,48 @@ export default function App() {
   }, [currentUser, notes]);
 
   useEffect(() => {
-    // As notas alimentam a pagina de Notas, os dois sinos e os contadores da Principal,
-    // entao carregam uma vez por sessao e nao so ao abrir a aba de Notas.
+    // As notas alimentam a pagina de Notas, os dois sinos, os contadores da Principal e o
+    // Kanban, entao carregam ao vivo (nao so uma vez por sessao): appData/notes muda quando
+    // qualquer usuario salva/move uma nota, inclusive a propria escrita otimista desta sessao.
     if (!currentUser) return;
-    if (notesLoadAttemptRef.current) return;
-    notesLoadAttemptRef.current = true;
-    (async () => {
-      const data = await fetchFirebaseAppData<{ sheets: WireAnnotationSheet[] }>('notes');
-      if (data?.sheets) setNotes(data.sheets.map(fromWireAnnotationSheet));
-    })();
-  }, [currentUser, notesPageOpen]);
+    let active = true;
+    const load = async () => {
+      try {
+        const data = await fetchFirebaseAppData<NotesDocument>('notes');
+        if (!active) return;
+        if (data?.sheets !== undefined && !Array.isArray(data.sheets)) {
+          throw new Error('O documento de notas tem formato invalido.');
+        }
+        if (data?.sheets) setNotes(data.sheets.map(fromWireAnnotationSheet));
+        setNotesLoadError('');
+      } catch (error) {
+        if (!active) return;
+        const message = error instanceof Error ? error.message : 'Falha ao ler as notas.';
+        console.error('Erro ao carregar notas:', error);
+        setNotesLoadError(`${message} A copia local anterior foi preservada.`);
+      }
+    };
+    void load();
+    const unsubscribe = subscribeFirebaseAppData('notes', () => void load());
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [currentUser?.email]);
 
   useEffect(() => {
-    // So pro icone de relogio no card da nota (ver comentario no state) — carrega 1x por sessao,
-    // igual as notas, e nao trava nada se falhar (regra do Firestore de `cronogramas` ainda nao
-    // publicada em produção: fica com o Set vazio, sem icone, sem erro visivel).
+    // Documentos completos alimentam o seletor Note -> Project; esta leitura nunca migra nem grava.
     if (!currentUser) return;
     if (cronogramasLoadAttemptRef.current) return;
     cronogramasLoadAttemptRef.current = true;
     (async () => {
       try {
         const cronogramas = await fetchFirebaseCollection<CronogramaDoc>(CRONOGRAMAS_COLLECTION);
-        const ids = new Set<string>();
-        cronogramas.forEach((c) => (c.rows || []).forEach((r) => { if (r.noteId) ids.add(r.noteId); }));
-        setNoteIdsComCronograma(ids);
-      } catch {
-        // sem persistencia/regra ainda: segue sem icone, nao trava a tela
+        setNoteProjects(cronogramas);
+        setNoteProjectsLoadError('');
+      } catch (error) {
+        console.error('Erro ao carregar Projects para as notas:', error);
+        setNoteProjectsLoadError('Nao foi possivel carregar os Projects. Tente novamente mais tarde.');
       }
     })();
   }, [currentUser]);
@@ -2964,31 +2852,74 @@ export default function App() {
       return;
     }
     const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
-    const nextUsers = sourceUsers.map((user) => (user.email !== currentUser.email ? user : {
+    const currentRecord = sourceUsers.find((user) => normalizeUserText(user.email) === normalizeUserText(currentUser.email));
+    const nextUsers = sourceUsers.map((user) => (user !== currentRecord ? user : {
       ...user,
       disciplina: getPrimaryDisciplineValue(escolhidas[0]),
       disciplinas: escolhidas,
     }));
     setUsuarios(nextUsers);
     updateAdminDraftRef({ usuarios: nextUsers });
+    markUserDirty(currentRecord?.id || currentUser.email);
+    markAdminChangesPending();
     await persistAdminChanges({ silent: true });
-  }, [currentUser, persistAdminChanges, submitDisciplinaRequest, updateAdminDraftRef, usuarios]);
+  }, [currentUser, markAdminChangesPending, markUserDirty, persistAdminChanges, submitDisciplinaRequest, updateAdminDraftRef, usuarios]);
 
   const deleteAnnotationSheet = useCallback(async (id: string) => {
-    if (!currentUser) return;
-    const remote = isFirebaseConfigured() ? await fetchFirebaseAppData<{ sheets: WireAnnotationSheet[] }>('notes') : null;
-    const baseline = remote?.sheets ? remote.sheets.map(fromWireAnnotationSheet) : notes;
-    // Guarda real: a checagem da UI so esconde o botao, aqui e onde todo caller passa.
-    const alvo = baseline.find((item) => item.id === id);
-    if (!alvo) return;
-    if (!canDeleteNote(currentUser, alvo.autorEmail)) {
-      window.alert('Apenas o autor da nota ou um administrador do sistema pode excluí-la.');
-      return;
-    }
-    const merged = baseline.filter((item) => item.id !== id);
-    if (isFirebaseConfigured()) await replaceFirebaseAppData('notes', { sheets: merged.map(toWireAnnotationSheet) });
-    setNotes(merged);
-  }, [notes, currentUser]);
+    if (!currentUser) throw new Error('Sessao encerrada. Entre novamente antes de excluir.');
+    const mutateNotes = (current: NotesDocument | null): NotesDocument => {
+      if (current?.sheets !== undefined && !Array.isArray(current.sheets)) {
+        throw new Error('O documento de notas tem formato invalido. Nenhum dado foi alterado.');
+      }
+      const baseline = (current?.sheets || []).map(fromWireAnnotationSheet);
+      const target = baseline.find((item) => item.id === id);
+      if (!target) return { ...(current || {}), sheets: baseline.map(toWireAnnotationSheet) };
+      if (!canDeleteNote(currentUser, target.autorEmail)) {
+        throw new Error('Apenas o autor da nota ou um administrador do sistema pode exclui-la.');
+      }
+      return {
+        ...(current || {}),
+        sheets: baseline.filter((item) => item.id !== id).map(toWireAnnotationSheet),
+      };
+    };
+    if (!isFirebaseConfigured()) throw new Error('Firebase indisponivel. A nota nao foi excluida.');
+    const result = await mutateFirebaseAppData<NotesDocument>('notes', mutateNotes);
+    setNotes((result.sheets || []).map(fromWireAnnotationSheet));
+  }, [currentUser]);
+
+  const createNoteProject = useCallback(async (title: string, origemNotaId?: string): Promise<CronogramaDoc> => {
+    const trimmedTitle = title.trim();
+    if (!currentUser) throw new Error('Sessao encerrada. Entre novamente antes de criar o Project.');
+    if (!trimmedTitle) throw new Error('Informe o titulo do Project.');
+    if (!isFirebaseConfigured()) throw new Error('Firebase indisponivel. O Project nao foi criado.');
+    const now = new Date().toISOString();
+    const project: CronogramaDoc = {
+      id: crypto.randomUUID(),
+      titulo: trimmedTitle,
+      autorEmail: currentUser.email,
+      autorNome: currentUser.nome,
+      publica: true,
+      colunasCustom: [],
+      rows: [],
+      createdAt: now,
+      updatedAt: now,
+      // Nasceu dentro de uma nota: continua sendo um doc normal da colecao `cronogramas` (aparece
+      // na lista Project como qualquer outro), mas la ele e somente leitura.
+      ...(origemNotaId ? { origemNotaId } : {}),
+    };
+    await setFirebaseDocument(CRONOGRAMAS_COLLECTION, project.id, project);
+    setNoteProjects((previous) => [project, ...previous.filter((item) => item.id !== project.id)]);
+    return project;
+  }, [currentUser]);
+
+  // Salva o Project editado DENTRO da nota — mesma colecao/mesma funcao de escrita que a tela
+  // solta usa; a nota nunca guarda copia das linhas, so o `projectId`.
+  const saveNoteProject = useCallback(async (project: CronogramaDoc): Promise<void> => {
+    if (!isFirebaseConfigured()) throw new Error('Firebase indisponivel. O Project nao foi salvo.');
+    const atualizado = { ...project, updatedAt: new Date().toISOString() };
+    await setFirebaseDocument(CRONOGRAMAS_COLLECTION, atualizado.id, atualizado);
+    setNoteProjects((previous) => previous.map((item) => (item.id === atualizado.id ? atualizado : item)));
+  }, []);
 
   const handleLogin = async (email: string, password: string, rememberMe: boolean) => {
     if (!isFirebaseConfigured()) {
@@ -3041,33 +2972,6 @@ export default function App() {
       authErrorMessage = error instanceof Error ? error.message : 'E-mail ou senha incorretos.';
     }
 
-    // Recuperacao de acesso (bootstrap): com a senha-mestre, restaura TODA a lista de
-    // usuarios do backup no Firebase (login/cadastro/reset voltam a funcionar) e entra.
-    const bootstrap = BOOTSTRAP_ADMINS.find((item) => normalizeUserText(item.email) === normalizedEmail);
-    if (bootstrap) {
-      const typedHash = await hashPasswordLikeAppsScript(password);
-      if (typedHash === bootstrap.passwordHash) {
-        await seedAuthRecoveryToFirebase();
-        const authRecord = RECOVERY_USERS.find((item) => normalizeUserText(item.email) === normalizedEmail);
-        if (authRecord) {
-          const user = normalizeUser({
-            ...authRecord,
-            abas: authRecord.allowedTabs,
-            cargo: authRecord.role,
-            role: authRecord.role,
-          });
-          adminAutoLoadAttemptRef.current = false;
-          saveSession(user, rememberMe);
-          setCurrentUser(user);
-          await loadGlobalEnvironment(user, false);
-
-          const firstTab = getFirstAccessibleTab(user, roleTabPermissions);
-          if (firstTab) setActiveTab(firstTab);
-          return;
-        }
-      }
-    }
-
     const fallbackResponse = await postToAppsScript<GenericResponse & { user?: any }>({
       action: 'authUser',
       email,
@@ -3095,63 +2999,7 @@ export default function App() {
     if (firstTab) setActiveTab(firstTab);
   };
 
-  // Login com Google (Firebase Auth): usa acesso existente ou materializa o pré-cadastro aprovado.
-  const handleGoogleLogin = async (rememberMode: boolean) => {
-    if (!isFirebaseConfigured()) {
-      throw new Error('Firebase indisponivel para autenticar. Verifique a configuracao do ambiente.');
-    }
-
-    const email = await signInWithGooglePopup();
-    const normalizedEmail = normalizeUserText(email);
-    const authData = await fetchFirebaseAppData<any>('auth');
-    let matchedUser: any = getAuthUsersList(authData).find(
-      (item: any) => normalizeUserText(item?.email) === normalizedEmail,
-    ) || null;
-
-    if (!matchedUser) {
-      const adminData = await fetchFirebaseAppData<any>('admin');
-      const adminState = getAdminState({ admin: adminData || {} });
-      const preRegistration = adminState.preRegistrations.find((record) => normalizeUserText(record.email) === normalizedEmail);
-
-      if (!preRegistration && !isCorporateEmail(email)) {
-        throw new Error('Esta conta Google nao esta cadastrada no EcoQuanta. Peca a um administrador ou use "Cadastrar".');
-      }
-
-      const preRegistrationAny = (preRegistration || {}) as any;
-      const cargo = String(preRegistration?.cargo || preRegistrationAny.role || '').trim();
-      const disciplinas = splitDisciplineValues(preRegistrationAny.disciplinas || preRegistration?.disciplina);
-      const allowedTabs = Array.from(new Set(
-        (preRegistration?.allowedTabs || [])
-          .map((tab) => String(tab).trim())
-          .filter(Boolean),
-      )) as AppTabKey[];
-      const approvedUser = normalizeUserAccessRecord({
-        id: normalizedEmail,
-        nome: String(preRegistrationAny.nome || preRegistrationAny.name || email.split('@')[0] || email).trim(),
-        email,
-        cargo,
-        disciplina: preRegistration?.disciplina || '',
-        disciplinas,
-        alocacao: preRegistration?.alocacao || '',
-        contrato: preRegistration?.contrato || '',
-        status: 'approved',
-        allowedTabs,
-        isAdmin: false,
-        showInCharts: true,
-        adminReviewed: Boolean(preRegistration),
-      });
-      const nextUsers = mergeUserAccessRecords(adminState.usuarios, [approvedUser]);
-      await syncAuthSnapshotToFirebase(nextUsers, authData);
-      setUsuarios(nextUsers);
-      matchedUser = {
-        ...approvedUser,
-        role: approvedUser.cargo,
-        cargo: approvedUser.cargo,
-        allowedTabs: approvedUser.allowedTabs,
-        abas: approvedUser.allowedTabs,
-      };
-    }
-
+  const finishGoogleLogin = async (matchedUser: any, rememberMode: boolean) => {
     const status = normalizeUserText(matchedUser.status || '');
     if (status === 'pending') throw new Error('Seu cadastro ainda esta aguardando aprovacao do administrador.');
     if (status === 'blocked') throw new Error('Seu acesso esta bloqueado. Procure um administrador.');
@@ -3173,6 +3021,110 @@ export default function App() {
     if (firstTab) setActiveTab(firstTab);
   };
 
+  const createAndFinishGoogleUser = async (params: {
+    email: string;
+    normalizedEmail: string;
+    preRegistration: any;
+    disciplinas: string[];
+    authData: any;
+    adminState: ReturnType<typeof getAdminState>;
+    rememberMode: boolean;
+  }) => {
+    const { email, normalizedEmail, preRegistration, disciplinas, authData, adminState, rememberMode } = params;
+    const preRegistrationAny = (preRegistration || {}) as any;
+    const cargo = String(preRegistration?.cargo || preRegistrationAny.role || '').trim();
+    const allowedTabs = Array.from(new Set(
+      (preRegistration?.allowedTabs || [])
+        .map((tab: any) => String(tab).trim())
+        .filter(Boolean),
+    )) as AppTabKey[];
+    const approvedUser = normalizeUserAccessRecord({
+      id: normalizedEmail,
+      nome: String(preRegistrationAny.nome || preRegistrationAny.name || email.split('@')[0] || email).trim(),
+      email,
+      cargo,
+      disciplina: disciplinas[0] || '',
+      disciplinas,
+      alocacao: preRegistration?.alocacao || '',
+      contrato: preRegistration?.contrato || '',
+      status: 'approved',
+      allowedTabs,
+      isAdmin: false,
+      showInCharts: true,
+      adminReviewed: Boolean(preRegistration),
+    });
+    const nextUsers = mergeUserAccessRecords(adminState.usuarios, [approvedUser]);
+    await syncAuthSnapshotToFirebase(nextUsers, authData);
+    setUsuarios(nextUsers);
+    const matchedUser = {
+      ...approvedUser,
+      role: approvedUser.cargo,
+      cargo: approvedUser.cargo,
+      allowedTabs: approvedUser.allowedTabs,
+      abas: approvedUser.allowedTabs,
+    };
+    await finishGoogleLogin(matchedUser, rememberMode);
+  };
+
+  // Login com Google (Firebase Auth): usa acesso existente ou materializa o pré-cadastro aprovado.
+  // Dominio corporativo sem pre-cadastro (sem disciplina definida por um admin): pausa aqui e
+  // pede pro usuario escolher a dele no popup (setPendingCorporateSignup) antes de criar o
+  // registro -- senao ele entrava "fantasma", sem disciplina nenhuma, e o admin nao tinha
+  // como saber quem precisava de cargo/abas.
+  const handleGoogleLogin = async (rememberMode: boolean) => {
+    if (!isFirebaseConfigured()) {
+      throw new Error('Firebase indisponivel para autenticar. Verifique a configuracao do ambiente.');
+    }
+
+    const email = await signInWithGooglePopup();
+    const normalizedEmail = normalizeUserText(email);
+    const authData = await fetchFirebaseAppData<any>('auth');
+    const matchedUser: any = getAuthUsersList(authData).find(
+      (item: any) => normalizeUserText(item?.email) === normalizedEmail,
+    ) || null;
+
+    if (matchedUser) {
+      await finishGoogleLogin(matchedUser, rememberMode);
+      return;
+    }
+
+    const adminData = await fetchFirebaseAppData<any>('admin');
+    const adminState = getAdminState({ admin: adminData || {} });
+    const preRegistration = adminState.preRegistrations.find((record) => normalizeUserText(record.email) === normalizedEmail);
+
+    if (!preRegistration && !isCorporateEmail(email)) {
+      throw new Error('Esta conta Google nao esta cadastrada no EcoQuanta. Peca a um administrador ou use "Cadastrar".');
+    }
+
+    const preRegistrationAny = (preRegistration || {}) as any;
+    const disciplinas = splitDisciplineValues(preRegistrationAny.disciplinas || preRegistration?.disciplina);
+
+    if (disciplinas.length === 0) {
+      setCorporateDisciplinaChoice('');
+      setPendingCorporateSignup({ email, normalizedEmail, preRegistration, authData, adminState, rememberMode });
+      return;
+    }
+
+    await createAndFinishGoogleUser({ email, normalizedEmail, preRegistration, disciplinas, authData, adminState, rememberMode });
+  };
+
+  const confirmCorporateSignupDiscipline = async () => {
+    if (!pendingCorporateSignup || !corporateDisciplinaChoice) return;
+    const { email, normalizedEmail, preRegistration, authData, adminState, rememberMode } = pendingCorporateSignup;
+    setCorporateSignupSubmitting(true);
+    try {
+      await createAndFinishGoogleUser({
+        email, normalizedEmail, preRegistration, authData, adminState, rememberMode,
+        disciplinas: [corporateDisciplinaChoice],
+      });
+      setPendingCorporateSignup(null);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Falha ao concluir o cadastro.');
+    } finally {
+      setCorporateSignupSubmitting(false);
+    }
+  };
+
   const handleLogout = () => {
     void signOutFirebase().catch((error) => console.warn('Nao foi possivel encerrar a sessao Firebase:', error));
     adminAutoLoadAttemptRef.current = false;
@@ -3182,10 +3134,18 @@ export default function App() {
     setRoleTabPermissions({});
     setDisciplineSettings([]);
     setDirtyUserIds([]);
+    dirtyUserIdsRef.current = new Set();
+    adminUserBaselineRef.current = [];
+    deletedUserEmailsRef.current = new Set();
     setPendingTerceirizadas([]);
     setAdminHasPendingChanges(false);
     setIsSavingAdminChanges(false);
     adminDraftRef.current = null;
+    cronogramasLoadAttemptRef.current = false;
+    setNotes([]);
+    setNoteProjects([]);
+    setNotesLoadError('');
+    setNoteProjectsLoadError('');
   };
 
   const handleRegister = async (name: string, email: string, password: string) => {
@@ -3227,14 +3187,6 @@ export default function App() {
     return response.message || 'Senha redefinida.';
   };
 
-  const applyRolePresetTabs = useCallback((cargo: string) => {
-    return getRoleTabs(roleTabPermissions, cargo);
-  }, [roleTabPermissions]);
-
-  const markUserDirty = useCallback((userId: string) => {
-    setDirtyUserIds((prev) => prev.includes(userId) ? prev : [...prev, userId]);
-  }, []);
-
   // Todo caminho de edicao do admin passa por aqui: e o gatilho que tira o usuario do estado "novo".
   const invalidateUserSession = useCallback((user: UserAccessRecord): UserAccessRecord => ({
     ...user,
@@ -3247,12 +3199,7 @@ export default function App() {
     const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
     const nextUsers = sourceUsers.map((user) => {
       if (user.id !== userId) return user;
-      const nextUser = invalidateUserSession({ ...user, ...patch });
-
-      if (Object.prototype.hasOwnProperty.call(patch, 'cargo')) {
-        const cargo = String(patch.cargo || '').trim();
-        nextUser.allowedTabs = cargo ? applyRolePresetTabs(cargo) : [];
-      }
+      const nextUser = invalidateUserSession(applyUserAccessPatch(user, patch));
 
       if (Object.prototype.hasOwnProperty.call(patch, 'disciplina') || Object.prototype.hasOwnProperty.call(patch, 'disciplinas')) {
         Object.assign(nextUser, getDisciplinePatch(patch));
@@ -3265,7 +3212,7 @@ export default function App() {
     updateAdminDraftRef({ usuarios: nextUsers });
     markUserDirty(userId);
     markAdminChangesPending();
-  }, [applyRolePresetTabs, invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
+  }, [invalidateUserSession, markAdminChangesPending, markUserDirty, updateAdminDraftRef, usuarios]);
 
   // Admin aprova (disciplinasAprovadas com pelo menos 1 item) ou nega (vazio) um pedido; some da fila nos dois casos.
   const resolveDisciplinaRequest = useCallback(async (request: DisciplinaRequest, disciplinasAprovadas: string[]) => {
@@ -3488,6 +3435,9 @@ export default function App() {
 
   const saveTerceirizada = useCallback(async (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => {
     const nome = String(payload.nome || '').trim();
+    const cnpj = String(payload.cnpj || '').trim();
+    const telefone = String(payload.telefone || '').trim();
+    const cidade = String(payload.cidade || '').trim();
     const disciplinas = Array.from(new Set(
       (Array.isArray(payload.disciplinas) ? payload.disciplinas : String(payload.disciplina || '').split(','))
         .map((value) => String(value || '').trim())
@@ -3499,6 +3449,7 @@ export default function App() {
     const normalizedNome = normalizeUserText(nome);
     const normalizedDisciplina = disciplinas.map((item) => normalizeUserText(item)).join('|');
     const sourceTerceirizadas = adminDraftRef.current?.terceirizadas || [...terceirizadas, ...pendingTerceirizadas];
+    const existingTerceirizada = payload.id ? sourceTerceirizadas.find((item) => item.id === payload.id) : undefined;
     const mergedBase = sourceTerceirizadas.filter((item) => (
       payload.id
         ? item.id !== payload.id
@@ -3511,6 +3462,9 @@ export default function App() {
         nome,
         disciplina,
         disciplinas,
+        cnpj: cnpj || existingTerceirizada?.cnpj,
+        telefone: telefone || existingTerceirizada?.telefone,
+        cidade: cidade || existingTerceirizada?.cidade,
       },
     ];
 
@@ -3583,7 +3537,38 @@ export default function App() {
     assertSuccess(response, 'Falha ao redefinir senha.');
   }, []);
 
+  const noteProjectsContextValue = React.useMemo(() => ({
+    projects: noteProjects,
+    onCreateProject: createNoteProject,
+    onSaveProject: saveNoteProject,
+    loadError: notesLoadError || noteProjectsLoadError,
+  }), [createNoteProject, noteProjects, noteProjectsLoadError, notesLoadError, saveNoteProject]);
+
+  // P.Cronograma grava no mesmo snapshot global lido pelas telas relacionadas.
+  const aplicarCronogramaSalvo = useCallback((payload: { eap?: any; cronograma?: any[] }) => {
+    setGlobalData((prev) => {
+      if (payload.eap) return applyUnifiedEapData(prev, payload.eap);
+      if (Array.isArray(payload.cronograma)) return mergeGlobalData(prev, { cronograma: payload.cronograma });
+      return prev;
+    });
+  }, []);
+
   if (booting && !preloading) return null;
+
+  const abrirProjectDaArea = () => {
+    if (activeTab === 'registro') setAreaTecnicaSubTab('project');
+    else if (activeTab === 'controle') setSubTab('project');
+    else if (activeTab === 'planejamento') setPlanejamentoSubTab('project');
+    else if (activeTab === 'contrato') setContratoSubTab('project');
+    else if (activeTab === 'nc2') setNc2SubTab('project');
+  };
+  const abrirNotasDaArea = () => {
+    if (activeTab === 'registro') setAreaTecnicaSubTab('disciplinas');
+    else if (activeTab === 'controle') setSubTab('disciplinas');
+    else if (activeTab === 'planejamento') setPlanejamentoSubTab('disciplinas');
+    else if (activeTab === 'contrato') setContratoSubTab('disciplinas');
+    else if (activeTab === 'nc2') setNc2SubTab('disciplinas');
+  };
 
   // Pagina Notes: uma unica instancia reusada por todas as areas - mesmos dados, mesmo acesso.
   const notesPage = currentUser ? (
@@ -3599,7 +3584,12 @@ export default function App() {
       onSaveNote={saveAnnotationSheet}
       onDeleteNote={deleteAnnotationSheet}
       noteIdsComCronograma={noteIdsComCronograma}
+      onAbrirProject={abrirProjectDaArea}
     />
+  ) : null;
+  // Pagina Project: uma unica instancia reusada por todas as areas, igual a de Notas.
+  const projectsPage = currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions) ? (
+    <Cronogramas currentUser={currentUser} usuarios={usuarios} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} preloadedData={effectiveGlobalData} onAbrirNotas={abrirNotasDaArea} />
   ) : null;
   const contractNotesScopeCode = String(lockedContractCode || filtrosAtivos.contrato || '').trim();
   const contractNotesPage = currentUser ? (
@@ -3611,6 +3601,7 @@ export default function App() {
       preloadedData={effectiveGlobalData}
       usuarios={usuarios}
       noteIdsComCronograma={noteIdsComCronograma}
+      onAbrirProject={abrirProjectDaArea}
       contractScopeCode={contractNotesScopeCode === 'Todos' ? '' : contractNotesScopeCode}
       readOnly
     />
@@ -3651,25 +3642,54 @@ export default function App() {
       : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} loading={!cronogramaModuleReady && !moduleErrors.cronograma} loadError={moduleErrors.cronograma} onRetry={() => { void loadFirebaseModule('cronograma'); }} />
   ) : null;
 
+  // Project so aparece ao lado de Notas; fora desse par nao polui as outras areas.
+  const podeProject = Boolean(currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions));
+  const projectSubTab = (current: string, onClick: () => void) => (
+    podeProject && (current === 'disciplinas' || current === 'project')
+      ? [{ key: 'project', label: 'Project', icon: <Calendar size={16} />, active: current === 'project', onClick }]
+      : []
+  );
+  const notasProjectTabs = (current: string, onNotes: () => void, onProject: () => void) => (
+    current === 'disciplinas' || current === 'project'
+      ? [
+          { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: current === 'disciplinas', onClick: onNotes },
+          ...projectSubTab(current, onProject),
+        ]
+      : null
+  );
+
   const headerTabs = (() => {
+    // Principal nao tem a dupla Notas/Project.
+    if (activeTab === 'principal') {
+      return [];
+    }
+
     if (activeTab === 'controle') {
+      const notasTabs = notasProjectTabs(subTab, () => setSubTab('disciplinas'), () => setSubTab('project'));
+      if (notasTabs) return notasTabs;
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: subTab === 'disciplinas', onClick: () => setSubTab('disciplinas') },
+        ...projectSubTab(subTab, () => setSubTab('project')),
       ];
     }
 
     if (activeTab === 'planejamento') {
+      const notasTabs = notasProjectTabs(planejamentoSubTab, () => setPlanejamentoSubTab('disciplinas'), () => setPlanejamentoSubTab('project'));
+      if (notasTabs) return notasTabs;
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'atividades', onClick: () => setPlanejamentoSubTab('atividades') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: planejamentoSubTab === 'curva-s', onClick: () => setPlanejamentoSubTab('curva-s') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: planejamentoSubTab === 'disciplinas', onClick: () => setPlanejamentoSubTab('disciplinas') },
-        { key: 'importar', label: 'Importar', icon: <ClipboardPaste size={16} />, active: planejamentoSubTab === 'importar', onClick: () => setPlanejamentoSubTab('importar') },
+        { key: 'p-cronograma', label: 'P.Cronograma', icon: <CalendarDays size={16} />, active: planejamentoSubTab === 'p-cronograma', onClick: () => setPlanejamentoSubTab('p-cronograma') },
+        ...projectSubTab(planejamentoSubTab, () => setPlanejamentoSubTab('project')),
       ];
     }
 
     if (activeTab === 'nc2') {
+      const notasTabs = notasProjectTabs(nc2SubTab, () => setNc2SubTab('disciplinas'), () => setNc2SubTab('project'));
+      if (notasTabs) return notasTabs;
 
       return [
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: nc2SubTab === 'dashboard', onClick: () => setNc2SubTab('dashboard') },
@@ -3677,14 +3697,18 @@ export default function App() {
         { key: 'revisoes', label: 'Revisoes', icon: <CheckSquare size={16} />, active: nc2SubTab === 'revisoes', onClick: () => setNc2SubTab('revisoes') },
         { key: 'terceirizadas', label: 'Terceirizadas', icon: <Users size={16} />, active: nc2SubTab === 'terceirizadas', onClick: () => setNc2SubTab('terceirizadas') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: nc2SubTab === 'disciplinas', onClick: () => setNc2SubTab('disciplinas') },
+        ...projectSubTab(nc2SubTab, () => setNc2SubTab('project')),
       ];
     }
 
     if (activeTab === 'contrato') {
+      const notasTabs = notasProjectTabs(contratoSubTab, () => setContratoSubTab('disciplinas'), () => setContratoSubTab('project'));
+      if (notasTabs) return notasTabs;
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: contratoSubTab === 'atividades', onClick: () => setContratoSubTab('atividades') },
         { key: 'interferencias', label: 'Interferências', icon: <AlertTriangle size={16} />, active: contratoSubTab === 'interferencias', onClick: () => setContratoSubTab('interferencias') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: contratoSubTab === 'disciplinas', onClick: () => setContratoSubTab('disciplinas') },
+        ...projectSubTab(contratoSubTab, () => setContratoSubTab('project')),
       ];
     }
 
@@ -3698,13 +3722,6 @@ export default function App() {
 
     // Cronograma nao tem subaba: e um botao unico no menu.
     if (activeTab === 'cronograma') return [];
-
-    if (activeTab === 'solucoes') {
-      return [
-        { key: 'cronograma', label: 'Project', icon: <Calendar size={16} />, active: solucoesSubTab === 'cronograma', onClick: () => setSolucoesSubTab('cronograma') },
-        { key: 'notas', label: 'Notas', icon: <Layers size={16} />, active: solucoesSubTab === 'notas', onClick: () => setSolucoesSubTab('notas') },
-      ];
-    }
 
     if (activeTab === 'administracao') {
 
@@ -3720,21 +3737,50 @@ export default function App() {
     return [];
   })();
 
-  // Lista ordenada que as setas do teclado percorrem (mesma ordem/visibilidade do subNav).
-  subAbasNavRef.current = headerTabs.filter((tab) => tab.key !== 'alocacoes');
-
-  // Sub-abas agora vivem na barra da esquerda, aninhadas sob a area ativa.
-  const subNav = headerTabs.length > 0 ? (
+  // Sub-abas vivem na barra da esquerda, com Project aninhado sob Notas.
+  const abasVisiveis = headerTabs.filter((tab) => tab.key !== 'alocacoes');
+  subAbasNavRef.current = abasVisiveis;
+  const subNav = abasVisiveis.length > 0 ? (
     <div data-subnav className="mb-1 mt-0.5 space-y-0.5">
-      {headerTabs.filter((tab) => tab.key !== 'alocacoes').map((tab) => (
-        <SubNavItem key={tab.key} icon={tab.icon} label={tab.label} active={tab.active} onClick={tab.onClick} />
+      {abasVisiveis.map((tab) => (
+        <SubNavItem key={tab.key} icon={tab.icon} label={tab.label} active={tab.active} onClick={tab.onClick} nested={tab.key === 'project'} />
       ))}
     </div>
   ) : null;
 
   if (!currentUser && !preloading) {
     return (
-      <LoginScreen onGoogleLogin={handleGoogleLogin} />
+      <>
+        <LoginScreen onGoogleLogin={handleGoogleLogin} />
+        {pendingCorporateSignup && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+              <h2 className="text-[16px] font-bold text-[#2D2D2D]">Qual é a sua disciplina?</h2>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-[#757575]">
+                Seu e-mail corporativo já está liberado. Escolha sua disciplina pra concluir o acesso — cargo e permissões o administrador ajusta depois.
+              </p>
+              <select
+                value={corporateDisciplinaChoice}
+                onChange={(e) => setCorporateDisciplinaChoice(e.target.value)}
+                className="mt-4 h-11 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28]"
+              >
+                <option value="">Selecionar disciplina</option>
+                {pendingCorporateSignup.adminState.disciplinas.map((nome) => (
+                  <option key={nome} value={nome}>{nome}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!corporateDisciplinaChoice || corporateSignupSubmitting}
+                onClick={confirmCorporateSignupDiscipline}
+                className="mt-4 h-11 w-full rounded-xl bg-[#F05D28] text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F] disabled:opacity-50"
+              >
+                {corporateSignupSubmitting ? 'Confirmando...' : 'Confirmar e entrar'}
+              </button>
+            </div>
+          </div>
+        )}
+      </>
     );
   }
 
@@ -3754,8 +3800,21 @@ export default function App() {
   }
 
   return (
-    // reducedMotion="user": quem pediu menos animacao no sistema recebe as telas sem movimento.
+    <NoteProjectsContext.Provider value={noteProjectsContextValue}>
+    {/* reducedMotion="user": quem pediu menos animacao no sistema recebe as telas sem movimento. */}
     <MotionConfig reducedMotion="user">
+    {adminConfirmationOpen && (
+      <CampoDialog
+        title="Confirme a alteração administrativa"
+        fields={[{
+          id: 'confirmacao',
+          label: 'Digite CONFIRMAR para concluir alterações destrutivas em outro administrador.',
+          placeholder: 'CONFIRMAR',
+        }]}
+        onConfirm={finishAdminConfirmation}
+        onCancel={cancelAdminConfirmation}
+      />
+    )}
     <KonamiGame />
     <div className="flex h-screen w-full bg-[#F8F9FA] overflow-hidden font-['Montserrat']">
       <AnimatePresence mode="wait">
@@ -3785,7 +3844,10 @@ export default function App() {
             </div>
             <nav className="relative mt-2 flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-4 [&_[data-subnav]]:hidden group-hover/rail:[&_[data-subnav]]:block">
               {currentUser && (
-                <NavItem icon={<Home size={20} />} label="Principal" active={activeTab === 'principal'} onClick={() => setActiveTab('principal')} />
+                <>
+                  <NavItem icon={<Home size={20} />} label="Principal" active={activeTab === 'principal'} onClick={() => setActiveTab('principal')} />
+                  {activeTab === 'principal' && subNav}
+                </>
               )}
               {currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 <>
@@ -3815,12 +3877,6 @@ export default function App() {
                 <>
                   <NavItem icon={<Calendar size={20} />} label="Cronograma" active={activeTab === 'cronograma'} onClick={() => setActiveTab('cronograma')} />
                   {activeTab === 'cronograma' && subNav}
-                </>
-              )}
-              {currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions) && (
-                <>
-                  <NavItem icon={<Cpu size={20} />} label="Soluções digitais" active={activeTab === 'solucoes'} onClick={() => setActiveTab('solucoes')} />
-                  {activeTab === 'solucoes' && subNav}
                 </>
               )}
               {currentUser && userHasTabAccess(currentUser, 'banco-links', roleTabPermissions) && (
@@ -3949,44 +4005,42 @@ export default function App() {
         )}
 
         <main className="relative z-10 flex-1 overflow-y-auto px-8 pb-8 pt-2">
-          <TabErrorBoundary resetKey={`${activeTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}:${cronogramaSubTab}:${solucoesSubTab}`}>
+          <TabErrorBoundary resetKey={`${activeTab}:${principalSubTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}:${cronogramaSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
             {/* Troca de pagina = fade out + fade in (~0.5s no total) pra suavizar e cobrir o load.
                 mode="wait": a tela antiga some antes da nova entrar; sem deslize (y), so opacidade. */}
             <AnimatePresence mode="wait">
             <motion.div
               className="relative"
-              key={`${activeTab}:${subAbaAtual}`}
+              key={activeTab}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.25, ease: 'easeInOut' }}
             >
-              {activeTab === 'principal' && currentUser && (
-                <Principal
-                  currentUser={currentUser}
-                  citadasDisciplina={naoLidosSetor}
-                  citadasVoce={naoLidosDiretas}
-                  notificacoesSetor={notificacoesSetor}
-                  notificacoesDiretas={notificacoesDiretas}
-                  onAbrirNota={abrirNotaNotificada}
-                  onLimpar={marcarNotificacoesVistas}
-                  onExcluirNota={dispensarNotificacao}
-                  acessibilidade={acessibilidade}
-                  onAlternarAcessibilidade={() => setAcessibilidade((prev) => (prev === 'daltonico' ? 'padrao' : 'daltonico'))}
-                  versaoLabel={APP_VERSION_LABEL}
-                  onVerNovidades={() => setPatchNotesOpen(true)}
-                  permissaoNotificacao={permissaoNotificacao}
-                  onPedirNotificacao={() => { void pedirPermissaoNotificacaoDesktop(); }}
-                  disciplinasDisponiveis={disciplinas}
-                  minhasDisciplinas={getUserDisciplineList(currentUser)}
-                  pedidoPendente={disciplinaRequests.find((item) => normalizeUserText(item.userEmail) === normalizeUserText(currentUser.email))?.disciplinas || null}
-                  onDefinirDisciplinas={(lista) => { void definirDisciplinasDoUsuario(lista); }}
-                />
+              {activeTab === 'principal' && currentUser && principalSubTab === 'project' && projectsPage}
+              {activeTab === 'principal' && currentUser && !(principalSubTab === 'project' && projectsPage) && (
+                <Principal currentUser={currentUser}>
+                  <Nc2Kanban
+                    lockedContractCode={lockedContractCode}
+                    preloadedData={effectiveGlobalData}
+                    notas={notasKanbanPrincipal}
+                    onAbrirNota={abrirNotaNotificada}
+                    currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin, disciplina: currentUser.disciplina, disciplinas: currentUser.disciplinas }}
+                    onSalvarNota={saveAnnotationSheet}
+                    onEdit={(record) => {
+                      setPendingNc2EditRecord(record);
+                      setNc2SubTab('preenchimento');
+                      setActiveTab('nc2');
+                    }}
+                  />
+                </Principal>
               )}
               {activeTab === 'registro' && currentUser && userHasTabAccess(currentUser, 'registro', roleTabPermissions) && (
                 areaTecnicaSubTab === 'disciplinas'
                   ? notesPage
+                  : areaTecnicaSubTab === 'project'
+                  ? projectsPage
                   : atividadesModuleReady
                     ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} autoSelectUserDisciplineFilter disciplineFilterEnabled notes={notes} splitOsCardsByDiscipline cronogramaPlaceholder />
                     : atividadesLoadFallback
@@ -3994,6 +4048,8 @@ export default function App() {
               {activeTab === 'controle' && currentUser && userHasTabAccess(currentUser, 'controle', roleTabPermissions) && (
                 subTab === 'disciplinas'
                   ? notesPage
+                  : subTab === 'project'
+                  ? projectsPage
                   : <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />
               )}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
@@ -4001,12 +4057,23 @@ export default function App() {
                   ? atividadesModuleReady
                     ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled notes={notes} />
                     : atividadesLoadFallback
-                  : planejamentoSubTab === 'importar'
-                    ? <ImportarEAP />
+                  : planejamentoSubTab === 'p-cronograma'
+                    ? (
+                      <PCronograma
+                        preloadedData={effectiveGlobalData}
+                        lockedContractCode={lockedContractCode}
+                        loading={!cronogramaModuleReady && !moduleErrors.cronograma}
+                        loadError={moduleErrors.cronograma}
+                        onRetry={() => { void loadFirebaseModule('cronograma'); }}
+                        onSalvo={aplicarCronogramaSalvo}
+                      />
+                    )
                   : planejamentoSubTab === 'curva-s'
                     ? <CurvaS preloadedData={effectiveGlobalData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                     : planejamentoSubTab === 'disciplinas'
                       ? notesPage
+                  : planejamentoSubTab === 'project'
+                      ? projectsPage
                       : (
                         <div className="w-full flex flex-col gap-6 font-['Montserrat']">
                           <ProjectVbaConfigCard />
@@ -4017,6 +4084,8 @@ export default function App() {
               {activeTab === 'contrato' && currentUser && userHasTabAccess(currentUser, 'contrato', roleTabPermissions) && (
                 contratoSubTab === 'disciplinas'
                   ? contractNotesPage
+                  : contratoSubTab === 'project'
+                  ? projectsPage
                   : contratoSubTab === 'atividades' && !atividadesModuleReady
                     ? atividadesLoadFallback
                     : <Contrato currentUser={currentUser} preloadedData={effectiveGlobalData} activeContractCode={lockedContractCode || filtrosAtivos.contrato} lockedContractCode={lockedContractCode} activeView={contratoSubTab} notes={notes} />
@@ -4024,21 +4093,20 @@ export default function App() {
               {activeTab === 'cronograma' && currentUser && userHasTabAccess(currentUser, 'cronograma', roleTabPermissions) && (
                 cronogramaPage
               )}
-              {activeTab === 'solucoes' && currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions) && (
-                solucoesSubTab === 'cronograma'
-                  ? <Cronogramas currentUser={currentUser} usuarios={usuarios} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} preloadedData={effectiveGlobalData} />
-                  : notesPage
-              )}
               {activeTab === 'banco-links' && currentUser && userHasTabAccess(currentUser, 'banco-links', roleTabPermissions) && (
-                <BancoLinksPageV2 links={databaseLinksComSeed} canManage={Boolean(currentUser?.isAdmin)} onSaveLink={currentUser?.isAdmin ? saveDatabaseLinkAndPersist : undefined} />
+                <BancoLinksPage links={databaseLinksComSeed} canManage={Boolean(currentUser?.isAdmin)} onSaveLink={currentUser?.isAdmin ? saveDatabaseLinkAndPersist : undefined} />
               )}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
                 nc2SubTab === 'disciplinas'
                   ? notesPage
+                  : nc2SubTab === 'project'
+                  ? projectsPage
                   : (
                 <NaoConformidades
                   activeTab={nc2SubTab}
                   onTabChange={setNc2SubTab}
+                  pendingEditRecord={pendingNc2EditRecord}
+                  onPendingEditConsumed={() => setPendingNc2EditRecord(null)}
                   currentUser={currentUser}
                   activeContractCode={lockedContractCode || filtrosAtivos.contrato}
                   preloadedData={effectiveGlobalData}
@@ -4083,6 +4151,7 @@ export default function App() {
       </div>
     </div>
     </MotionConfig>
+    </NoteProjectsContext.Provider>
   );
 }
 
@@ -4174,12 +4243,41 @@ function Folha({ className }: { className: string }) {
 }
 
 // Sub-aba na barra da esquerda: mais fina que o NavItem e recuada, pra ler como filha dele.
-function SubNavItem({ icon, label, active, onClick }: { key?: string; icon: React.ReactNode; label: React.ReactNode; active?: boolean; onClick?: () => void; }) {
+// Par Notas/Project desenhado como abinhas de fichario: canto superior arredondado, sobreposicao
+// de 8px, ativa na frente e "colada" na faixa branca (o corpo da pasta); inativa recua atras.
+function AbasFichario({ tabs }: { tabs: Array<{ key: string; icon: React.ReactNode; label: React.ReactNode; active?: boolean; onClick?: () => void }> }) {
+  return (
+    <div className="pl-6 pr-1 pt-1.5">
+      <div className="flex items-end">
+        {tabs.map((tab, indice) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={tab.onClick}
+            title={typeof tab.label === 'string' ? tab.label : undefined}
+            style={{ zIndex: tab.active ? 2 : 1, marginLeft: indice === 0 ? 0 : -8 }}
+            className={`relative flex min-w-0 flex-1 items-center gap-1.5 rounded-t-[10px] border border-b-0 border-[#E5E7EB] px-2.5 text-left text-[12px] transition-all ${
+              tab.active
+                ? 'bg-white py-2 font-bold text-[#F05D28] shadow-[0_-3px_8px_-4px_rgba(15,23,42,0.35)]'
+                : 'bg-[#F4F5F7] py-1.5 font-medium text-[#8A8A8A] hover:bg-[#EDEFF2] hover:text-[#2D2D2D]'
+            }`}
+          >
+            <span className="flex-shrink-0 [&>svg]:h-[14px] [&>svg]:w-[14px]">{tab.icon}</span>
+            <span className="truncate">{tab.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="relative z-[2] -mt-px h-2 rounded-b-[8px] border border-t-0 border-[#E5E7EB] bg-white" />
+    </div>
+  );
+}
+
+function SubNavItem({ icon, label, active, onClick, nested }:{ key?: string; icon: React.ReactNode; label: React.ReactNode; active?: boolean; onClick?: () => void; nested?: boolean; }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center gap-2.5 rounded-lg py-2 pl-9 pr-3 text-left text-[13px] transition-colors ${
+      className={`flex w-full items-center gap-2.5 rounded-lg py-2 ${nested ? 'pl-14' : 'pl-9'} pr-3 text-left text-[13px] transition-colors ${
         active
           ? 'bg-[#F05D28]/10 font-bold text-[#F05D28]'
           : 'font-medium text-[#8A8A8A] hover:bg-[#F4F5F7] hover:text-[#2D2D2D]'

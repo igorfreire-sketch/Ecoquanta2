@@ -74,6 +74,11 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /atividadesLiderHistorico/{document} {
+      allow read, create: if isSignedIn();
+      allow update, delete: if false;
+    }
+
     match /nc2Records/{document} {
       allow read, create, update: if isSignedIn();
       allow delete: if false;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type R
 import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Globe, Indent, Link2, Lock, Outdent, Trash2, X } from 'lucide-react';
 import { isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
+import { addDias, criarLinhaVazia, diffDias, proximoSeq, type CronoRow } from '../lib/cronoRow';
 import SearchableSelect from './SearchableSelect';
 import CampoDialog from './CampoDialog';
 import Anotacoes, { extrairLinkDaCelula, novaNotaBase, REGEX_LINK_MARKDOWN, type AnnotationSheet } from './CoordenacaoEngenharia/Anotacoes';
@@ -23,25 +24,9 @@ const PALETA_CELULA: Array<[string, string]> = [
 
 const NOVA_NOTA_VALOR = '__nova__';
 
-export interface CronoRow {
-  id: string;
-  seq: number;
-  nome: string;
-  predecessoraId: string;
-  dataInicio: string;
-  duracaoDias: number | null;
-  dataFim: string;
-  responsavelEmail: string;
-  percentualConcluido: number | null;
-  noteId: string;
-  atividadeId?: string;
-  ordem?: number;
-  parentId?: string;
-  colapsada?: boolean;
-  corLinha?: string;
-  // valores das colunas customizadas desse cronograma, chaveados por ColunaCustom.id
-  custom?: Record<string, string>;
-}
+// A forma da linha mora em lib/cronoRow.ts (compartilhada com o bloco Project da nota);
+// reexportada aqui pra nao mexer em quem ja importa `CronoRow` deste arquivo.
+export type { CronoRow } from '../lib/cronoRow';
 
 export interface ColunaCustom {
   id: string;
@@ -68,6 +53,10 @@ export interface CronogramaDoc {
   colWidths?: Record<string, number>;
   // Ordem visual das colunas. Ausente em documentos antigos = ordem padrao abaixo.
   colOrder?: string[];
+  // Preenchido quando o Project nasceu DENTRO de uma nota (bloco "+ Project"): o doc continua
+  // sendo um `cronogramas` normal, mas aqui na tela solta ele fica somente leitura — quem edita
+  // e a nota de origem (a coluna Nota vira o atalho pra abrir essa nota).
+  origemNotaId?: string;
 }
 
 // Colunas fixas na ordem de renderizacao, com a largura padrao aproximada de como cada uma
@@ -99,25 +88,6 @@ interface SolucoesDigitaisProps {
   onSaveNote?: (sheet: AnnotationSheet) => Promise<void>;
   onDeleteNote?: (id: string) => Promise<void>;
   preloadedData?: any;
-}
-
-function criarLinhaVazia(seq: number): CronoRow {
-  return {
-    id: crypto.randomUUID(),
-    seq,
-    nome: '',
-    predecessoraId: '',
-    dataInicio: '',
-    duracaoDias: null,
-    dataFim: '',
-    responsavelEmail: '',
-    percentualConcluido: null,
-    noteId: '',
-    atividadeId: '',
-    ordem: 0,
-    parentId: '',
-    custom: {},
-  };
 }
 
 export function ordemColunasCronograma(doc: CronogramaDoc): string[] {
@@ -226,36 +196,6 @@ function normalizar(valor: string) {
   return valor.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 }
 
-function parseDataLocal(valor: string): Date | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(valor || '');
-  if (!match) return null;
-  const data = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return Number.isNaN(data.getTime()) ? null : data;
-}
-
-function formatarDataLocal(data: Date): string {
-  const y = data.getFullYear();
-  const m = String(data.getMonth() + 1).padStart(2, '0');
-  const d = String(data.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-// ponytail: dias corridos (calendario), sem considerar feriados/dias uteis
-function diffDias(inicio: string, fim: string): number | null {
-  const dIni = parseDataLocal(inicio);
-  const dFim = parseDataLocal(fim);
-  if (!dIni || !dFim) return null;
-  return Math.round((dFim.getTime() - dIni.getTime()) / 86400000);
-}
-
-function addDias(inicio: string, dias: number): string {
-  const dIni = parseDataLocal(inicio);
-  if (!dIni || !Number.isFinite(dias)) return '';
-  const resultado = new Date(dIni);
-  resultado.setDate(resultado.getDate() + dias);
-  return formatarDataLocal(resultado);
-}
-
 function formatDateBRLocal(value?: string) {
   if (!value) return '';
   const date = new Date(value);
@@ -340,11 +280,14 @@ export default function SolucoesDigitais({
   const redimensionarRef = useRef<{ key: string; inicioPx: number; tamanhoInicial: number } | null>(null);
 
   const rows = doc.rows;
+  // Project que nasceu numa nota: aqui e so leitura (o dono da edicao e a nota de origem).
+  const bloqueado = Boolean(doc.origemNotaId);
+  const notaOrigem = doc.origemNotaId ? notes.find((n) => n.id === doc.origemNotaId) : undefined;
 
   // Cronograma novo (ou esvaziado) abre com 1 linha ja pronta pra digitar — sem precisar clicar
   // em "+ Linha" primeiro. So roda uma vez, na abertura.
   useEffect(() => {
-    if (doc.rows.length === 0) {
+    if (doc.rows.length === 0 && !bloqueado) {
       setDoc((prev) => ({ ...prev, rows: [criarLinhaVazia(1)] }));
       setSujo(true);
     }
@@ -418,6 +361,9 @@ export default function SolucoesDigitais({
   // Salvar e explicito (botao), nao autosave: toda edicao so muda o estado local (`atualizarDoc`)
   // e marca `sujo`; so "Salvar" grava no Firestore e limpa o `sujo`.
   function atualizarDoc(patch: Partial<CronogramaDoc>) {
+    // Trava unica: TODA edicao (celula, coluna, cor, ordem, hierarquia) passa por aqui, entao o
+    // Project vindo de nota fica imutavel nesta tela sem precisar de guarda em cada handler.
+    if (bloqueado) return;
     setDoc((prev) => ({ ...prev, ...patch, updatedAt: new Date().toISOString() }));
     setSujo(true);
     setErroSalvar(null); // edicao nova: o erro do save anterior nao se aplica mais
@@ -457,15 +403,13 @@ export default function SolucoesDigitais({
   }
 
   function adicionarLinha() {
-    const proximoSeq = rows.reduce((max, r) => Math.max(max, r.seq || 0), 0) + 1;
-    atualizarDoc({ rows: [...rows, { ...criarLinhaVazia(proximoSeq), ordem: rows.length }] });
+    atualizarDoc({ rows: [...rows, { ...criarLinhaVazia(proximoSeq(rows)), ordem: rows.length }] });
   }
 
   function inserirLinhaPerto(id: string, posicao: 'above' | 'below') {
     const indice = rows.findIndex((row) => row.id === id);
     if (indice === -1) return;
-    const proximoSeq = rows.reduce((max, row) => Math.max(max, row.seq || 0), 0) + 1;
-    const nova = { ...criarLinhaVazia(proximoSeq), parentId: rows[indice].parentId || '' };
+    const nova = { ...criarLinhaVazia(proximoSeq(rows)), parentId: rows[indice].parentId || '' };
     const destino = indice + (posicao === 'below' ? 1 : 0);
     atualizarDoc({ rows: [...rows.slice(0, destino), nova, ...rows.slice(destino)] });
     setMenuCor(null);
@@ -799,6 +743,26 @@ export default function SolucoesDigitais({
       case 'percentual':
         return <td key={key} className="px-3 py-1"><input type="number" min={0} max={100} value={row.percentualConcluido ?? ''} onChange={(e) => atualizarLinha(row.id, { percentualConcluido: e.target.value === '' ? null : Number(e.target.value) })} className="w-20 border border-[#E5E7EB] rounded px-2 py-1" placeholder="%" /></td>;
       case 'nota':
+        // Project vindo de nota: a coluna Nota deixa de ser seletor e vira o atalho pra ABRIR a
+        // nota de origem (mesmo mecanismo de `sheetAberta` usado pelo "+ Criar nova nota").
+        if (bloqueado) {
+          return (
+            <td key={key} className="px-3 py-1">
+              {/* role=button em vez de <button>: a tabela inteira fica dentro de um <fieldset
+                  disabled>, que desabilitaria um botao de verdade junto com os campos. */}
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={() => notaOrigem && setSheetAberta(notaOrigem)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && notaOrigem) setSheetAberta(notaOrigem); }}
+                title={notaOrigem ? 'Abrir a nota que criou este Project' : 'Nota de origem indisponível'}
+                className={`block w-full truncate rounded border border-[#E5E7EB] px-2 py-1 text-left ${notaOrigem ? 'cursor-pointer text-[#F05D28] hover:bg-[#FFF3EC]' : 'text-[#94A3B8]'}`}
+              >
+                {notaOrigem?.titulo || 'Nota de origem'}
+              </span>
+            </td>
+          );
+        }
         return (
           <td key={key} className="px-3 py-1">
             <SearchableSelect value={row.noteId} onChange={(e) => onEscolherNota(row.id, e.target.value)} className="w-full border border-[#E5E7EB] rounded px-2 py-1 bg-white" searchPlaceholder="Sem nota">
@@ -846,6 +810,12 @@ export default function SolucoesDigitais({
           {sujo && (
             <span className="whitespace-nowrap text-[11px] font-bold text-[#B45309]">Alterações não salvas</span>
           )}
+          {bloqueado && (
+            <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 py-1 text-[11px] font-bold text-[#64748B]">
+              <Lock size={11} />
+              Somente leitura — edite pela nota de origem
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
@@ -866,25 +836,29 @@ export default function SolucoesDigitais({
               value={doc.titulo}
               onChange={(e) => atualizarDoc({ titulo: e.target.value })}
               placeholder="Nome do cronograma"
+              readOnly={bloqueado}
               className="h-11 min-w-[220px] flex-1 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[14px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]"
             />
             <label className="flex h-11 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] cursor-pointer">
               <input
                 type="checkbox"
                 checked={doc.publica !== false}
+                disabled={bloqueado}
                 onChange={(e) => atualizarDoc({ publica: e.target.checked })}
                 className="h-4 w-4 accent-[#F05D28] cursor-pointer"
               />
               Público
             </label>
-            <button
-              type="button"
-              onClick={() => void handleSalvar()}
-              disabled={salvando}
-              className="h-11 rounded-xl bg-[#F05D28] px-5 text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F] disabled:opacity-60"
-            >
-              {salvando ? 'Salvando...' : 'Salvar'}
-            </button>
+            {!bloqueado && (
+              <button
+                type="button"
+                onClick={() => void handleSalvar()}
+                disabled={salvando}
+                className="h-11 rounded-xl bg-[#F05D28] px-5 text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F] disabled:opacity-60"
+              >
+                {salvando ? 'Salvando...' : 'Salvar'}
+              </button>
+            )}
             {erroSalvar && (
               <span className="inline-flex items-center gap-1 rounded-full border border-[#FED7AA] bg-[#FFF7ED] px-2.5 py-1 text-[11px] font-bold text-[#B45309]">
                 {erroSalvar}
@@ -904,16 +878,21 @@ export default function SolucoesDigitais({
                   <option key={o.email} value={o.email}>{o.nome}</option>
                 ))}
               </select>
-              <button
-                type="button"
-                onClick={adicionarColuna}
-                className="text-[12px] font-bold text-[#F05D28] hover:underline"
-              >
-                + Coluna
-              </button>
+              {!bloqueado && (
+                <button
+                  type="button"
+                  onClick={adicionarColuna}
+                  className="text-[12px] font-bold text-[#F05D28] hover:underline"
+                >
+                  + Coluna
+                </button>
+              )}
             </div>
 
             <div className="overflow-auto">
+              {/* fieldset disabled = trava nativa de todos os campos da tabela quando o Project
+                  veio de uma nota (nao ha handler pra esquecer). */}
+              <fieldset disabled={bloqueado} className="m-0 min-w-full border-0 p-0">
               {/* table-fixed + colgroup: sem isso o navegador ignora as larguras arrastadas (mesmo aviso do banco da nota). */}
               <table className="min-w-full table-fixed text-sm text-[#2D2D2D]">
                 <colgroup>
@@ -972,13 +951,15 @@ export default function SolucoesDigitais({
                     >
                       {colunasVisiveis.map((col) => renderCelula(row, col.key, nivel, temFilhos))}
                       <td className="px-3 py-1 text-center">
-                        <button
-                          onClick={() => removerLinha(row.id)}
-                          className="text-gray-400 hover:text-[#F05D28]"
-                          title="Excluir"
-                        >
-                          🗑
-                        </button>
+                        {!bloqueado && (
+                          <button
+                            onClick={() => removerLinha(row.id)}
+                            className="text-gray-400 hover:text-[#F05D28]"
+                            title="Excluir"
+                          >
+                            🗑
+                          </button>
+                        )}
                       </td>
                     </tr>
                     );
@@ -992,17 +973,20 @@ export default function SolucoesDigitais({
                   )}
                 </tbody>
               </table>
+              </fieldset>
             </div>
 
-            <div className="border-t border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
-              <button
-                type="button"
-                onClick={adicionarLinha}
-                className="text-[12px] font-bold text-[#F05D28] hover:underline"
-              >
-                + Linha
-              </button>
-            </div>
+            {!bloqueado && (
+              <div className="border-t border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
+                <button
+                  type="button"
+                  onClick={adicionarLinha}
+                  className="text-[12px] font-bold text-[#F05D28] hover:underline"
+                >
+                  + Linha
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

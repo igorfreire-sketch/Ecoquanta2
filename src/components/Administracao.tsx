@@ -115,6 +115,9 @@ export interface TerceirizadaRecord {
   nome: string;
   disciplina: string;
   disciplinas?: string[];
+  cnpj?: string;
+  telefone?: string;
+  cidade?: string;
 }
 
 export interface PreRegistrationRecord {

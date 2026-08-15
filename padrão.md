@@ -83,6 +83,24 @@ parte — segue o `Padrão de filtro das abas`.
 - Arrastar linha só reorganiza entre irmãs; não muda hierarquia nem predecessoras. Hierarquia é alterada exclusivamente pelos comandos próprios de indentar/promover.
 - Ordem de colunas deve ser persistida de forma compatível: documento antigo sem `colOrder` usa a ordem padrão. Tela e exportações CSV/PDF/MD devem apresentar a mesma ordem e os mesmos IDs.
 
+## Planejamento > P.Cronograma (cronograma REAL)
+
+- Não confundir com `Soluções Digitais > Project`: lá a linha é um `CronoRow` da coleção `cronogramas`;
+  aqui a identidade da linha é o `code` hierárquico da planilha (`2.4.7`), referenciado por
+  predecessoras, `eap.edificioPorItem` e `planningTodos`.
+- **Nunca renumerar `code` existente.** Linha nova recebe `code` acima do maior irmão
+  (`proximoCodigoFilho`). Arrastar só reordena o array entre as linhas da OS; o código não muda.
+- **Um único destino de gravação, o mesmo da leitura**: `appData/eap` (campo `cronograma`, ou
+  `data.cronograma`/`atual` na mesma precedência de `applyUnifiedEapData`); `appData/cronograma` só
+  quando a EAP não traz o array. Nunca criar coleção paralela pra esta tela.
+- **Gravação preserva o formato do documento** (`mutateAppDataPreservandoFormato`): documento chunked
+  do VBA continua chunked. Gravar `data` num documento chunked faz o leitor ignorar a escrita — ou
+  sombrear para sempre as publicações do Excel.
+- Linha pode vir como objeto **ou como array posicional**; patch e linha nova respeitam a forma
+  existente e preservam as colunas que nenhuma tela conhece.
+- As edições são aplicadas sobre o array **recém-lido** no momento de salvar, nunca sobre o snapshot
+  da tela: quem edita outra OS ao mesmo tempo não é sobrescrito.
+
 ## Administração e pré-cadastro
 
 - Pré-cadastro só é concluído quando o primeiro login Google encontra o e-mail e materializa o usuário aprovado no snapshot de autenticação. E-mail fora do pré-cadastro continua bloqueado.

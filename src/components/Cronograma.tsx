@@ -5,7 +5,7 @@ import { CalendarDays, ChevronDown, ChevronRight, Filter, Maximize2, X, AlertTri
 import { AnimatePresence, motion } from 'motion/react';
 import { isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
 
-interface CronogramaRow {
+export interface CronogramaRow {
   code?: string;
   name?: string;
   progress?: number;
@@ -270,7 +270,7 @@ function normalizeCronogramaRow(row: any): CronogramaRow | null {
   };
 }
 
-function getCronogramaSourceRows(preloadedData?: CronogramaProps['preloadedData']) {
+export function getCronogramaSourceRows(preloadedData?: CronogramaProps['preloadedData']) {
   const candidates = [
     preloadedData?.cronograma,
     preloadedData?.eap?.data?.cronograma,
@@ -339,7 +339,7 @@ function getParentCode(code: string) {
   return parts.join('.');
 }
 
-function buildContractOptions(rows: CronogramaRow[], preloadedData?: CronogramaProps['preloadedData']) {
+export function buildContractOptions(rows: CronogramaRow[], preloadedData?: CronogramaProps['preloadedData']) {
   const fromRegistro = Array.isArray(preloadedData?.registro?.contracts) ? preloadedData.registro.contracts : [];
   if (fromRegistro.length) return fromRegistro.map((item) => ({ code: item.codigo, name: item.nome }));
 
@@ -349,7 +349,7 @@ function buildContractOptions(rows: CronogramaRow[], preloadedData?: CronogramaP
     .filter((item) => item.code);
 }
 
-function buildOsOptions(rows: CronogramaRow[], preloadedData?: CronogramaProps['preloadedData']) {
+export function buildOsOptions(rows: CronogramaRow[], preloadedData?: CronogramaProps['preloadedData']) {
   const fromRegistro = Array.isArray(preloadedData?.registro?.osOptions) ? preloadedData.registro.osOptions : [];
   if (fromRegistro.length) {
     return fromRegistro.map((item) => ({ code: item.codigo, name: item.nome, contractCode: item.contratoCodigo }));

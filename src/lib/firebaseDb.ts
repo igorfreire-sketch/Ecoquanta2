@@ -9,6 +9,7 @@ import {
   getFirestore,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -324,12 +325,15 @@ export function canDeleteNote(user: AuthUserLike, autorEmail?: string) {
   return Boolean(autor) && normalizeEmail(user.email) === autor;
 }
 
-// Nota so pode ser alterada pelo autor, por admin do sistema, ou por um usuario
-// vinculado a ela (marcado em Vincular Usuarios).
+// Nota so pode ser alterada pelo autor ou por um usuario vinculado a ela.
+// Admin nao e atalho de edicao: a decisao final tambem e repetida na transacao de save.
 export function canEditNote(user: AuthUserLike, autorEmail?: string, marcadosUsuarios?: string[]) {
-  if (canDeleteNote(user, autorEmail)) return true;
   const email = normalizeEmail(user.email);
-  return Boolean(email) && (marcadosUsuarios || []).some((item) => normalizeEmail(item) === email);
+  const autor = normalizeEmail(autorEmail);
+  return Boolean(email) && (
+    (Boolean(autor) && email === autor)
+    || (marcadosUsuarios || []).some((item) => normalizeEmail(item) === email)
+  );
 }
 
 export function isLeadershipOrAdmin(user: AuthUserLike) {
@@ -412,6 +416,89 @@ async function getAppDataDoc<T>(dbRef: Firestore, name: string): Promise<T | nul
     return JSON.parse(payload.dataJson) as T;
   }
   return (Array.isArray(payload.data) ? payload.data : payload) as T;
+}
+
+// Mesmo tamanho de pedaco do publicador VBA/Apps Script (projectVbaAssets.ts, CHUNK_SIZE).
+const APPDATA_CHUNK_SIZE = 750000;
+
+type AppDataFormato = 'data' | 'chunked' | 'dataJson';
+
+// Espelha, na MESMA ordem, a precedencia de leitura de getAppDataDoc acima. Gravar num formato
+// diferente do lido faria o documento novo ser ignorado pelo leitor (ex.: escrever `data` num
+// documento chunked) — ou, pior, sombrear pra sempre as publicacoes do Excel/VBA.
+function detectarFormatoAppData(payload: any): AppDataFormato | null {
+  if (payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) return 'data';
+  if (payload?.chunked && Number(payload.chunkCount || 0) > 0) return 'chunked';
+  if (typeof payload?.dataJson === 'string') return 'dataJson';
+  if (Array.isArray(payload?.data)) return 'data';
+  return null;
+}
+
+function fatiarTexto(texto: string, tamanho: number): string[] {
+  if (!texto) return [''];
+  const pedacos: string[] = [];
+  for (let i = 0; i < texto.length; i += tamanho) pedacos.push(texto.slice(i, i + tamanho));
+  return pedacos;
+}
+
+// Le -> muta -> grava appData/{name} MANTENDO o formato em que o documento ja estava
+// (chunked do VBA continua chunked). Ao contrario de mutateFirebaseAppData, que sempre
+// converte pro campo `data`, esta funcao serve pros documentos grandes e publicados por
+// fora (`eap`, `cronograma`), onde converter o formato quebraria o pipeline do Excel.
+// A leitura acontece aqui dentro, imediatamente antes da gravacao: o `mutate` deve aplicar
+// apenas as suas mudancas sobre o valor recebido, e nao um snapshot antigo da tela.
+export async function mutateAppDataPreservandoFormato<T>(name: string, mutate: (atual: T | null) => T): Promise<T> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const rootRef = doc(dbRef, 'appData', name);
+  const snapshot = await getDoc(rootRef);
+  if (!snapshot.exists()) {
+    throw new Error(`appData/${name} nao existe; gravacao cancelada para nao criar um documento paralelo.`);
+  }
+
+  const payload = snapshot.data();
+  const formato = detectarFormatoAppData(payload);
+  if (!formato) {
+    throw new Error(`Formato de appData/${name} desconhecido; gravacao cancelada para preservar os dados.`);
+  }
+
+  const atual = await getAppDataDoc<T>(dbRef, name);
+  // JSON round-trip: Firestore rejeita `undefined` em qualquer nivel.
+  const proximo = JSON.parse(JSON.stringify(mutate(atual))) as T;
+
+  if (formato === 'chunked') {
+    const texto = JSON.stringify(proximo);
+    const pedacos = fatiarTexto(texto, APPDATA_CHUNK_SIZE);
+    const batch = writeBatch(dbRef);
+    pedacos.forEach((value, index) => {
+      batch.set(doc(dbRef, 'appData', name, 'chunks', String(index).padStart(5, '0')), {
+        index,
+        value,
+        updatedAt: serverTimestamp(),
+      });
+    });
+    // payload novo menor: apaga os chunks que sobraram (senao a leitura concatena lixo do fim).
+    const chunksAntigos = Number(payload.chunkCount || 0);
+    for (let index = pedacos.length; index < chunksAntigos; index += 1) {
+      batch.delete(doc(dbRef, 'appData', name, 'chunks', String(index).padStart(5, '0')));
+    }
+    batch.set(rootRef, {
+      chunked: true,
+      chunkCount: pedacos.length,
+      byteLength: texto.length,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    await batch.commit();
+    return proximo;
+  }
+
+  if (formato === 'dataJson') {
+    await setDoc(rootRef, { dataJson: JSON.stringify(proximo), updatedAt: serverTimestamp() }, { merge: true });
+    return proximo;
+  }
+
+  await setDoc(rootRef, { data: proximo, updatedAt: serverTimestamp() }, { merge: true });
+  return proximo;
 }
 
 export async function fetchFirebaseAppData<T = any>(name: string): Promise<T | null> {
@@ -884,6 +971,40 @@ export async function replaceFirebaseAppData(name: string, data: any) {
   });
 }
 
+export async function mutateFirebaseAppData<T>(name: string, mutate: (current: T | null) => T): Promise<T> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  return runTransaction(dbRef, async (transaction) => {
+    const rootRef = doc(dbRef, 'appData', name);
+    const snapshot = await transaction.get(rootRef);
+    let current: T | null = null;
+
+    if (snapshot.exists()) {
+      const payload = snapshot.data();
+      if (payload.data !== undefined) {
+        current = payload.data as T;
+      } else if (payload.chunked && Number(payload.chunkCount || 0) > 0) {
+        const ids = Array.from({ length: Number(payload.chunkCount) }, (_, index) => String(index).padStart(5, '0'));
+        const chunks = await Promise.all(ids.map((id) => transaction.get(doc(dbRef, 'appData', name, 'chunks', id))));
+        if (chunks.some((chunk) => !chunk.exists() || typeof chunk.data()?.value !== 'string')) {
+          throw new Error(`appData/${name} possui chunks ausentes; a alteracao foi cancelada para preservar os dados.`);
+        }
+        current = JSON.parse(chunks.map((chunk) => String(chunk.data()?.value || '')).join('')) as T;
+      } else if (typeof payload.dataJson === 'string') {
+        current = JSON.parse(payload.dataJson) as T;
+      } else {
+        current = payload as T;
+      }
+    }
+
+    const serialized = JSON.stringify(mutate(current));
+    if (serialized === undefined) throw new Error(`A mutacao de appData/${name} produziu um valor invalido.`);
+    const next = JSON.parse(serialized) as T;
+    transaction.set(rootRef, { data: next, updatedAt: serverTimestamp() });
+    return next;
+  });
+}
+
 export async function hashPasswordLikeAppsScript(password: string) {
   const normalized = String(password || '');
   const encoder = new TextEncoder();
@@ -964,6 +1085,29 @@ export function subscribeFirebaseCollection(
     const dbRef = getDb();
     return onSnapshot(
       collection(dbRef, collectionName),
+      () => onChange(),
+      (error) => onError?.(error as Error),
+    );
+  } catch (error) {
+    onError?.(error as Error);
+    return () => {};
+  }
+}
+
+// Mesmo padrao de subscribeFirebaseCollection ("algo mudou, refaz o fetch"), so que pro
+// documento unico appData/{name} (ex.: 'notes') em vez de uma collection inteira.
+export function subscribeFirebaseAppData(
+  name: string,
+  onChange: () => void,
+  onError?: (error: Error) => void
+) {
+  const config = readFirebaseConfig();
+  if (!config) return () => {};
+
+  try {
+    const dbRef = getDb();
+    return onSnapshot(
+      doc(dbRef, 'appData', name),
       () => onChange(),
       (error) => onError?.(error as Error),
     );

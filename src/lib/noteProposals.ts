@@ -224,8 +224,11 @@ export function applyNoteSave(
   }
 
   if (isNoteOwner(existing, actorEmail)) {
+    const acceptedProposal = existing.pendingProposal
+      ? applyCandidate(existing, proposalCandidate(existing.pendingProposal))
+      : existing;
     const updated = {
-      ...existing,
+      ...acceptedProposal,
       ...draft,
       id: existing.id,
       autorNome: existing.autorNome,
@@ -233,8 +236,7 @@ export function applyNoteSave(
       criadoEm: existing.criadoEm,
       updatedAt: now,
     };
-    if (existing.pendingProposal) updated.pendingProposal = existing.pendingProposal;
-    else delete updated.pendingProposal;
+    delete updated.pendingProposal;
     return updated;
   }
 

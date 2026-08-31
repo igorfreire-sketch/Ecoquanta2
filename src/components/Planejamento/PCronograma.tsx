@@ -1,3 +1,4 @@
+// ponytail: legado, descontinuado em 27-08-2026; mantido para compatibilidade histórica.
 // P.Cronograma — grade de edicao manual do cronograma REAL do sistema, por Contrato/OS.
 //
 // Le e grava EXATAMENTE a mesma fonte que Cronograma.tsx, Atividades.tsx e a Curva S usam

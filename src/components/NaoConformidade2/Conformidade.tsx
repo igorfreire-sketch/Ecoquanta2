@@ -24,6 +24,7 @@ import {
   type DashboardMetricSlice,
 } from './Conformidade.metrics.check';
 import { sameContractCode } from '../../lib/contractCode';
+import { parseBim360Workbook, syncBim360Quality } from '../../lib/bim360Import';
 import type { TerceirizadaRecord } from '../Administracao';
 import type { AuthUser } from '../LoginScreen';
 
@@ -248,6 +249,24 @@ function Dashboard({
   const [errorMessage, setErrorMessage] = useState('');
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportError, setExportError] = useState('');
+  const [bimImporting, setBimImporting] = useState(false);
+  const [bimImportMessage, setBimImportMessage] = useState('');
+
+  const importarBim360 = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setBimImporting(true);
+    setBimImportMessage('');
+    try {
+      const result = await syncBim360Quality(await parseBim360Workbook(await file.arrayBuffer()));
+      setBimImportMessage(`${result.created} criados, ${result.updated} atualizados.`);
+    } catch (error) {
+      setBimImportMessage(error instanceof Error ? error.message : 'Não foi possível importar o arquivo BIM360.');
+    } finally {
+      setBimImporting(false);
+      event.target.value = '';
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;

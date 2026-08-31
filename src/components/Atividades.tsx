@@ -15,6 +15,8 @@ import {
   Fan,
   Filter,
   House,
+  Lock,
+  MessageCircle,
   Plus,
   Search,
   Waves,
@@ -24,9 +26,9 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { DEFAULT_DISCIPLINES, DISCIPLINAS_FILHAS_DE_ENGENHARIA, disciplineMatchesSector, expandEngenhariaNaSelecao, getDisciplineSector, getSectorOptions, getUserDisciplineList, resolveDisciplineEntry } from '../lib/disciplineCatalog';
 import CronogramaResumo from './CoordenacaoEngenharia/CronogramaResumo';
-import { getSheetDisciplinas, getSheetTextos, type AnnotationSheet } from './CoordenacaoEngenharia/Anotacoes';
-import { fetchFirebaseCollection, isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
-import { applyLeaderEventsToActivities, type LeaderActivityEvent } from '../lib/leaderActivity';
+import { getSheetDisciplinas, getSheetOsCodigos, getSheetTextos, type AnnotationSheet } from './CoordenacaoEngenharia/Anotacoes';
+import { fetchFirebaseCollection, isFirebaseConfigured, setFirebaseDocument, subscribeFirebaseCollection } from '../lib/firebaseDb';
+import { applyLeaderEventsToActivities, hasOpenActivityIssue, type ActivityIssueDocument, type ActivityMessage, type LeaderActivityEvent } from '../lib/leaderActivity';
 import { sameContractCode } from '../lib/contractCode';
 
 export type ProductionStatus =
@@ -50,7 +52,7 @@ export type TechnicalStep =
 
 export type LodLevel = 100 | 200 | 300 | 350 | 400;
 export type LeaderActivityStatus = 'Bom' | 'Regular' | 'Problema' | '';
-export type LeaderDifficulty = 'Difícil' | 'Regular' | 'Fácil' | '';
+export type LeaderDifficulty = 'Difícil' | 'Normal' | 'Fácil' | '';
 
 export interface EngineeringActivity {
   id: string;
@@ -86,6 +88,7 @@ export interface EngineeringActivity {
   dificuldadeAtividade: LeaderDifficulty;
   porcentagemAtividade: number | null;
   observacaoLider: string;
+  observacoesHistorico?: ActivityMessage[];
   leaderEdited: boolean;
   sourceType?: 'eap' | 'manual' | 'saved';
 }
@@ -144,6 +147,7 @@ interface AtividadesProps {
 }
 
 const LEADER_EVENTS_COLLECTION = 'atividadesLiderHistorico';
+const ACTIVITY_ISSUES_COLLECTION = 'atividadesIssues';
 const TODAY = new Date();
 const RESPONSAVEIS = ['Vinicius', 'Beatriz', 'Carlos', 'Mariana', 'Rodrigo', 'Fernanda'];
 const TECHNICAL_STEPS: TechnicalStep[] = ['Inicial', 'NF Início de Contrato', 'Modelagem', 'NF Intermediária', 'Revisão', 'NF Final'];
@@ -1999,7 +2003,19 @@ function ActivityDetailFields({ activity }: { activity?: EngineeringActivity }) 
       <ProgressComparison activity={activity} />
 
       <DetailField label="Motivo de bloqueio" value={activity.motivoBloqueio || 'Sem bloqueio registrado para esta atividade.'} />
-      <DetailField label="Observações" value={' '} />
+      <DetailField
+        label="Observações"
+        value={(activity.observacoesHistorico || []).length > 0 ? (
+          <div className="space-y-2">
+            {(activity.observacoesHistorico || []).map((item, index) => (
+              <div key={`${item.dataHora}-${index}`} className="rounded-xl bg-white p-2">
+                <p className="text-[11px] font-bold text-[#F05D28]">{item.autor} · {new Date(item.dataHora).toLocaleString('pt-BR')}</p>
+                <p className="mt-1 whitespace-pre-wrap text-[12px] text-[#475569]">{item.mensagem}</p>
+              </div>
+            ))}
+          </div>
+        ) : 'Sem observações registradas.'}
+      />
     </div>
   );
 }
@@ -2537,7 +2553,7 @@ const buildOsGroupsForColumn = (activities: EngineeringActivity[], splitByDiscip
   return Array.from(groupMap.values());
 };
 
-function OsGroupCard({ group, tipoLicitacao, onClick }: { group: OsActivityGroup; tipoLicitacao: string; onClick: () => void }) {
+function OsGroupCard({ group, tipoLicitacao, hasOpenIssue, onClick }: { group: OsActivityGroup; tipoLicitacao: string; hasOpenIssue: boolean; onClick: () => void }) {
   const { hostRef, scale } = useResponsiveCardScale();
   const avgExec = Math.round(group.activities.reduce((s, a) => s + a.percentualRealizado, 0) / group.activities.length);
   const avgPrev = Math.round(group.activities.reduce((s, a) => s + a.percentualPrevisto, 0) / group.activities.length);
@@ -2579,6 +2595,7 @@ function OsGroupCard({ group, tipoLicitacao, onClick }: { group: OsActivityGroup
         className="absolute left-0 top-0 block overflow-hidden rounded-[28px] border border-transparent bg-white px-4 py-3.5 text-left shadow-[0_9px_20px_rgba(45,45,45,0.22)] transition-[border-color,box-shadow] hover:-translate-y-[2px] hover:border-[#F7C7B7] hover:shadow-[0_14px_28px_rgba(240,93,40,0.14)] cursor-pointer"
         style={{ width: `${CARD_DESIGN_WIDTH}px`, transform: scale !== null ? `scale(${scale})` : 'scale(1)', transformOrigin: 'top left', visibility: scale !== null ? 'visible' : 'hidden' }}
       >
+        {hasOpenIssue && <span className="absolute left-3 top-3 h-3 w-3 rounded-full bg-red-500 ring-2 ring-white" title="Issue pendente" aria-label="Issue pendente" />}
         <div className="absolute right-[32px] top-0 flex flex-col items-center" aria-hidden="true">
           <div className="h-[28px] w-4" style={{ backgroundColor: getOsAccentColor(group.osCodigo) }} />
           <div className="h-0 w-0 border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent" style={{ borderTopColor: getOsAccentColor(group.osCodigo) }} />
@@ -2678,14 +2695,32 @@ export default function Atividades({
     const role = normalizeText(currentUser?.role);
     return role === 'lider' || role.startsWith('coordenador');
   }, [currentUser?.role]);
+  const isCoordinator = useMemo(() => normalizeText(currentUser?.role).startsWith('coordenador'), [currentUser?.role]);
   const [leaderEvents, setLeaderEvents] = useState<LeaderActivityEvent[]>([]);
+  const [activityIssues, setActivityIssues] = useState<ActivityIssueDocument[]>([]);
   useEffect(() => {
     let active = true;
     if (!isFirebaseConfigured()) return () => { active = false; };
-    void fetchFirebaseCollection<LeaderActivityEvent>(LEADER_EVENTS_COLLECTION)
-      .then((events) => { if (active) setLeaderEvents(events); })
-      .catch((error) => console.error('Erro ao carregar marcos do líder:', error));
-    return () => { active = false; };
+    const refresh = () => {
+      void fetchFirebaseCollection<LeaderActivityEvent>(LEADER_EVENTS_COLLECTION)
+        .then((events) => { if (active) setLeaderEvents(events); })
+        .catch((error) => { if (active) console.error('Erro ao carregar marcos do líder:', error); });
+    };
+    refresh();
+    const unsubscribe = subscribeFirebaseCollection(LEADER_EVENTS_COLLECTION, refresh);
+    return () => { active = false; unsubscribe(); };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    if (!isFirebaseConfigured()) return () => { active = false; };
+    const refresh = () => {
+      void fetchFirebaseCollection<ActivityIssueDocument>(ACTIVITY_ISSUES_COLLECTION)
+        .then((issues) => { if (active) setActivityIssues(issues); })
+        .catch((error) => { if (active) console.error('Erro ao carregar issues das atividades:', error); });
+    };
+    refresh();
+    const unsubscribe = subscribeFirebaseCollection(ACTIVITY_ISSUES_COLLECTION, refresh);
+    return () => { active = false; unsubscribe(); };
   }, []);
   // ponytail: history is read whole for now; query by itemCodigo or add a latest projection when volume matters.
   const sourceActivitiesWithLeader = useMemo(() => applyLeaderEventsToActivities(sourceActivities, leaderEvents), [leaderEvents, sourceActivities]);
@@ -2734,6 +2769,8 @@ export default function Atividades({
   // "Card" inline: mostra os detalhes da atividade no MESMO painel esquerdo (sem fechar selectedOsGroup).
   const [cardInlineActivity, setCardInlineActivity] = useState<EngineeringActivity | null>(null);
   const [selectedActivitySourceGroup, setSelectedActivitySourceGroup] = useState<OsActivityGroup | null>(null);
+  const [activityPopup, setActivityPopup] = useState<'issues' | 'block' | 'observations' | null>(null);
+  const [activityPopupText, setActivityPopupText] = useState('');
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedEapIndex, setSelectedEapIndex] = useState<number | null>(null);
   const [importResponsavel, setImportResponsavel] = useState(RESPONSAVEIS[0]);
@@ -2758,6 +2795,15 @@ export default function Atividades({
     () => activitiesWithDiscipline.find((activity) => activity.id === selectedActivityId) || null,
     [activitiesWithDiscipline, selectedActivityId]
   );
+  const selectedActivityItemCode = String(selectedActivity?.itemCodigo || selectedActivity?.origemItem || selectedActivity?.id || '').trim();
+  const selectedActivityIssue = useMemo(
+    () => activityIssues.find((issue) => String(issue.itemCodigo || '').trim() === selectedActivityItemCode) || null,
+    [activityIssues, selectedActivityItemCode]
+  );
+  const openIssueCodes = useMemo(
+    () => new Set(activityIssues.filter(hasOpenActivityIssue).map((issue) => String(issue.itemCodigo || '').trim())),
+    [activityIssues]
+  );
 
   // Disciplinas do card de OS aberto (selectedOsGroup), agrupando as atividades de cada uma.
   const selectedGroupDisciplines = useMemo(() => {
@@ -2778,15 +2824,18 @@ export default function Atividades({
 
   // Nota mais recente de uma disciplina (uma por disciplina; a mais recente por updatedAt).
   const findNoteForDiscipline = (disciplina: string): AnnotationSheet | null => {
-    const targetName = getDisciplineDisplayName(disciplina);
-    const matches = notes.filter((sheet) => getSheetDisciplinas(sheet).some((item) => getDisciplineDisplayName(item) === targetName));
+    if (!selectedOsGroup) return null;
+    const matches = notes.filter((sheet) =>
+      getSheetOsCodigos(sheet).some((codigo) => sameContractCode(codigo, selectedOsGroup.osCodigo))
+      && getSheetDisciplinas(sheet).some((item) => disciplineMatchesSector(item, disciplina))
+    );
     return matches.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))[0] || null;
   };
 
   const selectedGroupNote = useMemo(() => {
     if (!selectedGroupDiscipline) return null;
     return findNoteForDiscipline(selectedGroupDiscipline.disciplina);
-  }, [notes, selectedGroupDiscipline]);
+  }, [notes, selectedGroupDiscipline, selectedOsGroup]);
 
   // Disciplina (dentro do card de OS aberto) dona da atividade exibida no card inline.
   const cardInlineDiscGroup = useMemo(() => {
@@ -3234,7 +3283,7 @@ export default function Atividades({
   const executadoPorOptions = useMemo(() => buildProfessionalOptions(preloadedData, currentUser, showAllDisciplines), [currentUser, preloadedData, showAllDisciplines]);
 
   const updateSelectedActivity = (patch: Partial<EngineeringActivity>) => {
-    if (!selectedActivity || !canEditLeaderFields) return;
+    if (!selectedActivity || !canEditLeaderFields || (selectedActivity.status === 'Bloqueado' && !isCoordinator)) return;
 
     const candidate = { ...selectedActivity, ...patch };
     const touched = Boolean(
@@ -3245,25 +3294,76 @@ export default function Atividades({
       String(candidate.observacaoLider || '').trim() ||
       typeof candidate.porcentagemAtividade === 'number'
     );
-    const next = { ...candidate, status: touched ? 'Em execução' : 'Não iniciado', leaderEdited: touched };
+    const next = { ...candidate, status: candidate.status === 'Bloqueado' ? 'Bloqueado' : touched ? 'Em execução' : 'Não iniciado', leaderEdited: touched };
     setActivities((previous) => previous.map((activity) => activity.id === selectedActivity.id ? next : activity));
   };
 
-  const commitSelectedActivity = () => {
-    if (!selectedActivity || !canEditLeaderFields || !isFirebaseConfigured()) return;
+  const persistLeaderActivity = async (activity: EngineeringActivity) => {
+    if (!isFirebaseConfigured()) throw new Error('Firebase não configurado.');
     const event: LeaderActivityEvent = {
-      itemCodigo: String(selectedActivity.itemCodigo || selectedActivity.origemItem || selectedActivity.id || '').trim(),
+      itemCodigo: String(activity.itemCodigo || activity.origemItem || activity.id || '').trim(),
       autorEmail: String(currentUser?.email || '').trim().toLowerCase(),
       criadoEm: new Date().toISOString(),
-      executadoPor: Array.isArray(selectedActivity.executadoPor) ? selectedActivity.executadoPor : [],
-      status: selectedActivity.statusDaAtividade,
-      dificuldade: selectedActivity.dificuldadeAtividade,
-      percentual: selectedActivity.porcentagemAtividade,
-      observacao: String(selectedActivity.observacaoLider || ''),
+      executadoPor: Array.isArray(activity.executadoPor) ? activity.executadoPor : [],
+      status: activity.statusDaAtividade,
+      dificuldade: activity.dificuldadeAtividade,
+      percentual: activity.porcentagemAtividade,
+      observacao: String(activity.observacaoLider || ''),
+      productionStatus: activity.status,
+      motivoBloqueio: String(activity.motivoBloqueio || ''),
+      observacoesHistorico: activity.observacoesHistorico || [],
     };
-    void setFirebaseDocument(LEADER_EVENTS_COLLECTION, crypto.randomUUID(), event)
-      .then(() => setLeaderEvents((previous) => [...previous, event]))
-      .catch((error) => console.error('Erro ao salvar marco do líder:', error));
+    await setFirebaseDocument(LEADER_EVENTS_COLLECTION, crypto.randomUUID(), event);
+    setLeaderEvents((previous) => [...previous, event]);
+  };
+
+  const commitSelectedActivity = () => {
+    if (!selectedActivity || !canEditLeaderFields) return;
+    void persistLeaderActivity(selectedActivity).catch((error) => window.alert(error instanceof Error ? error.message : 'Não foi possível registrar o marco.'));
+  };
+
+  const saveSelectedActivityPatch = async (patch: Partial<EngineeringActivity>) => {
+    if (!selectedActivity || !canEditLeaderFields) return;
+    if (selectedActivity.status === 'Bloqueado' && patch.status !== 'Bloqueado' && !isCoordinator) {
+      throw new Error('Somente um coordenador pode desbloquear a atividade.');
+    }
+    const next = { ...selectedActivity, ...patch };
+    setActivities((previous) => previous.map((activity) => activity.id === selectedActivity.id ? next : activity));
+    await persistLeaderActivity(next);
+  };
+
+  const saveActivityIssue = async (patch: Partial<ActivityIssueDocument>) => {
+    if (!selectedActivityItemCode || !canEditLeaderFields || !isFirebaseConfigured()) return;
+    const next: ActivityIssueDocument = {
+      itemCodigo: selectedActivityItemCode,
+      mensagens: selectedActivityIssue?.mensagens || [],
+      resolvido: selectedActivityIssue?.resolvido ?? false,
+      ...patch,
+    };
+    await setFirebaseDocument(ACTIVITY_ISSUES_COLLECTION, encodeURIComponent(selectedActivityItemCode), next);
+    setActivityIssues((previous) => [...previous.filter((issue) => issue.itemCodigo !== selectedActivityItemCode), next]);
+  };
+
+  const submitActivityPopup = async () => {
+    if (!selectedActivity || !activityPopupText.trim()) return;
+    const message: ActivityMessage = {
+      autor: String(currentUser?.nome || currentUser?.email || 'Usuário'),
+      mensagem: activityPopupText.trim(),
+      dataHora: new Date().toISOString(),
+    };
+    try {
+      if (activityPopup === 'issues') {
+        await saveActivityIssue({ mensagens: [...(selectedActivityIssue?.mensagens || []), message], resolvido: false, resolvidoPor: '', resolvidoEm: '' });
+      } else if (activityPopup === 'observations') {
+        await saveSelectedActivityPatch({ observacoesHistorico: [...(selectedActivity.observacoesHistorico || []), message] });
+      } else if (activityPopup === 'block') {
+        await saveSelectedActivityPatch({ status: 'Bloqueado', motivoBloqueio: message.mensagem });
+        setActivityPopup(null);
+      }
+      setActivityPopupText('');
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Não foi possível salvar.');
+    }
   };
 
   useEffect(() => {
@@ -3638,7 +3738,15 @@ export default function Atividades({
                         <OsGroupCard
                           group={group}
                           tipoLicitacao={osSettingsMap[group.osCodigo] || ''}
-                          onClick={() => setSelectedOsGroup(group)}
+                          hasOpenIssue={group.activities.some((activity) => openIssueCodes.has(String(activity.itemCodigo || activity.origemItem || activity.id || '').trim()))}
+                          onClick={() => {
+                            if (cronogramaPlaceholder) {
+                              setSelectedActivitySourceGroup(group);
+                              setSelectedActivityId(group.activities[0]?.id || null);
+                            } else {
+                              setSelectedOsGroup(group);
+                            }
+                          }}
                         />
                       </React.Fragment>
                     ))
@@ -3650,6 +3758,8 @@ export default function Atividades({
         </div>
       </section>
 
+      {/* ponytail: em portal no body porque a barra lateral cria contexto de empilhamento e cobria o full screen. */}
+      {createPortal(
       <AnimatePresence>
         {selectedActivity && (
           <>
@@ -3658,10 +3768,10 @@ export default function Atividades({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => { setSelectedActivityId(null); setSelectedActivitySourceGroup(null); }}
-              className="fixed inset-0 z-40 bg-[#2D2D2D]/35 backdrop-blur-[1px]"
+              className="fixed inset-0 z-[190] bg-[#2D2D2D]/35 backdrop-blur-[1px]"
             />
 
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+            <div className="fixed inset-0 z-[200] flex items-center justify-center">
               {(() => {
                 const idx = boardActivities.findIndex((a) => a.id === selectedActivityId);
                 return (
@@ -3692,7 +3802,7 @@ export default function Atividades({
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.98, y: 14 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
-                className="flex max-h-[88vh] w-full max-w-[980px] flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl"
+                className="flex h-full w-full flex-col overflow-hidden bg-white"
               >
               <div className="sticky top-0 z-10 bg-white px-6 py-4">
                 <div className="flex items-start justify-between gap-3">
@@ -3755,7 +3865,31 @@ export default function Atividades({
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => { setActivityPopup('issues'); setActivityPopupText(''); }} className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#F7C7B7] bg-white px-3 text-[12px] font-bold text-[#D15B2C]">
+                      <MessageCircle size={15} /> Issues{hasOpenActivityIssue(selectedActivityIssue) ? ' •' : ''}
+                    </button>
+                    <button type="button" onClick={() => { setActivityPopup('observations'); setActivityPopupText(''); }} className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[12px] font-bold text-[#475569]">
+                      <MessageCircle size={15} /> Observações
+                    </button>
+                    {selectedActivity.status !== 'Bloqueado' ? (
+                      <button type="button" onClick={() => { setActivityPopup('block'); setActivityPopupText(''); }} className="inline-flex h-9 items-center gap-2 rounded-xl border border-red-200 bg-white px-3 text-[12px] font-bold text-red-600">
+                        <Lock size={15} /> Bloqueio de atividade
+                      </button>
+                    ) : isCoordinator ? (
+                      <button type="button" onClick={() => void saveSelectedActivityPatch({ status: 'Em execução', motivoBloqueio: '' }).catch((error) => window.alert(error instanceof Error ? error.message : 'Não foi possível desbloquear.'))} className="inline-flex h-9 items-center gap-2 rounded-xl bg-[#F05D28] px-3 text-[12px] font-bold text-white">
+                        Desbloquear atividade
+                      </button>
+                    ) : (
+                      <span title="Somente coordenador pode desbloquear" className="inline-flex h-9 items-center rounded-xl border border-red-200 bg-red-50 px-3 text-[12px] font-bold text-red-600">Bloqueada pelo líder</span>
+                    )}
+                  </div>
+
+                  {selectedActivity.status === 'Bloqueado' && !isCoordinator && (
+                    <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">Somente leitura enquanto bloqueada. Apenas um coordenador pode desbloquear.</p>
+                  )}
+
+                  <fieldset disabled={selectedActivity.status === 'Bloqueado' && !isCoordinator} className="grid grid-cols-2 gap-3 disabled:opacity-60">
                     <MultiCheckboxDropdown
                       label="Executado Por *"
                       value={selectedActivity.executadoPor}
@@ -3774,7 +3908,7 @@ export default function Atividades({
                       >
                         <option value="">Selecione</option>
                         <option value="Bom">Bom</option>
-                        <option value="Regular">Regular</option>
+                        <option value="Normal">Normal</option>
                         <option value="Problema">Problema</option>
                       </SearchableSelect>
                     </div>
@@ -3788,7 +3922,7 @@ export default function Atividades({
                       >
                         <option value="">Selecione</option>
                         <option value="Difícil">Difícil</option>
-                        <option value="Regular">Regular</option>
+                        <option value="Normal">Normal</option>
                         <option value="Fácil">Fácil</option>
                       </SearchableSelect>
                     </div>
@@ -3822,12 +3956,13 @@ export default function Atividades({
                         Mínimo de 30 caracteres.
                       </p>
                     </div>
-                  </div>
+                  </fieldset>
                   <div className="mt-3 flex justify-end">
                     <button
                       type="button"
+                      disabled={selectedActivity.status === 'Bloqueado' && !isCoordinator}
                       onClick={commitSelectedActivity}
-                      className="h-10 rounded-xl bg-[#F05D28] px-4 text-[12px] font-bold text-white transition-colors hover:bg-[#D94E1F]"
+                      className="h-10 rounded-xl bg-[#F05D28] px-4 text-[12px] font-bold text-white transition-colors hover:bg-[#D94E1F] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Registrar marco
                     </button>
@@ -3842,7 +3977,66 @@ export default function Atividades({
             </div>
           </>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body)}
+
+      {activityPopup && selectedActivity && createPortal(
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/30 p-4" onClick={() => setActivityPopup(null)}>
+          <div className="flex max-h-[80vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-[#E5E7EB] px-5 py-4">
+              <div>
+                <p className="text-[11px] font-extrabold uppercase tracking-[0.8px] text-[#F05D28]">
+                  {activityPopup === 'issues' ? 'Issues' : activityPopup === 'block' ? 'Bloqueio de atividade' : 'Observações'}
+                </p>
+                <p className="mt-1 text-[13px] font-bold text-[#2D2D2D]">{selectedActivityDisplayCode} · {selectedActivityDisplayTitle}</p>
+              </div>
+              <button type="button" onClick={() => setActivityPopup(null)} className="flex h-9 w-9 items-center justify-center rounded-full border border-[#E5E7EB] text-[#64748B]" aria-label="Fechar"><X size={16} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              {activityPopup === 'issues' && (
+                <div className="mb-4 space-y-2">
+                  {(selectedActivityIssue?.mensagens || []).map((item, index) => (
+                    <div key={`${item.dataHora}-${index}`} className="rounded-xl bg-[#F8FAFC] p-3">
+                      <p className="text-[11px] font-bold text-[#F05D28]">{item.autor} · {new Date(item.dataHora).toLocaleString('pt-BR')}</p>
+                      <p className="mt-1 whitespace-pre-wrap text-[13px] text-[#475569]">{item.mensagem}</p>
+                    </div>
+                  ))}
+                  {(selectedActivityIssue?.mensagens || []).length === 0 && <p className="text-[13px] text-[#94A3B8]">Nenhuma issue registrada.</p>}
+                </div>
+              )}
+              {activityPopup === 'observations' && (
+                <div className="mb-4 space-y-2">
+                  {(selectedActivity.observacoesHistorico || []).map((item, index) => (
+                    <div key={`${item.dataHora}-${index}`} className="rounded-xl bg-[#F8FAFC] p-3">
+                      <p className="text-[11px] font-bold text-[#F05D28]">{item.autor} · {new Date(item.dataHora).toLocaleString('pt-BR')}</p>
+                      <p className="mt-1 whitespace-pre-wrap text-[13px] text-[#475569]">{item.mensagem}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {activityPopup === 'block' && <p className="mb-3 text-[13px] text-[#475569]">Tem certeza? Informe o motivo para bloquear esta atividade.</p>}
+              <textarea
+                value={activityPopupText}
+                onChange={(event) => setActivityPopupText(event.target.value)}
+                rows={4}
+                placeholder={activityPopup === 'block' ? 'Motivo do bloqueio' : 'Escreva uma mensagem'}
+                className="bentham-input w-full resize-none py-2 text-[13px]"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-t border-[#E5E7EB] px-5 py-4">
+              {activityPopup === 'issues' && hasOpenActivityIssue(selectedActivityIssue) ? (
+                <button type="button" onClick={() => void saveActivityIssue({ resolvido: true, resolvidoPor: String(currentUser?.email || ''), resolvidoEm: new Date().toISOString() }).catch((error) => window.alert(error instanceof Error ? error.message : 'Não foi possível resolver.'))} className="h-9 rounded-xl border border-emerald-200 px-3 text-[12px] font-bold text-emerald-700">Marcar resolvida</button>
+              ) : <span />}
+              <button type="button" disabled={!activityPopupText.trim()} onClick={() => void submitActivityPopup()} className="h-9 rounded-xl bg-[#F05D28] px-4 text-[12px] font-bold text-white disabled:opacity-50">
+                {activityPopup === 'block' ? 'Confirmar bloqueio' : 'Enviar'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       <AnimatePresence>
         {isImportModalOpen && (
@@ -4077,7 +4271,22 @@ export default function Atividades({
                           <ChevronLeft size={14} />
                           Disciplinas
                         </button>
-                        <ActivityDetailFields activity={cardInlineActivity} />
+                        <div className="space-y-3">
+                          <ActivityDetailFields activity={cardInlineActivity} />
+                          <div className="rounded-[16px] border border-[#F7C7B7] bg-[#FFF7F3] p-4">
+                            <p className="text-[11px] font-extrabold uppercase tracking-[0.8px] text-[#F05D28]">Datas por LOD</p>
+                            <div className="mt-3 space-y-2">
+                              {(cardInlineDiscGroup?.activities || [cardInlineActivity]).map((activity) => (
+                                <div key={activity.id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-[12px]">
+                                  <span className="font-black text-[#2D2D2D]">LOD {activity.lodAtual}</span>
+                                  <span className="text-right text-[#64748B]">
+                                    {activity.inicioPlanejado || 'Sem início'} → {activity.terminoPlanejado || 'Sem término'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     ) : selectedGroupDiscipline ? (
                       <div>
@@ -4133,12 +4342,17 @@ export default function Atividades({
                               <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#F05D28] bg-white p-[3px] text-[#F05D28] shadow-sm">
                                 {icon.imageSrc ? <img src={icon.imageSrc} alt={name} className="h-full w-full rounded-full object-cover" /> : DIcon ? <DIcon size={28} strokeWidth={2.2} /> : null}
                               </div>
-                              <div className="min-w-0 flex-1">
+                              <button
+                                type="button"
+                                onClick={() => setCardInlineActivity(discGroup.activities[0])}
+                                className="min-w-0 flex-1 text-left cursor-pointer"
+                                title={`Filtrar cronograma por ${name}`}
+                              >
                                 <p className="text-[13px] font-bold text-[#2D2D2D]">{name}</p>
                                 {discGroup.activities.length > 1 && (
                                   <p className="text-[11px] text-[#94A3B8]">{discGroup.activities.length} atividades</p>
                                 )}
-                              </div>
+                              </button>
                               {discEdificios.length > 0 && <BuildingFlagStack edificios={discEdificios} compact />}
                               <div className="flex flex-shrink-0 items-center gap-3 text-right">
                                 <div>
@@ -4165,7 +4379,7 @@ export default function Atividades({
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    // ponytail: várias atividades na disciplina -> abre a primeira; listar as demais se o diretor pedir.
+                                    // O detalhe mantém a primeira atividade e lista todas as datas/LODs da disciplina.
                                     setCardInlineActivity(discGroup.activities[0]);
                                   }}
                                   className="rounded-full bg-[#F05D28] px-3 py-1 text-[11px] font-bold text-white transition-colors hover:bg-[#D94F1E] cursor-pointer"

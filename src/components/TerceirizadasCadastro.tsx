@@ -76,12 +76,12 @@ export default function TerceirizadasCadastro({
     const cleanTelefone = telefone.trim();
     const cleanCidade = cidade.trim();
     const cleanDisciplinas = Array.from(new Set<string>(disciplinasSelecionadas.map((item) => item.trim()).filter(Boolean)));
-    if (!isValidCnpj(cleanCnpj)) {
+    if (cleanCnpj && !isValidCnpj(cleanCnpj)) {
       setCnpjError('CNPJ inválido. Confira os 14 dígitos informados.');
       return;
     }
     setCnpjError('');
-    if (!cleanName || !cleanTelefone || !cleanCidade || cleanDisciplinas.length === 0) return;
+    if (!cleanName || cleanDisciplinas.length === 0) return;
 
     setLoading(true);
     try {
@@ -132,7 +132,6 @@ export default function TerceirizadasCadastro({
               inputMode="numeric"
               autoComplete="off"
               maxLength={18}
-              required
               aria-invalid={Boolean(cnpjError)}
               aria-describedby={cnpjError ? 'terceirizada-cnpj-error' : undefined}
             />
@@ -149,7 +148,6 @@ export default function TerceirizadasCadastro({
               placeholder="(00) 00000-0000"
               inputMode="tel"
               autoComplete="tel"
-              required
             />
           </div>
 
@@ -162,7 +160,6 @@ export default function TerceirizadasCadastro({
               className="bentham-input focus:border-[#F05D28] focus:ring-[#F05D28]/20"
               placeholder="Ex.: Belo Horizonte"
               autoComplete="address-level2"
-              required
             />
           </div>
 
@@ -188,7 +185,7 @@ export default function TerceirizadasCadastro({
 
           <button
             type="submit"
-            disabled={loading || !nome.trim() || !cnpjDigits(cnpj) || !telefone.trim() || !cidade.trim() || disciplinasSelecionadas.length === 0}
+            disabled={loading || !nome.trim() || disciplinasSelecionadas.length === 0}
             className="h-11 self-end px-5 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F05D28] focus-visible:ring-offset-2 transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-70"
           >
             <Plus size={16} />

@@ -79,6 +79,11 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /atividadesIssues/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if false;
+    }
+
     match /nc2Records/{document} {
       allow read, create, update: if isSignedIn();
       allow delete: if false;

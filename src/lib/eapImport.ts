@@ -1,6 +1,8 @@
 // Importação semi-automática da EAP colada do MS Project / Excel.
 // Funções puras, zero React. Ver ImportarEAP.tsx para a tela que usa isso.
 
+import JSZip from 'jszip';
+
 export const COLUNAS = [
   'Alerta', 'Status', '% Concluída', 'N° item', 'Nome da Tarefa', 'Duração',
   'Início do Plano Base', 'Conclusão do Plano Base', 'Predecessoras', '%ideal REPROG',
@@ -43,6 +45,35 @@ export function parseColado(texto: string): LinhaEAP[] {
   const temCabecalho = /N° item|Nome da Tarefa/i.test(primeira);
   const corpo = temCabecalho ? semVazias.slice(1) : semVazias;
   return corpo.map((celulas) => ({ celulas: normalizarLargura(celulas) }));
+}
+
+export async function parseXlsx(buffer: ArrayBuffer): Promise<LinhaEAP[]> {
+  const zip = await JSZip.loadAsync(buffer);
+  const shared = zip.file('xl/sharedStrings.xml');
+  const sharedValues = shared ? Array.from((await shared.async('text')).matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g), (m) => decodeXml(m[1])) : [];
+  const sheet = zip.file('xl/worksheets/sheet1.xml');
+  if (!sheet) throw new Error('A planilha XLSX não possui a primeira aba esperada.');
+  const xml = await sheet.async('text');
+  const rows: string[] = [];
+  for (const row of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+    const cells = new Array<string>(COLUNAS.length).fill('');
+    for (const cell of row[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+      const ref = cell[1].match(/\br="([A-Z]+)\d+"/);
+      if (!ref) continue;
+      const col = ref[1].split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+      if (col < 0 || col >= cells.length) continue;
+      const type = cell[1].match(/\bt="([^"]+)"/)?.[1];
+      const body = cell[2] || '';
+      const value = body.match(/<v[^>]*>([\s\S]*?)<\/v>/)?.[1] || body.match(/<t[^>]*>([\s\S]*?)<\/t>/)?.[1] || '';
+      cells[col] = type === 's' ? (sharedValues[Number(value)] || '') : decodeXml(value);
+    }
+    rows.push(cells.map(escaparCelula).join('\t'));
+  }
+  return parseColado(rows.join('\n'));
+}
+
+function decodeXml(value: string): string {
+  return value.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
 function normalizarLargura(celulas: string[]): string[] {

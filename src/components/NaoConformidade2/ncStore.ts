@@ -53,6 +53,7 @@ export interface Nc2Record {
   updatedAt?: string;
   updatedByNome?: string;
   updatedByEmail?: string;
+  origemExterna?: { sistema: 'bim360acc'; issueId: string };
   arquivado?: boolean;
   // Coluna do card no Kanban da Principal. Ausente = 'criado' (mesma convencao de AnnotationSheet.status).
   // Proposital que nao exista 'concluido': soltar em Concluido dispara confirmItemCorrection e o card some.

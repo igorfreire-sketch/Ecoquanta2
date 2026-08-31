@@ -60,6 +60,13 @@ assert.equal(accepted.pendingProposal, undefined);
 assert.equal(accepted.autorEmail, base.autorEmail);
 assert.equal(accepted.criadoEm, base.criadoEm);
 
+const ownerEdit = structuredClone(draft);
+ownerEdit.titulo = 'Autor ajustou depois da proposta';
+const autoAccepted = applyNoteSave(proposed, ownerEdit, { nome: 'Dona', email: 'dona@quanta.com' }, '2026-01-03T02:00:00.000Z');
+assert.equal(autoAccepted.titulo, 'Autor ajustou depois da proposta');
+assert.equal(autoAccepted.textos?.[0].texto, 'Texto proposto');
+assert.equal(autoAccepted.pendingProposal, undefined);
+
 const rejected = rejectNoteProposal(proposed, 'DONA@quanta.com');
 assert.equal(rejected.titulo, base.titulo);
 assert.equal(rejected.pendingProposal, undefined);

@@ -8,10 +8,10 @@
 
 import React, { useMemo, useState } from 'react';
 import {
-  AlertCircle, AlertTriangle, CheckCircle, Clipboard, Download, Wand2,
+  AlertCircle, AlertTriangle, CheckCircle, Clipboard, Download, Upload, Wand2,
 } from 'lucide-react';
 import {
-  agruparPorOS, corrigirAutomatico, paraTSV, parseColado, validar,
+  agruparPorOS, corrigirAutomatico, paraTSV, parseColado, parseXlsx, validar,
   type Diagnostico, type LinhaEAP,
 } from '../../lib/eapImport';
 
@@ -69,6 +69,20 @@ export default function ImportarEAP() {
     setCopiado(false);
   }
 
+  async function lerXlsx(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setLinhas(await parseXlsx(await file.arrayBuffer()));
+      setCorrigidas(0);
+      setCopiado(false);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Não foi possível ler o XLSX.');
+    } finally {
+      event.target.value = '';
+    }
+  }
+
   function aplicarCorrecao() {
     if (!linhas) return;
     const r = corrigirAutomatico(linhas);
@@ -120,6 +134,10 @@ export default function ImportarEAP() {
         >
           Conferir
         </button>
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[#FFF3EC] px-4 py-2 text-[13px] font-bold text-[#F05D28]">
+          <Upload size={15} /> Ler arquivo XLSX
+          <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={lerXlsx} className="sr-only" />
+        </label>
       </div>
 
       {/* Passo 2: conferir */}

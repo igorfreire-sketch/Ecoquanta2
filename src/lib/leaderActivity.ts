@@ -2,12 +2,30 @@ export type LeaderActivityEvent = {
   itemCodigo: string;
   autorEmail: string;
   criadoEm: string;
-  executadoPor: string[];
+  executadoPor: string[] | string;
   status: string;
   dificuldade: string;
   percentual: number | null;
   observacao: string;
+  productionStatus?: string;
+  motivoBloqueio?: string;
+  observacoesHistorico?: ActivityMessage[];
 };
+
+export type ActivityMessage = { autor: string; mensagem: string; dataHora: string };
+
+export type ActivityIssueDocument = {
+  itemCodigo: string;
+  mensagens: ActivityMessage[];
+  resolvido: boolean;
+  resolvidoPor?: string;
+  resolvidoEm?: string;
+};
+
+export const hasOpenActivityIssue = (issue?: ActivityIssueDocument | null) => Boolean(issue && !issue.resolvido && issue.mensagens.length > 0);
+
+export const normalizeLeaderDifficulty = (value: unknown) => value === 'Regular' ? 'Normal' : String(value || '');
+export const normalizeExecutors = (value: unknown) => Array.isArray(value) ? value.map(String) : value ? [String(value)] : [];
 
 type LeaderActivitySource = {
   id: string;
@@ -29,11 +47,14 @@ export function applyLeaderEventsToActivities<T extends LeaderActivitySource>(so
     if (!event) return activity;
     return {
       ...activity,
-      executadoPor: Array.isArray(event.executadoPor) ? event.executadoPor : [],
+      executadoPor: normalizeExecutors(event.executadoPor),
       statusDaAtividade: event.status || '',
-      dificuldadeAtividade: event.dificuldade || '',
+      dificuldadeAtividade: normalizeLeaderDifficulty(event.dificuldade),
       porcentagemAtividade: typeof event.percentual === 'number' ? event.percentual : null,
       observacaoLider: String(event.observacao || ''),
+      ...(event.productionStatus ? { status: event.productionStatus } : {}),
+      motivoBloqueio: String(event.motivoBloqueio || ''),
+      observacoesHistorico: Array.isArray(event.observacoesHistorico) ? event.observacoesHistorico : [],
       leaderEdited: true,
     } as T;
   });

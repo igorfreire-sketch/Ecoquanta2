@@ -164,9 +164,6 @@ const Notes = React.lazy(() => import('./components/CoordenacaoEngenharia/Notes'
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
 const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
 const Administracao = React.lazy(() => import('./components/Administracao'));
-// Importacao semi-automatica da EAP: o planejamento cola o bloco do MS Project e recebe de volta conferido.
-const PCronograma = React.lazy(() => import('./components/Planejamento/PCronograma'));
-
 const EAP_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
 const APP_VERSION_LABEL = getAppVersionLabel();
 const DEFAULT_ALOCACOES = [
@@ -243,7 +240,7 @@ type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato
 // 'project' e irma de 'disciplinas' (Notas): as duas sao paginas globais, iguais em toda area.
 type AreaTecnicaSubTab = 'atividades' | 'disciplinas' | 'project';
 type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas' | 'project';
-type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas' | 'p-cronograma' | 'project';
+type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas' | 'project';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'disciplinas' | 'project';
 type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | 'disciplinas' | 'project';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro' | 'firebase';
@@ -2353,13 +2350,12 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || preloading) return;
 
-    const wantsCronograma = activeTab === 'cronograma'
-      || (activeTab === 'planejamento' && planejamentoSubTab === 'p-cronograma');
+    const wantsCronograma = activeTab === 'cronograma';
 
     const wantsEap =
       (activeTab === 'controle' && subTab === 'curva-s') ||
       (activeTab === 'registro' && areaTecnicaSubTab === 'atividades') ||
-      (activeTab === 'planejamento' && (planejamentoSubTab === 'atividades' || planejamentoSubTab === 'curva-s' || planejamentoSubTab === 'p-cronograma')) ||
+      (activeTab === 'planejamento' && (planejamentoSubTab === 'atividades' || planejamentoSubTab === 'curva-s')) ||
       (activeTab === 'contrato' && contratoSubTab === 'atividades') ||
       (activeTab === 'nc2' && nc2SubTab === 'preenchimento');
     const wantsRegistro =
@@ -3642,20 +3638,14 @@ export default function App() {
       : <Cronograma preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} loading={!cronogramaModuleReady && !moduleErrors.cronograma} loadError={moduleErrors.cronograma} onRetry={() => { void loadFirebaseModule('cronograma'); }} />
   ) : null;
 
-  // Project so aparece ao lado de Notas; fora desse par nao polui as outras areas.
+
+  // Project so aparece ao lado de Notas, e nunca em Coordenacao de Engenharia (pedido do Igor).
+  // ponytail: entra como item extra na lista; nunca substituir o array (foi o que sumia com a Curva S).
   const podeProject = Boolean(currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions));
   const projectSubTab = (current: string, onClick: () => void) => (
     podeProject && (current === 'disciplinas' || current === 'project')
       ? [{ key: 'project', label: 'Project', icon: <Calendar size={16} />, active: current === 'project', onClick }]
       : []
-  );
-  const notasProjectTabs = (current: string, onNotes: () => void, onProject: () => void) => (
-    current === 'disciplinas' || current === 'project'
-      ? [
-          { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: current === 'disciplinas', onClick: onNotes },
-          ...projectSubTab(current, onProject),
-        ]
-      : null
   );
 
   const headerTabs = (() => {
@@ -3665,32 +3655,23 @@ export default function App() {
     }
 
     if (activeTab === 'controle') {
-      const notasTabs = notasProjectTabs(subTab, () => setSubTab('disciplinas'), () => setSubTab('project'));
-      if (notasTabs) return notasTabs;
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: subTab === 'disciplinas', onClick: () => setSubTab('disciplinas') },
-        ...projectSubTab(subTab, () => setSubTab('project')),
       ];
     }
 
     if (activeTab === 'planejamento') {
-      const notasTabs = notasProjectTabs(planejamentoSubTab, () => setPlanejamentoSubTab('disciplinas'), () => setPlanejamentoSubTab('project'));
-      if (notasTabs) return notasTabs;
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'atividades', onClick: () => setPlanejamentoSubTab('atividades') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: planejamentoSubTab === 'curva-s', onClick: () => setPlanejamentoSubTab('curva-s') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: planejamentoSubTab === 'disciplinas', onClick: () => setPlanejamentoSubTab('disciplinas') },
-        { key: 'p-cronograma', label: 'P.Cronograma', icon: <CalendarDays size={16} />, active: planejamentoSubTab === 'p-cronograma', onClick: () => setPlanejamentoSubTab('p-cronograma') },
         ...projectSubTab(planejamentoSubTab, () => setPlanejamentoSubTab('project')),
       ];
     }
 
     if (activeTab === 'nc2') {
-      const notasTabs = notasProjectTabs(nc2SubTab, () => setNc2SubTab('disciplinas'), () => setNc2SubTab('project'));
-      if (notasTabs) return notasTabs;
-
       return [
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: nc2SubTab === 'dashboard', onClick: () => setNc2SubTab('dashboard') },
         { key: 'preenchimento', label: 'Preenchimento', icon: <Clipboard size={16} />, active: nc2SubTab === 'preenchimento', onClick: () => setNc2SubTab('preenchimento') },
@@ -3702,8 +3683,6 @@ export default function App() {
     }
 
     if (activeTab === 'contrato') {
-      const notasTabs = notasProjectTabs(contratoSubTab, () => setContratoSubTab('disciplinas'), () => setContratoSubTab('project'));
-      if (notasTabs) return notasTabs;
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: contratoSubTab === 'atividades', onClick: () => setContratoSubTab('atividades') },
         { key: 'interferencias', label: 'Interferências', icon: <AlertTriangle size={16} />, active: contratoSubTab === 'interferencias', onClick: () => setContratoSubTab('interferencias') },
@@ -3716,6 +3695,7 @@ export default function App() {
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: areaTecnicaSubTab === 'atividades', onClick: () => setAreaTecnicaSubTab('atividades') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: areaTecnicaSubTab === 'disciplinas', onClick: () => setAreaTecnicaSubTab('disciplinas') },
+        ...projectSubTab(areaTecnicaSubTab, () => setAreaTecnicaSubTab('project')),
       ];
     }
 
@@ -4057,17 +4037,6 @@ export default function App() {
                   ? atividadesModuleReady
                     ? <Atividades currentUser={currentUser} preloadedData={effectiveGlobalData} showAllDisciplines disciplineFilterEnabled notes={notes} />
                     : atividadesLoadFallback
-                  : planejamentoSubTab === 'p-cronograma'
-                    ? (
-                      <PCronograma
-                        preloadedData={effectiveGlobalData}
-                        lockedContractCode={lockedContractCode}
-                        loading={!cronogramaModuleReady && !moduleErrors.cronograma}
-                        loadError={moduleErrors.cronograma}
-                        onRetry={() => { void loadFirebaseModule('cronograma'); }}
-                        onSalvo={aplicarCronogramaSalvo}
-                      />
-                    )
                   : planejamentoSubTab === 'curva-s'
                     ? <CurvaS preloadedData={effectiveGlobalData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
                     : planejamentoSubTab === 'disciplinas'

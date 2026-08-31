@@ -228,7 +228,13 @@ interface NoteProjectsContextValue {
 
 export const NoteProjectsContext = React.createContext<NoteProjectsContextValue>({ projects: [] });
 
-type ContextMenuState = { bancoIndex: number; row: number; col: number; x: number; y: number } | null;
+// selStart/selEnd: selecao de TEXTO dentro de uma celula PLANA (textarea), capturada NO CLIQUE
+// do botao direito (igual ao linkAlvo - depois que o menu abre e rouba o foco, selectionStart/End
+// da textarea nao pode mais ser lida de novo). Undefined = sem selecao de texto, formata a
+// celula inteira (comportamento antigo, inalterado).
+// temSelecaoDom: mesma ideia mas pra celula com marcacao (contentEditable) - a selecao de verdade
+// e um DOM Range, guardado a parte em celulaRangeRef (Range nao e um valor serializavel de state).
+type ContextMenuState = { bancoIndex: number; row: number; col: number; x: number; y: number; selStart?: number; selEnd?: number; temSelecaoDom?: boolean } | null;
 type CellSelection = { bancoIndex: number; r1: number; c1: number; r2: number; c2: number };
 
 // Sentinela do filtro de autor: nao colide com nenhum email real.
@@ -358,14 +364,257 @@ export function extrairLabelDoLink(texto: string): string | null {
   return viaMarkdown ? viaMarkdown[1] : null;
 }
 
+// Formatacao por PALAVRA/TRECHO selecionado dentro de uma celula (decisao arquitetural: marcacao
+// inline embutida na propria string, igual ao link "[rotulo](url)" acima - marcadores viajam com
+// o texto em qualquer edicao, sem precisar de indices externos tipo contentEditable/runs).
+// Fora de escopo por decisao: cor de fundo, alinhamento, fonte, tamanho - so fazem sentido pra
+// celula inteira, continuam so em CellStyle (aplicarEstilo).
+const REGEX_CELL_MARKUP_COLOR = /\[c:(#[0-9a-fA-F]{6})\]([\s\S]*?)\[\/c\]/g;
+const REGEX_CELL_MARKUP_BOLD = /\*\*([\s\S]*?)\*\*/g;
+const REGEX_CELL_MARKUP_STRIKE = /~~([\s\S]*?)~~/g;
+const REGEX_CELL_MARKUP_ITALIC = /\*([\s\S]*?)\*/g;
+
+// Remove os 4 marcadores mantendo o texto interno - usado antes de buscar/corrigir ortografia,
+// pra "**palavra**" continuar batendo com "palavra".
+export function stripCellMarkup(texto: string): string {
+  return (texto || '')
+    .replace(REGEX_CELL_MARKUP_COLOR, '$2')
+    .replace(REGEX_CELL_MARKUP_BOLD, '$1')
+    .replace(REGEX_CELL_MARKUP_STRIKE, '$1')
+    .replace(REGEX_CELL_MARKUP_ITALIC, '$1');
+}
+
+export function cellHasMarkup(texto: string): boolean {
+  return /\[c:#[0-9a-fA-F]{6}\][\s\S]*?\[\/c\]|\*\*[\s\S]*?\*\*|~~[\s\S]*?~~|\*[\s\S]*?\*/.test(texto || '');
+}
+
+// Posicao (start ou end de uma selecao) dos marcadores JA EXISTENTES no texto - usado so pra
+// bloquear um wrap que cortaria um marcador ao meio (bug real: selecao terminando dentro de
+// "[c:#F05D28]" produzia "[c:#**F05D28]"). Cada item cobre as DUAS faixas de caracteres-marcador
+// (abertura e fechamento), nao o texto capturado no meio - esse pode ser cortado normalmente.
+function faixasDeMarcadoresExistentes(texto: string): Array<[number, number]> {
+  const regexUnificada = /\[c:(#[0-9a-fA-F]{6})\]([\s\S]*?)\[\/c\]|\*\*([\s\S]*?)\*\*|~~([\s\S]*?)~~|\*([\s\S]*?)\*/g;
+  const faixas: Array<[number, number]> = [];
+  let m: RegExpExecArray | null;
+  while ((m = regexUnificada.exec(texto)) !== null) {
+    const abreLen = m[1] !== undefined ? `[c:${m[1]}]`.length : (m[3] !== undefined ? 2 : (m[4] !== undefined ? 2 : 1));
+    const fechaLen = m[1] !== undefined ? '[/c]'.length : (m[4] !== undefined ? 2 : (m[3] !== undefined ? 2 : 1));
+    const inicio = m.index;
+    const fim = inicio + m[0].length;
+    faixas.push([inicio, inicio + abreLen]); // caracteres de abertura
+    faixas.push([fim - fechaLen, fim]); // caracteres de fechamento
+  }
+  return faixas;
+}
+
+// true se `pos` cai ESTRITAMENTE dentro dos caracteres de um marcador (nao nas bordas, essas sao
+// posicoes validas pra selecionar em volta do marcador inteiro).
+function posicaoDentroDeMarcador(pos: number, faixas: Array<[number, number]>): boolean {
+  return faixas.some(([inicio, fim]) => pos > inicio && pos < fim);
+}
+
+// true se aplicar/remover uma marcacao no trecho [start,end) cortaria um marcador existente ao
+// meio (ex.: selecao termina dentro de "[c:#F05D28]", so pegando "[c:#"). Checar ANTES de chamar
+// alternarMarcacaoSelecao - a corrupcao real que o Igor bateu.
+export function selecaoQuebraMarcadorExistente(texto: string, start: number, end: number): boolean {
+  const faixas = faixasDeMarcadoresExistentes(texto);
+  return posicaoDentroDeMarcador(start, faixas) || posicaoDentroDeMarcador(end, faixas);
+}
+
+// Toggle: se o trecho [start,end) ja esta embrulhado exatamente por abre/fecha, desembrulha;
+// senao, embrulha. Usado tanto pra bold/italic/strike (abre===fecha) quanto cor (abre="[c:#hex]").
+// Retorna o texto inteiro da celula + a nova selecao (pra devolver o foco/selecao na textarea).
+// NAO chama selecaoQuebraMarcadorExistente sozinha - quem chama (alternarMarcacaoNaCelula/
+// aplicarCorNaCelula) tem que checar antes, essa funcao so faz o slice+insert.
+export function alternarMarcacaoSelecao(
+  texto: string, start: number, end: number, abre: string, fecha: string,
+): { texto: string; start: number; end: number } {
+  const antes = texto.slice(0, start);
+  const selecionado = texto.slice(start, end);
+  const depois = texto.slice(end);
+  const jaTem = selecionado.startsWith(abre) && selecionado.endsWith(fecha) && selecionado.length >= abre.length + fecha.length;
+  const miolo = jaTem ? selecionado.slice(abre.length, selecionado.length - fecha.length) : `${abre}${selecionado}${fecha}`;
+  return { texto: antes + miolo + depois, start, end: start + miolo.length };
+}
+
+// AST do texto marcado - UM parser reaproveitado por 3 consumidores (JSX pra view desfocada,
+// HTML string pro dangerouslySetInnerHTML da celula em edicao, e nada mais - a volta pra string
+// canonica sai do DOM real via serializeCellDom, nao desse AST). Recursivo: cobre aninhamento
+// (bold+cor juntos), que o parser antigo (flat, um match por vez) nao suportava.
+type NoMarcado =
+  | { tipo: 'texto'; valor: string }
+  | { tipo: 'bold'; filhos: NoMarcado[] }
+  | { tipo: 'italic'; filhos: NoMarcado[] }
+  | { tipo: 'strike'; filhos: NoMarcado[] }
+  | { tipo: 'cor'; cor: string; filhos: NoMarcado[] };
+
+function parseCellMarkup(texto: string): NoMarcado[] {
+  const regexUnificada = /\[c:(#[0-9a-fA-F]{6})\]([\s\S]*?)\[\/c\]|\*\*([\s\S]*?)\*\*|~~([\s\S]*?)~~|\*([\s\S]*?)\*/g;
+  const nos: NoMarcado[] = [];
+  const fonte = texto || '';
+  let ultimo = 0;
+  let m: RegExpExecArray | null;
+  while ((m = regexUnificada.exec(fonte)) !== null) {
+    if (m.index > ultimo) nos.push({ tipo: 'texto', valor: fonte.slice(ultimo, m.index) });
+    if (m[1] !== undefined) nos.push({ tipo: 'cor', cor: m[1], filhos: parseCellMarkup(m[2]) });
+    else if (m[3] !== undefined) nos.push({ tipo: 'bold', filhos: parseCellMarkup(m[3]) });
+    else if (m[4] !== undefined) nos.push({ tipo: 'strike', filhos: parseCellMarkup(m[4]) });
+    else if (m[5] !== undefined) nos.push({ tipo: 'italic', filhos: parseCellMarkup(m[5]) });
+    ultimo = regexUnificada.lastIndex;
+  }
+  if (ultimo < fonte.length) nos.push({ tipo: 'texto', valor: fonte.slice(ultimo) });
+  return nos;
+}
+
+function renderNos(nos: NoMarcado[], prefixo = ''): React.ReactNode[] {
+  return nos.map((no, i) => {
+    const key = `${prefixo}${i}`;
+    if (no.tipo === 'texto') return <React.Fragment key={key}>{no.valor}</React.Fragment>;
+    const filhos = renderNos(no.filhos, `${key}-`);
+    if (no.tipo === 'bold') return <strong key={key}>{filhos}</strong>;
+    if (no.tipo === 'italic') return <em key={key}>{filhos}</em>;
+    if (no.tipo === 'strike') return <span key={key} style={{ textDecoration: 'line-through' }}>{filhos}</span>;
+    return <span key={key} style={{ color: no.cor }}>{filhos}</span>;
+  });
+}
+
+// Renderiza a celula com spans formatados (view "desfocada", igual ao rotulo de link, e agora
+// tambem a base da view EM EDICAO pra celulas com marcacao - ver cellMarkupToHtml). Nao mistura
+// com o link markdown - ponytail, nao foi pedido combinar os dois.
+export function renderCellMarkup(texto: string): React.ReactNode[] {
+  return renderNos(parseCellMarkup(texto));
+}
+
+function escapeHtml(valor: string): string {
+  return valor.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function nosToHtml(nos: NoMarcado[]): string {
+  return nos.map((no) => {
+    if (no.tipo === 'texto') return escapeHtml(no.valor);
+    const inner = nosToHtml(no.filhos);
+    if (no.tipo === 'bold') return `<strong>${inner}</strong>`;
+    if (no.tipo === 'italic') return `<em>${inner}</em>`;
+    if (no.tipo === 'strike') return `<s>${inner}</s>`;
+    return `<span style="color:${no.cor}">${inner}</span>`;
+  }).join('');
+}
+
+// HTML pra dangerouslySetInnerHTML da celula CONTENTEDITABLE (decisao: marcadores nunca aparecem,
+// nem em edicao - ver ContextMenuState/celulaContentEditableRefs abaixo). So usado quando
+// cellHasMarkup(texto); celula sem marcacao continua textarea puro, sem passar por aqui.
+export function cellMarkupToHtml(texto: string): string {
+  return nosToHtml(parseCellMarkup(texto));
+}
+
+// "rgb(22, 163, 74)" -> "#16A34A". O navegador normaliza style.color de hex pra rgb() ao ler de
+// volta - sem isso o serializer gravaria "[c:rgb(22, 163, 74)]" na celula, que nao bate mais com
+// REGEX_CELL_MARKUP_COLOR (so aceita #RRGGBB) e a formatacao de cor "sumiria" no proximo parse.
+function rgbParaHex(cor: string): string {
+  if (cor.startsWith('#')) return cor.toUpperCase();
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(cor);
+  if (!m) return '#000000';
+  const hex = [m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, '0')).join('');
+  return `#${hex}`.toUpperCase();
+}
+
+// DOM (da celula contentEditable, depois que o usuario digitou/formatou de verdade) -> string
+// canonica de volta - o que fica salvo em banco.rows[r][c]. So roda em eventos discretos (blur,
+// ou logo depois de aplicar uma marcacao pelo menu) - NUNCA por keystroke, don't reconciliar
+// contra React a cada digitada (era o risco grande do plano com "revelar perto do cursor").
+export function serializeCellDom(no: Node): string {
+  if (no.nodeType === Node.TEXT_NODE) return (no.nodeValue || '').replace(/ /g, ' ');
+  if (no.nodeType !== Node.ELEMENT_NODE) return '';
+  const elem = no as HTMLElement;
+  const inner = Array.from(elem.childNodes).map((filho) => serializeCellDom(filho)).join('');
+  switch (elem.tagName) {
+    case 'STRONG': case 'B': return `**${inner}**`;
+    case 'EM': case 'I': return `*${inner}*`;
+    case 'S': case 'STRIKE': case 'DEL': return `~~${inner}~~`;
+    case 'SPAN': return elem.style.color ? `[c:${rgbParaHex(elem.style.color)}]${inner}[/c]` : inner;
+    case 'BR': return '\n';
+    // Rede de seguranca: com Enter interceptado (insertText '\n', ver onKeyDown da celula), o
+    // navegador nao deveria criar DIV/P por linha - mas se criar mesmo assim, nao perde o texto.
+    case 'DIV': case 'P': return `\n${inner}`;
+    default: return inner; // wrapper desconhecido (ex.: <font> que o navegador as vezes insere): so desembrulha
+  }
+}
+
+// Substitui um elemento pelos proprios filhos (unwrap) - usado tanto pro toggle-off de
+// envolverOuDesenrolarRange quanto pra "Padrao" (remover cor) em aplicarCorNaCelulaDom.
+function desenrolarElemento(el: Element) {
+  const pai = el.parentNode;
+  if (!pai) return;
+  while (el.firstChild) pai.insertBefore(el.firstChild, el);
+  pai.removeChild(el);
+}
+
+// Aplica/remove uma tag (strong/em/s/span-com-cor) no Range selecionado, direto no DOM real da
+// celula contentEditable. Toggle: se a selecao INTEIRA ja e o conteudo de uma tag desse tipo (e
+// mesma cor, se for cor), desembrulha; senao, embrulha. extractContents+insertNode (nao
+// surroundContents) porque o Range pode cruzar bordas de outras tags (ex.: selecao span metade
+// dentro metade fora de um <strong> existente) - surroundContents lanca excecao nesse caso.
+// `raiz` (bugfix): closest() sobe a arvore INTEIRA do DOM, nao para na borda da celula - pra
+// cor especificamente (seletor por atributo `span[style*="color"]`, o unico dos 4 tipos que NAO
+// e uma tag semantica propria) isso podia casar com um <span style="color:..."> de FORA da
+// celula (icone/badge/qualquer coisa na pagina) e, no pior caso, desembrulhar/mexer num elemento
+// que nao tem nada a ver com a nota. Bold/italic/strike usam tag propria (strong/em/s) - existe
+// bem menos chance de colisao por acaso, mas o guard vale pros 4.
+function envolverOuDesenrolarRange(range: Range, tagName: string, raiz: Element, corHex?: string) {
+  const base = range.commonAncestorContainer;
+  const elBase = base.nodeType === Node.ELEMENT_NODE ? base as Element : base.parentElement;
+  const seletor = corHex ? `${tagName}[style*="color"]` : tagName;
+  const achado = elBase?.closest(seletor) ?? null;
+  const existente = achado && raiz.contains(achado) ? achado : null;
+  const jaEnvolveTudo = Boolean(existente && existente.textContent === range.toString());
+  if (jaEnvolveTudo && existente) {
+    desenrolarElemento(existente);
+    return;
+  }
+  const wrapper = document.createElement(tagName);
+  if (corHex) wrapper.style.color = corHex;
+  const frag = range.extractContents();
+  wrapper.appendChild(frag);
+  range.insertNode(wrapper);
+}
+
+// ponytail: smoke check em dev, sem framework.
+if (import.meta.env?.DEV) {
+  console.assert(stripCellMarkup('**a** e *b* e ~~c~~ e [c:#FF0000]d[/c]') === 'a e b e c e d', 'stripCellMarkup deveria tirar os 4 marcadores');
+  const passo1 = alternarMarcacaoSelecao('ola mundo', 4, 9, '**', '**');
+  console.assert(passo1.texto === 'ola **mundo**', 'alternarMarcacaoSelecao deveria embrulhar a selecao');
+  const passo2 = alternarMarcacaoSelecao(passo1.texto, passo1.start, passo1.end, '**', '**');
+  console.assert(passo2.texto === 'ola mundo', 'alternarMarcacaoSelecao deveria desembrulhar no 2o clique (toggle)');
+  // Bug real reportado: "aaaaaaaa" + [c:#F05D28]1111[/c] - selecao terminando DENTRO do hex
+  // (posicao 13, no meio de "[c:#F05D28]") tem que ser barrada, nao cortar o marcador ao meio.
+  const celulaComCor = 'aaaaaaaa[c:#F05D28]1111[/c]';
+  console.assert(selecaoQuebraMarcadorExistente(celulaComCor, 5, 13) === true, 'selecao terminando dentro de [c:#hex] deveria ser barrada');
+  console.assert(selecaoQuebraMarcadorExistente(celulaComCor, 0, 8) === false, 'selecao so em "aaaaaaaa" (fora do marcador) deveria ser permitida');
+  console.assert(selecaoQuebraMarcadorExistente(celulaComCor, 8, 27) === false, 'selecao em volta do marcador inteiro (bordas exatas) deveria ser permitida');
+  // Aninhamento (bold+cor juntos) - o bug relatado era exatamente essa combinacao saindo com
+  // marcadores visiveis/entrelacados; o parser recursivo tem que aninhar as tags, nao so achar
+  // o match de fora e jogar o miolo cru dentro.
+  console.assert(
+    cellMarkupToHtml('aaa**[c:#16A34A]aa[/c]**') === 'aaa<strong><span style="color:#16A34A">aa</span></strong>',
+    'cellMarkupToHtml deveria aninhar span de cor DENTRO do strong, sem deixar marcador cru',
+  );
+  // DOM -> string (round trip) - o caminho que o blur/menu usa pra voltar a string canonica.
+  if (typeof document !== 'undefined') {
+    const raiz = document.createElement('div');
+    raiz.innerHTML = 'aaa<strong><span style="color:#16A34A">aa</span></strong>bbb';
+    console.assert(serializeCellDom(raiz) === 'aaa**[c:#16A34A]aa[/c]**bbb', 'serializeCellDom deveria reconstruir a marcacao aninhada a partir do DOM');
+  }
+}
+
 function normalizeText(value: string) {
   return value.normalize('NFD').replace(new RegExp('[\\u0300-\\u036f]', 'g'), '').trim().toLowerCase();
 }
 
-export function noteMatchesTextSearch(sheet: AnnotationSheet, query: string) {
+export function noteMatchesTextSearch(sheet: AnnotationSheet, query: string, buscarConteudo = true) {
   const normalizedQuery = normalizeText(query || '');
   if (!normalizedQuery) return true;
   const chunks: string[] = [sheet.titulo || ''];
+  if (!buscarConteudo) return chunks.some((value) => normalizeText(value).includes(normalizedQuery));
   getSheetTextos(sheet).forEach((bloco) => {
     chunks.push(bloco.nome || '', bloco.texto || '');
   });
@@ -376,7 +625,7 @@ export function noteMatchesTextSearch(sheet: AnnotationSheet, query: string) {
   getSheetBancos(sheet).forEach((banco) => {
     chunks.push(banco.nome || '');
     (Array.isArray(banco.rows) ? banco.rows : []).forEach((row) => {
-      (Array.isArray(row) ? row : []).forEach((cell) => chunks.push(cell || ''));
+      (Array.isArray(row) ? row : []).forEach((cell) => chunks.push(stripCellMarkup(cell || '')));
     });
     (banco.cellChecklists && typeof banco.cellChecklists === 'object' && !Array.isArray(banco.cellChecklists)
       ? Object.values(banco.cellChecklists)
@@ -386,6 +635,14 @@ export function noteMatchesTextSearch(sheet: AnnotationSheet, query: string) {
     });
   });
   return chunks.some((value) => normalizeText(value).includes(normalizedQuery));
+}
+
+// ponytail: smoke check em dev, sem framework - so garante que o toggle de escopo nao regrida.
+if (import.meta.env?.DEV) {
+  const notaTeste = { titulo: 'Reunião Estrutura', textos: [{ id: '1', texto: 'assunto: fundação' }] } as AnnotationSheet;
+  console.assert(noteMatchesTextSearch(notaTeste, 'estrutura', false) === true, 'busca so-titulo deveria achar no titulo');
+  console.assert(noteMatchesTextSearch(notaTeste, 'fundação', false) === false, 'busca so-titulo NAO deveria achar no conteudo');
+  console.assert(noteMatchesTextSearch(notaTeste, 'fundação', true) === true, 'busca com conteudo deveria achar no conteudo');
 }
 
 // ---- Rascunho anti-F5: backup local do editor, sem backend. ----
@@ -495,6 +752,9 @@ export default function Anotacoes({
   >(null);
   // Arrasto da alca "#" pra REORDENAR linha/coluna (drag-and-drop nativo, sem mouse tracking manual).
   const ordemArrastoRef = React.useRef<{ tipo: 'row' | 'col'; bancoIndex: number; indice: number } | null>(null);
+  // Arrasto da alca "#" pra REORDENAR blocos (Banco ou bloco de texto) dentro da nota. Bancos e
+  // textos sao arrays separados no schema (ver AnnotationSheet) - cada um reordena dentro da propria lista.
+  const blocoArrastoRef = React.useRef<{ tipo: 'banco' | 'texto'; indice: number } | null>(null);
   const [linkPickerOpen, setLinkPickerOpen] = React.useState(false);
   const [linkSearch, setLinkSearch] = React.useState('');
   const [userPickerOpen, setUserPickerOpen] = React.useState(false);
@@ -529,6 +789,9 @@ export default function Anotacoes({
   const [listaVinculo, setListaVinculo] = React.useState('');
   const [listaEdificacao, setListaEdificacao] = React.useState('');
   const [listaTextoBusca, setListaTextoBusca] = React.useState('');
+  // Desligado por padrao: busca so no titulo. Ligado: titulo + conteudo (textos/checklists/bancos).
+  const [listaBuscarConteudo, setListaBuscarConteudo] = React.useState(false);
+  const [listaOrdenacao, setListaOrdenacao] = React.useState<'alfabetica' | 'data-asc' | 'data-desc'>('data-asc');
   // Aba ativa da lista de notas: minhas (Kanban), publicas de outros, ou concluidas ha 10+ dias.
   const [notasTab, setNotasTab] = React.useState<'minhas' | 'publicas' | 'concluidas'>('minhas');
   // Menu do card em posicao FIXED (calculada do botao) para nao ser recortado pelo overflow-hidden do card.
@@ -536,6 +799,18 @@ export default function Anotacoes({
   const [pdfTarget, setPdfTarget] = React.useState<{ sheet: AnnotationSheet; linkedTitles: string[] } | null>(null);
   const textoRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
   const celulaRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
+  // Celulas COM marcacao, em edicao, viram <div contentEditable> em vez de textarea (decisao:
+  // marcadores nunca aparecem, nem editando - ver cellMarkupToHtml/serializeCellDom acima).
+  const celulaContentEditableRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
+  // Selecao de DOM (Range) capturada no clique direito de uma celula contentEditable - igual ao
+  // selStart/selEnd da textarea, mas pra esse caso a "selecao" e um Range de verdade, nao offsets.
+  const celulaRangeRef = React.useRef<Range | null>(null);
+  // Busca DENTRO da nota aberta (editor), separada da busca da lista (listaTextoBusca). Refs
+  // genericas keyed por bloco/celula pra scrollIntoView + destaque temporario ao digitar.
+  const [notaBusca, setNotaBusca] = React.useState('');
+  const [notaBuscaAtual, setNotaBuscaAtual] = React.useState(0);
+  const [notaBuscaDestaque, setNotaBuscaDestaque] = React.useState<string | null>(null);
+  const blocoDestaqueRefs = React.useRef<Record<string, HTMLElement | null>>({});
   // Celula com foco no momento: enquanto nao focada, celula com link markdown mostra so o
   // rotulo em azul sublinhado (em vez do "[rotulo](url)" cru); ao focar, volta a mostrar o
   // texto bruto pra poder editar.
@@ -657,6 +932,9 @@ export default function Anotacoes({
   });
 
   const resetEditorFields = () => {
+    setNotaBusca('');
+    setNotaBuscaAtual(0);
+    setNotaBuscaDestaque(null);
     setSidebarTab(null);
     setSidebarOsCodigo(null);
     setSidebarDisciplina(null);
@@ -687,6 +965,13 @@ export default function Anotacoes({
   const removeBanco = (bancoIndex: number) => setEditing((prev) => (
     prev ? { ...prev, bancos: (prev.bancos ?? []).filter((_, index) => index !== bancoIndex) } : prev
   ));
+  const moveBanco = (from: number, to: number) => setEditing((prev) => {
+    if (!prev || from === to) return prev;
+    const lista = [...(prev.bancos ?? [])];
+    const [item] = lista.splice(from, 1);
+    lista.splice(to, 0, item);
+    return { ...prev, bancos: lista };
+  });
   const updateCell = (bancoIndex: number, r: number, c: number, value: string) => updateBanco(bancoIndex, (banco) => ({
     ...banco,
     rows: banco.rows.map((row, ri) => (ri === r ? row.map((cell, ci) => (ci === c ? value : cell)) : row)),
@@ -701,7 +986,10 @@ export default function Anotacoes({
   React.useEffect(() => {
     if (!contextMenu) { setSugestoesOrtografia([]); return; }
     let cancelado = false;
-    void sugerirCorrecoes(textoDaCelulaDoMenu).then((lista) => { if (!cancelado) setSugestoesOrtografia(lista); });
+    // stripCellMarkup: "**palavra**" nao pode virar sugestao de correcao por causa dos "*".
+    // trocarPalavra (corrigirPalavra abaixo) continua operando no texto CRU - os marcadores
+    // nao sao letras, entao o limite de palavra (\p{L}) da regex nao se importa com eles.
+    void sugerirCorrecoes(stripCellMarkup(textoDaCelulaDoMenu)).then((lista) => { if (!cancelado) setSugestoesOrtografia(lista); });
     return () => { cancelado = true; };
   }, [contextMenu, textoDaCelulaDoMenu]);
 
@@ -967,6 +1255,89 @@ export default function Anotacoes({
     const todas = celulasSelecionadas(selecao).every(({ r, c }) => banco.styles?.[cellKey(r, c)]?.[chave]);
     aplicarEstilo({ [chave]: !todas } as Partial<CellStyle>);
   };
+  // Devolve foco + selecao (agora sobre o texto ja embrulhado/desembrulhado) na textarea da
+  // celula depois de reescrever o valor - sem isso o cursor pula pro inicio da celula.
+  const focarSelecaoNaCelula = (bancoIndex: number, row: number, col: number, start: number, end: number) => {
+    const chave = `${bancoIndex}:${row}:${col}`;
+    window.setTimeout(() => {
+      const el = celulaRefs.current[chave];
+      if (el) { el.focus(); el.setSelectionRange(start, end); }
+    }, 0);
+  };
+  const MARCADORES_TEXTO: Record<'bold' | 'italic' | 'strike', [string, string]> = {
+    bold: ['**', '**'], italic: ['*', '*'], strike: ['~~', '~~'],
+  };
+  // Formata so o TRECHO selecionado (contextMenu.selStart/selEnd), em vez da celula inteira -
+  // so chamado quando o menu foi aberto com uma selecao de texto (ver onContextMenu do <td>).
+  const alternarMarcacaoNaCelula = (chave: 'bold' | 'italic' | 'strike') => {
+    if (!contextMenu || contextMenu.selStart === undefined || contextMenu.selEnd === undefined) return;
+    const { bancoIndex, row, col, selStart, selEnd } = contextMenu;
+    const atual = (editing?.bancos ?? [])[bancoIndex]?.rows?.[row]?.[col] || '';
+    // Bugfix: selecao cortando um marcador ja existente ao meio corrompia a celula
+    // (ex.: "[c:#F05D28]" virava "[c:#**F05D28]"). Recusa em vez de corromper.
+    if (selecaoQuebraMarcadorExistente(atual, selStart, selEnd)) {
+      window.alert('Essa seleção corta uma formatação já existente ao meio. Selecione um trecho fora dela (ou ela inteira) e tente de novo.');
+      return;
+    }
+    const [abre, fecha] = MARCADORES_TEXTO[chave];
+    const resultado = alternarMarcacaoSelecao(atual, selStart, selEnd, abre, fecha);
+    updateCell(bancoIndex, row, col, resultado.texto);
+    focarSelecaoNaCelula(bancoIndex, row, col, resultado.start, resultado.end);
+  };
+  const aplicarCorNaCelula = (hex: string) => {
+    if (!contextMenu || contextMenu.selStart === undefined || contextMenu.selEnd === undefined) return;
+    const { bancoIndex, row, col, selStart, selEnd } = contextMenu;
+    const atual = (editing?.bancos ?? [])[bancoIndex]?.rows?.[row]?.[col] || '';
+    if (selecaoQuebraMarcadorExistente(atual, selStart, selEnd)) {
+      window.alert('Essa seleção corta uma formatação já existente ao meio. Selecione um trecho fora dela (ou ela inteira) e tente de novo.');
+      return;
+    }
+    const resultado = hex
+      ? alternarMarcacaoSelecao(atual, selStart, selEnd, `[c:${hex}]`, '[/c]')
+      // "Padrao": tira a cor da selecao SE ela embrulha a selecao inteira, sem exigir o mesmo hex.
+      : (() => {
+        const selecionado = atual.slice(selStart, selEnd);
+        const semCor = selecionado.replace(/^\[c:#[0-9a-fA-F]{6}\]([\s\S]*)\[\/c\]$/, '$1');
+        return { texto: atual.slice(0, selStart) + semCor + atual.slice(selEnd), start: selStart, end: selStart + semCor.length };
+      })();
+    updateCell(bancoIndex, row, col, resultado.texto);
+    focarSelecaoNaCelula(bancoIndex, row, col, resultado.start, resultado.end);
+  };
+  // Le a celula CONTENTEDITABLE de volta pra string canonica e grava - unico ponto onde o DOM
+  // "real" (mutado pelo navegador enquanto o usuario digitava/formatava) volta a ser a fonte
+  // de verdade em banco.rows[r][c]. So chamado em eventos discretos (blur / apos aplicar
+  // formatacao pelo menu), nunca por keystroke.
+  const sincronizarCelulaEditavel = (bancoIndex: number, row: number, col: number) => {
+    const el = celulaContentEditableRefs.current[`${bancoIndex}:${row}:${col}`];
+    if (el) updateCell(bancoIndex, row, col, serializeCellDom(el));
+  };
+  const TAG_POR_MARCACAO: Record<'bold' | 'italic' | 'strike', string> = { bold: 'strong', italic: 'em', strike: 's' };
+  // Formata o TRECHO selecionado (celulaRangeRef, um DOM Range de verdade) direto no DOM da
+  // celula - sem offsets de string, sem risco de "cortar marcador ao meio" (nao da pra
+  // selecionar metade de uma tag no DOM). selecaoQuebraMarcadorExistente/alternarMarcacaoSelecao
+  // continuam existindo so pro caminho antigo (celula AINDA sem marcacao, textarea plana).
+  const alternarMarcacaoNaCelulaDom = (chave: 'bold' | 'italic' | 'strike') => {
+    const range = celulaRangeRef.current;
+    const raiz = contextMenu ? celulaContentEditableRefs.current[`${contextMenu.bancoIndex}:${contextMenu.row}:${contextMenu.col}`] : null;
+    if (!contextMenu || !range || !raiz) return;
+    envolverOuDesenrolarRange(range, TAG_POR_MARCACAO[chave], raiz);
+    sincronizarCelulaEditavel(contextMenu.bancoIndex, contextMenu.row, contextMenu.col);
+  };
+  const aplicarCorNaCelulaDom = (hex: string) => {
+    const range = celulaRangeRef.current;
+    const raiz = contextMenu ? celulaContentEditableRefs.current[`${contextMenu.bancoIndex}:${contextMenu.row}:${contextMenu.col}`] : null;
+    if (!contextMenu || !range || !raiz) return;
+    if (hex) {
+      envolverOuDesenrolarRange(range, 'span', raiz, hex);
+    } else {
+      // "Padrao": desembrulha o <span style="color"> mais proximo (DENTRO da celula) que envolve a selecao.
+      const base = range.commonAncestorContainer;
+      const elBase = base.nodeType === Node.ELEMENT_NODE ? base as Element : base.parentElement;
+      const achado = elBase?.closest('span[style*="color"]') ?? null;
+      if (achado && raiz.contains(achado)) desenrolarElemento(achado);
+    }
+    sincronizarCelulaEditavel(contextMenu.bancoIndex, contextMenu.row, contextMenu.col);
+  };
   const limparConteudoSelecao = () => {
     if (!selecao) return;
     const alvo = selecao;
@@ -1058,7 +1429,10 @@ export default function Anotacoes({
       const alturaPorLinha = new Map<number, number>();
 
       celulasSelecionadas(alvo).forEach(({ r, c }) => {
-        const texto = banco.rows[r]?.[c] ?? '';
+        // Bugfix "tamanho bugando": medir o texto CRU (com **/~~/[c:#hex] da marcacao por
+        // palavra) inflava largura/altura calculadas alem do que o texto renderizado (sem
+        // marcadores) realmente ocupa - o "Dim" tinha que medir o texto limpo, nao o cru.
+        const texto = stripCellMarkup(banco.rows[r]?.[c] ?? '');
         const estilo = banco.styles?.[cellKey(r, c)];
         const medir = medirCom(fonteCss(estilo));
         // Largura do texto sem quebrar, limitada a 3cm.
@@ -1132,9 +1506,14 @@ export default function Anotacoes({
     // Filtro fala em setor: escolher 'Arquitetura' traz URB, LAY, LUM...
     .filter((sheet) => !listaDisciplina || getSheetDisciplinas(sheet).some((item) => disciplineMatchesSector(item, listaDisciplina)))
     .filter((sheet) => listaVinculo !== 'vinculado' || (sheet.marcadosUsuarios || []).includes(currentUser.email))
-    .filter((sheet) => noteMatchesTextSearch(sheet, listaTextoBusca))
-    // Ordem alfabetica por titulo (pt-BR, ignorando maiusculas/acentos).
-    .sort((a, b) => normalizeText(a.titulo || '').localeCompare(normalizeText(b.titulo || ''), 'pt-BR'));
+    .filter((sheet) => noteMatchesTextSearch(sheet, listaTextoBusca, listaBuscarConteudo))
+    .sort((a, b) => {
+      if (listaOrdenacao === 'alfabetica') return normalizeText(a.titulo || '').localeCompare(normalizeText(b.titulo || ''), 'pt-BR');
+      // criadoEm pode faltar em notas antigas (ver AnnotationSheet.criadoEm); cai pro updatedAt.
+      const dataA = new Date(a.criadoEm || a.updatedAt || 0).getTime();
+      const dataB = new Date(b.criadoEm || b.updatedAt || 0).getTime();
+      return listaOrdenacao === 'data-asc' ? dataA - dataB : dataB - dataA;
+    });
   const temFiltroLista = Boolean(listaAutor || listaContrato || listaOs || listaEdificacao || listaDisciplina || listaVinculo || listaTextoBusca);
   const limparFiltroLista = () => { setListaAutor(''); setListaContrato(''); setListaOs(''); setListaEdificacao(''); setListaDisciplina(''); setListaVinculo(''); setListaTextoBusca(''); };
   // Autores que aparecem no seletor: os cadastrados no sistema, sem o proprio usuario
@@ -1155,6 +1534,38 @@ export default function Anotacoes({
     const bancos = editing.bancos ?? [];
     const textos = editing.textos ?? [];
     const checklists = editing.checklists ?? [];
+    // Busca dentro da nota aberta: varre celulas de banco (texto puro, nao cellChecklists -
+    // ponytail, cobre o caso comum; adicionar se pedirem busca em checklist de celula), itens
+    // de checklist e blocos de texto. Chaves batem com os refs colocados nos containers abaixo.
+    const buscarMatchesNaNota = (query: string): string[] => {
+      const q = normalizeText(query);
+      if (!q) return [];
+      const chaves: string[] = [];
+      bancos.forEach((banco, bancoIndex) => {
+        (banco.rows || []).forEach((row, r) => {
+          (row || []).forEach((cell, c) => {
+            if (normalizeText(cell || '').includes(q)) chaves.push(`banco:${bancoIndex}:${r}:${c}`);
+          });
+        });
+      });
+      checklists.forEach((lista) => {
+        lista.itens.forEach((item) => {
+          if (normalizeText(item.texto || '').includes(q)) chaves.push(`checklist:${lista.id}:${item.id}`);
+        });
+      });
+      textos.forEach((bloco) => {
+        if (normalizeText(bloco.texto || '').includes(q)) chaves.push(`texto:${bloco.id}`);
+      });
+      return chaves;
+    };
+    const notaBuscaMatches = buscarMatchesNaNota(notaBusca);
+    const irParaMatchNaNota = (indice: number, chaves: string[]) => {
+      if (chaves.length === 0) { setNotaBuscaAtual(0); setNotaBuscaDestaque(null); return; }
+      const alvo = ((indice % chaves.length) + chaves.length) % chaves.length;
+      setNotaBuscaAtual(alvo);
+      setNotaBuscaDestaque(chaves[alvo]);
+      blocoDestaqueRefs.current[chaves[alvo]]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
     const selectedDisciplinas = getSheetDisciplinas(editing);
     const savedSheet = sheets.find((sheet) => sheet.id === editing.id);
     const ownerReview = Boolean(savedSheet?.pendingProposal && isNoteOwner(savedSheet, currentUser.email));
@@ -1372,6 +1783,13 @@ export default function Anotacoes({
     const removeTextoBlock = (index: number) => setEditing((prev) => (
       prev ? { ...prev, textos: (prev.textos ?? []).filter((_, i) => i !== index) } : prev
     ));
+    const moveTextoBlock = (from: number, to: number) => setEditing((prev) => {
+      if (!prev || from === to) return prev;
+      const lista = [...(prev.textos ?? [])];
+      const [item] = lista.splice(from, 1);
+      lista.splice(to, 0, item);
+      return { ...prev, textos: lista };
+    });
     // Captura start/end AGORA (clique do botao/menu) — abrir o CampoDialog rouba o foco do
     // textarea, entao a selecao tem que estar congelada num state antes disso, nunca lida de
     // novo depois que o dialogo esta aberto (ver confirmarLink).
@@ -1542,6 +1960,34 @@ export default function Anotacoes({
                 <Lock size={11} />
                 {ownerReview ? 'Revisao pendente' : pendingProposal ? 'Proposta pendente' : 'Somente leitura'}
               </span>
+            )}
+          </div>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <input
+              type="search"
+              value={notaBusca}
+              onChange={(event) => {
+                setNotaBusca(event.target.value);
+                irParaMatchNaNota(0, buscarMatchesNaNota(event.target.value));
+              }}
+              aria-label="Buscar dentro desta nota"
+              placeholder="Buscar nesta nota..."
+              className="h-8 w-40 rounded-lg border border-[#E5E7EB] bg-white px-2.5 text-[12px] outline-none focus:border-[#F05D28]"
+            />
+            {notaBusca && (
+              <span className="whitespace-nowrap text-[11px] font-medium text-[#94A3B8]">
+                {notaBuscaMatches.length === 0 ? '0 resultados' : `${notaBuscaAtual + 1}/${notaBuscaMatches.length}`}
+              </span>
+            )}
+            {notaBuscaMatches.length > 1 && (
+              <button
+                type="button"
+                title="Próxima ocorrência"
+                onClick={() => irParaMatchNaNota(notaBuscaAtual + 1, notaBuscaMatches)}
+                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-[#E5E7EB] bg-white text-[#64748B] hover:border-[#F7C7B7] hover:text-[#F05D28]"
+              >
+                <ChevronRight size={14} />
+              </button>
             )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -1779,9 +2225,54 @@ export default function Anotacoes({
           {bancos.length > 0 && (
             <div className="mt-3 flex flex-col gap-4">
               {bancos.map((banco, bancoIndex) => (
-                <div key={banco.id} className={`overflow-hidden rounded-xl border border-[#E5E7EB] ${ownerReview && pendingProposal?.changedBancoBlockIds.includes(banco.id) ? 'ring-2 ring-[#DC2626]/60' : ''}`}>
+                <div
+                  key={banco.id}
+                  className={`overflow-hidden rounded-xl border border-[#E5E7EB] ${ownerReview && pendingProposal?.changedBancoBlockIds.includes(banco.id) ? 'ring-2 ring-[#DC2626]/60' : ''}`}
+                  onDragOver={(event) => { if (blocoArrastoRef.current?.tipo === 'banco') event.preventDefault(); }}
+                  onDrop={(event) => {
+                    const alvo = blocoArrastoRef.current;
+                    blocoArrastoRef.current = null;
+                    if (!alvo || alvo.tipo !== 'banco') return;
+                    event.preventDefault();
+                    moveBanco(alvo.indice, bancoIndex);
+                  }}
+                >
                   <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
                     <div className="flex items-center gap-2">
+                      {podeEditar && (
+                        <div
+                          draggable
+                          title="Arrastar para reordenar o bloco"
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = 'move';
+                            event.dataTransfer.setData('text/plain', '');
+                            blocoArrastoRef.current = { tipo: 'banco', indice: bancoIndex };
+                          }}
+                          className="cursor-grab text-[#94A3B8] hover:text-[#F05D28]"
+                        >
+                          <GripVertical size={14} />
+                        </div>
+                      )}
+                      {podeEditar && bancoIndex > 0 && (
+                        <button
+                          type="button"
+                          title="Mover bloco para cima"
+                          onClick={() => moveBanco(bancoIndex, bancoIndex - 1)}
+                          className="flex h-5 w-5 items-center justify-center rounded text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#F05D28]"
+                        >
+                          <ArrowUp size={13} />
+                        </button>
+                      )}
+                      {podeEditar && bancoIndex < bancos.length - 1 && (
+                        <button
+                          type="button"
+                          title="Mover bloco para baixo"
+                          onClick={() => moveBanco(bancoIndex, bancoIndex + 1)}
+                          className="flex h-5 w-5 items-center justify-center rounded text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#F05D28]"
+                        >
+                          <ArrowDown size={13} />
+                        </button>
+                      )}
                       {podeEditar ? (
                         <input
                           value={banco.nome ?? ''}
@@ -1875,6 +2366,7 @@ export default function Anotacoes({
                               return (
                                 <td
                                   key={c}
+                                  ref={(el) => { blocoDestaqueRefs.current[`banco:${bancoIndex}:${r}:${c}`] = el; }}
                                   rowSpan={merge?.rowSpan}
                                   colSpan={merge?.colSpan}
                                   onMouseDown={(event) => {
@@ -1891,7 +2383,24 @@ export default function Anotacoes({
                                     event.preventDefault();
                                     // Botao direito fora da selecao: passa a mirar so aquela celula.
                                     if (!naSelecao(bancoIndex, r, c)) setSelecao({ bancoIndex, r1: r, c1: c, r2: r, c2: c });
-                                    setContextMenu({ bancoIndex, row: r, col: c, x: event.clientX, y: event.clientY });
+                                    // Selecao lida AGORA - abrir o menu rouba o foco da celula. Celula com
+                                    // marcacao (contentEditable) usa window.getSelection() (Range de DOM);
+                                    // celula plana (textarea) continua nos offsets de string de sempre.
+                                    if (cellHasMarkup(cell)) {
+                                      const sel = window.getSelection();
+                                      const temSelecaoDom = Boolean(sel && !sel.isCollapsed && sel.toString().length > 0);
+                                      celulaRangeRef.current = temSelecaoDom && sel ? sel.getRangeAt(0).cloneRange() : null;
+                                      setContextMenu({ bancoIndex, row: r, col: c, x: event.clientX, y: event.clientY, temSelecaoDom });
+                                    } else {
+                                      const textarea = celulaRefs.current[`${bancoIndex}:${r}:${c}`];
+                                      const temSelecaoTexto = Boolean(textarea && textarea.selectionStart !== textarea.selectionEnd);
+                                      celulaRangeRef.current = null;
+                                      setContextMenu({
+                                        bancoIndex, row: r, col: c, x: event.clientX, y: event.clientY,
+                                        selStart: temSelecaoTexto ? textarea!.selectionStart! : undefined,
+                                        selEnd: temSelecaoTexto ? textarea!.selectionEnd! : undefined,
+                                      });
+                                    }
                                   }}
                                   onDragOver={(event) => {
                                     const alvo = ordemArrastoRef.current;
@@ -1906,7 +2415,7 @@ export default function Anotacoes({
                                     else moveCol(bancoIndex, alvo.indice, c);
                                   }}
                                   style={{ backgroundColor: cellChanged ? '#FEF2F2' : (estilo?.bg || (r === 0 ? '#F3F4F6' : '#FFFFFF')), height: `${alturaCelulaPx}px` }}
-                                  className={`relative border border-[#E5E7EB] p-0 ${cellChanged ? 'shadow-[inset_0_0_0_2px_#DC2626]' : selecionada ? 'shadow-[inset_0_0_0_2px_#F05D28]' : ''} ${pincel ? 'cursor-copy' : ''}`}
+                                  className={`relative border border-[#E5E7EB] p-0 ${notaBuscaDestaque === `banco:${bancoIndex}:${r}:${c}` ? 'shadow-[inset_0_0_0_2px_#F05D28] bg-[#FFF3EC]' : cellChanged ? 'shadow-[inset_0_0_0_2px_#DC2626]' : selecionada ? 'shadow-[inset_0_0_0_2px_#F05D28]' : ''} ${pincel ? 'cursor-copy' : ''}`}
                                 >
                                   {/* Celula de checklist (coluna inteira via checklistCols OU celula avulsa via
                                       checklistCells), r>=1: checkbox + texto lado a lado. r===0 continua
@@ -2000,9 +2509,82 @@ export default function Anotacoes({
                                         </div>
                                       );
                                     }
+                                    // Celula desfocada com **bold**/*italic*/~~strike~~/[c:#hex]cor[/c]: mostra
+                                    // formatado (spans), igual ao rotulo do link acima. Focada volta a mostrar
+                                    // a marcacao crua na textarea, pra dar pra editar.
+                                    if (celulaFocada !== chaveCelula && cellHasMarkup(cell)) {
+                                      return (
+                                        <div
+                                          key="desfocada"
+                                          onClick={() => { if (podeEditar) setCelulaFocada(chaveCelula); }}
+                                          className={`h-full w-full overflow-auto whitespace-pre-wrap px-2 py-1.5 leading-[1.4] ${podeEditar ? 'cursor-text' : ''} ${r === 0 && !estilo ? 'font-bold text-[#2D2D2D]' : 'text-[#374151]'}`}
+                                          style={cellCss(estilo)}
+                                        >
+                                          {renderCellMarkup(cell)}
+                                        </div>
+                                      );
+                                    }
+                                    // Celula COM marcacao, em edicao: contentEditable, marcadores nunca aparecem
+                                    // (decisao do Igor - "so oculta esses caracteres").
+                                    // Bugfix ("a linha desce" ao colorir): innerHTML e escrito UMA VEZ por
+                                    // sessao de foco, direto no ref (guard por dataset.celula), NUNCA via
+                                    // dangerouslySetInnerHTML. dangerouslySetInnerHTML reseta o innerHTML toda
+                                    // vez que a STRING muda - e como aplicarCorNaCelulaDom/alternarMarcacaoNaCelulaDom
+                                    // ja mutam o DOM real E chamam updateCell (mudando `cell`) NO MESMO clique,
+                                    // o proximo render recomputava cellMarkupToHtml(cell) com um HTML novo e
+                                    // React trocava o innerHTML da celula AINDA FOCADA por baixo dos pes do
+                                    // navegador - contentEditable focado + innerHTML trocado e um gatilho
+                                    // conhecido do Chrome pra reinserir um <br> final (cursor "precisa" de um
+                                    // lugar pra ficar), adicionando uma linha em branco = a celula/linha cresce.
+                                    // Como so bold/italic/strike foram reportados sem o bug, cor pode nao ser
+                                    // a causa em si, mas SIM o gatilho mais provavel pra esse reset acontecer
+                                    // logo apos o wrap (span com atributo style, unico dos 4 tipos assim) -
+                                    // de qualquer forma, resetar o DOM que acabamos de escrever a mao e sempre
+                                    // redundante e arriscado, entao a causa RAIZ (o reset em si) sai pros 4 tipos.
+                                    if (podeEditar && celulaFocada === chaveCelula && cellHasMarkup(cell)) {
+                                      return (
+                                        <div
+                                          key="editavel"
+                                          ref={(el) => {
+                                            celulaContentEditableRefs.current[chaveCelula] = el;
+                                            if (el && el.dataset.celula !== chaveCelula) {
+                                              el.innerHTML = cellMarkupToHtml(cell);
+                                              el.dataset.celula = chaveCelula;
+                                            }
+                                            if (el && document.activeElement !== el) el.focus();
+                                          }}
+                                          contentEditable
+                                          suppressContentEditableWarning
+                                          onBlur={() => {
+                                            sincronizarCelulaEditavel(bancoIndex, r, c);
+                                            setCelulaFocada((prev) => (prev === chaveCelula ? null : prev));
+                                          }}
+                                          onKeyDown={(event) => {
+                                            // Enter vira \n de verdade (insertText), nao um <div>/<p> novo por
+                                            // linha - mantem o DOM simples (so texto + strong/em/s/span-cor),
+                                            // serializeCellDom nao precisa lidar com blocos aninhados.
+                                            if (event.key === 'Enter') {
+                                              event.preventDefault();
+                                              document.execCommand('insertText', false, '\n');
+                                            }
+                                          }}
+                                          onPaste={(event) => {
+                                            // Forca colar como texto puro - sem isso o navegador cola HTML/estilo
+                                            // do clipboard (fonte, cor, negrito de fora) dentro da celula.
+                                            event.preventDefault();
+                                            document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));
+                                          }}
+                                          spellCheck
+                                          lang="pt-BR"
+                                          style={cellCss(estilo)}
+                                          className={`h-full w-full overflow-auto whitespace-pre-wrap px-2 py-1.5 leading-[1.4] outline-none ${r === 0 && !estilo ? 'font-bold text-[#2D2D2D]' : 'text-[#374151]'}`}
+                                        />
+                                      );
+                                    }
                                     return (
                                       // textarea (nao input) pra que o texto quebre em varias linhas.
                                       <textarea
+                                        key="textarea"
                                         ref={(el) => {
                                           celulaRefs.current[chaveCelula] = el;
                                           if (el && celulaFocada === chaveCelula && document.activeElement !== el) el.focus();
@@ -2156,7 +2738,11 @@ export default function Anotacoes({
                   </div>
                   <div className="flex flex-col gap-1.5">
                     {lista.itens.map((item) => (
-                      <div key={item.id} className="flex items-center gap-2">
+                      <div
+                        key={item.id}
+                        ref={(el) => { blocoDestaqueRefs.current[`checklist:${lista.id}:${item.id}`] = el; }}
+                        className={`flex items-center gap-2 rounded-lg ${notaBuscaDestaque === `checklist:${lista.id}:${item.id}` ? 'bg-[#FFF3EC] ring-2 ring-[#F05D28]' : ''}`}
+                      >
                         <input
                           type="checkbox"
                           checked={item.feito}
@@ -2204,18 +2790,66 @@ export default function Anotacoes({
               {textos.map((bloco, index) => {
                 const links = Array.from(bloco.texto.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g));
                 return (
-                  <div key={bloco.id} className={`rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)] ${ownerReview && pendingProposal?.changedTextBlockIds.includes(bloco.id) ? 'ring-2 ring-[#DC2626]/60' : ''}`}>
+                  <div
+                    key={bloco.id}
+                    ref={(el) => { blocoDestaqueRefs.current[`texto:${bloco.id}`] = el; }}
+                    className={`rounded-xl bg-white p-4 shadow-[0_6px_16px_-12px_rgba(15,23,42,0.5)] ${notaBuscaDestaque === `texto:${bloco.id}` ? 'ring-2 ring-[#F05D28] bg-[#FFF3EC]' : ownerReview && pendingProposal?.changedTextBlockIds.includes(bloco.id) ? 'ring-2 ring-[#DC2626]/60' : ''}`}
+                    onDragOver={(event) => { if (blocoArrastoRef.current?.tipo === 'texto') event.preventDefault(); }}
+                    onDrop={(event) => {
+                      const alvo = blocoArrastoRef.current;
+                      blocoArrastoRef.current = null;
+                      if (!alvo || alvo.tipo !== 'texto') return;
+                      event.preventDefault();
+                      moveTextoBlock(alvo.indice, index);
+                    }}
+                  >
                     <div className="mb-2 flex items-center justify-between">
-                      {podeEditar ? (
-                        <input
-                          value={bloco.nome ?? ''}
-                          onChange={(event) => updateTextoBlockNome(index, event.target.value)}
-                          placeholder={`Nota ${index + 1}`}
-                          className="h-6 w-32 rounded-md border border-transparent bg-transparent px-1 text-[13px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28] focus:bg-[#F9FAFB]"
-                        />
-                      ) : (
-                        <h4 className="text-[13px] font-bold text-[#2D2D2D]">{bloco.nome || `Nota ${index + 1}`}</h4>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {podeEditar && (
+                          <div
+                            draggable
+                            title="Arrastar para reordenar o bloco"
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData('text/plain', '');
+                              blocoArrastoRef.current = { tipo: 'texto', indice: index };
+                            }}
+                            className="cursor-grab text-[#94A3B8] hover:text-[#F05D28]"
+                          >
+                            <GripVertical size={14} />
+                          </div>
+                        )}
+                        {podeEditar && index > 0 && (
+                          <button
+                            type="button"
+                            title="Mover bloco para cima"
+                            onClick={() => moveTextoBlock(index, index - 1)}
+                            className="flex h-5 w-5 items-center justify-center rounded text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#F05D28]"
+                          >
+                            <ArrowUp size={13} />
+                          </button>
+                        )}
+                        {podeEditar && index < textos.length - 1 && (
+                          <button
+                            type="button"
+                            title="Mover bloco para baixo"
+                            onClick={() => moveTextoBlock(index, index + 1)}
+                            className="flex h-5 w-5 items-center justify-center rounded text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#F05D28]"
+                          >
+                            <ArrowDown size={13} />
+                          </button>
+                        )}
+                        {podeEditar ? (
+                          <input
+                            value={bloco.nome ?? ''}
+                            onChange={(event) => updateTextoBlockNome(index, event.target.value)}
+                            placeholder={`Nota ${index + 1}`}
+                            className="h-6 w-32 rounded-md border border-transparent bg-transparent px-1 text-[13px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28] focus:bg-[#F9FAFB]"
+                          />
+                        ) : (
+                          <h4 className="text-[13px] font-bold text-[#2D2D2D]">{bloco.nome || `Nota ${index + 1}`}</h4>
+                        )}
+                      </div>
                       {podeEditar && (
                         <div className="flex items-center gap-1">
                           <button
@@ -2705,12 +3339,19 @@ export default function Anotacoes({
               }}
             >
             <div className="w-64 overflow-y-auto rounded-xl bg-white p-2 shadow-xl" style={{ maxHeight: contextMenuPos?.maxHeight }}>
+              {(contextMenu.selStart !== undefined || contextMenu.temSelecaoDom) && (
+                <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[#F05D28]">Aplicando so ao trecho selecionado</p>
+              )}
               <div className="flex items-center gap-1">
                 {([['bold', 'N', 'font-black'], ['italic', 'I', 'italic'], ['strike', 'S', 'line-through']] as const).map(([chave, rotulo, classe]) => (
                   <button
                     key={chave}
                     type="button"
-                    onClick={() => alternarEstilo(chave)}
+                    onClick={() => {
+                      if (contextMenu.temSelecaoDom) alternarMarcacaoNaCelulaDom(chave);
+                      else if (contextMenu.selStart !== undefined) alternarMarcacaoNaCelula(chave);
+                      else alternarEstilo(chave);
+                    }}
                     className={`h-8 w-8 rounded-lg border border-[#E5E7EB] text-[13px] text-[#374151] hover:border-[#F7C7B7] hover:text-[#F05D28] ${classe}`}
                   >
                     {rotulo}
@@ -2763,7 +3404,11 @@ export default function Anotacoes({
                     key={nome}
                     type="button"
                     title={nome}
-                    onClick={() => aplicarEstilo({ color: cor })}
+                    onClick={() => {
+                      if (contextMenu.temSelecaoDom) aplicarCorNaCelulaDom(cor);
+                      else if (contextMenu.selStart !== undefined) aplicarCorNaCelula(cor);
+                      else aplicarEstilo({ color: cor });
+                    }}
                     className="flex h-6 w-6 items-center justify-center rounded-md border border-[#E5E7EB] text-[13px] font-black hover:ring-2 hover:ring-[#F05D28]"
                     style={{ color: cor || '#374151' }}
                   >
@@ -3448,14 +4093,33 @@ export default function Anotacoes({
             <option value="">Todas as notas</option>
             <option value="vinculado">Fui vinculado</option>
           </SearchableSelect>
+          <select
+            value={listaOrdenacao}
+            onChange={(event) => setListaOrdenacao(event.target.value as typeof listaOrdenacao)}
+            aria-label="Ordenar notas"
+            className={filtroClass}
+          >
+            <option value="alfabetica">Alfabética</option>
+            <option value="data-asc">Data Crescente</option>
+            <option value="data-desc">Data Decrescente</option>
+          </select>
           <input
             type="search"
             value={listaTextoBusca}
             onChange={(event) => setListaTextoBusca(event.target.value)}
-            aria-label="Buscar no conteúdo das notas"
-            placeholder="Buscar no conteúdo das notas..."
+            aria-label="Buscar nas notas"
+            placeholder="Buscar nas notas..."
             className={filtroClass}
           />
+          <label className="flex h-11 items-center gap-1.5 text-[12px] font-medium text-[#64748B]">
+            <input
+              type="checkbox"
+              checked={listaBuscarConteudo}
+              onChange={(event) => setListaBuscarConteudo(event.target.checked)}
+              className="h-4 w-4 accent-[#F05D28] cursor-pointer"
+            />
+            Buscar dentro da nota
+          </label>
           {temFiltroLista && (
             <button
               type="button"

@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import { getDisciplineDisplayName } from '../components/Atividades';
-import { getSheetBancos, getSheetDisciplinas, getSheetOsCodigos, getSheetTextos, type AnnotationBanco, type AnnotationSheet } from '../components/CoordenacaoEngenharia/Anotacoes';
+import { getSheetBancos, getSheetDisciplinas, getSheetOsCodigos, getSheetTextos, stripCellMarkup, type AnnotationBanco, type AnnotationSheet } from '../components/CoordenacaoEngenharia/Anotacoes';
 import { cellKey, quebrarTexto } from './bancoGrid';
 import { normalizePdfExportOptions, type PdfExportOptions } from './pdfExport';
 
@@ -111,7 +111,10 @@ export function exportNoteToPdf(sheet: AnnotationSheet, linkedTitles: string[] =
       doc.setFontSize(9);
       // Quebra o texto de cada celula na largura da coluna antes de desenhar, pra saber
       // quantas linhas ela ocupa - e a linha da tabela cresce pra maior celula, ninguem vaza.
-      const linhasPorCelula = row.map((cell) => quebrarTexto(String(cell ?? ''), colWidth - padX * 2, (t) => doc.getTextWidth(t)));
+      // ponytail: PDF (jsPDF doc.text) nao tem runs por trecho - so estilo por celula inteira
+      // (banco.styles, ja aplicado abaixo). Marcacao **bold**/*italic*/~~strike~~/[c:#hex] por
+      // palavra vira texto puro aqui (sem os marcadores), em vez de imprimir os simbolos crus.
+      const linhasPorCelula = row.map((cell) => quebrarTexto(stripCellMarkup(String(cell ?? '')), colWidth - padX * 2, (t) => doc.getTextWidth(t)));
       const maxLinhas = Math.max(1, ...linhasPorCelula.map((linhas) => linhas.length));
       const rowHeight = Math.max(8, maxLinhas * lineHeight + padY * 2);
       ensureSpace(rowHeight);

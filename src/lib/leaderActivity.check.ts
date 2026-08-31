@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { applyLeaderEventsToActivities, type LeaderActivityEvent } from './leaderActivity';
+import { applyLeaderEventsToActivities, hasOpenActivityIssue, type LeaderActivityEvent } from './leaderActivity';
 
 const source = [
   { id: 'a', itemCodigo: 'A', keep: true },
@@ -16,7 +16,13 @@ const reduced = applyLeaderEventsToActivities(source, events);
 const first = reduced[0] as typeof reduced[0] & Record<string, unknown>;
 assert.equal(first.statusDaAtividade, 'Regular');
 assert.equal(first.porcentagemAtividade, 40);
+assert.deepEqual(first.executadoPor, ['Bia']);
+assert.equal(first.dificuldadeAtividade, 'Normal');
+assert.deepEqual((applyLeaderEventsToActivities(source, [{ ...events[0], executadoPor: 'Ana' }])[0] as Record<string, unknown>).executadoPor, ['Ana']);
 assert.equal(reduced.length, source.length);
 assert.deepEqual(reduced[1], source[1]);
 assert.deepEqual(applyLeaderEventsToActivities(source, []), source);
+const openIssue = { itemCodigo: 'A', mensagens: [{ autor: 'Ana', mensagem: 'Problema', dataHora: '2026-08-11T12:00:00.000Z' }], resolvido: false };
+assert.equal(hasOpenActivityIssue(openIssue), true);
+assert.equal(hasOpenActivityIssue({ ...openIssue, resolvido: true }), false);
 console.log('leaderActivity: OK');

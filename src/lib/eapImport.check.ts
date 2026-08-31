@@ -1,7 +1,8 @@
 // Check da importação de EAP. Rodar: npx tsx src/lib/eapImport.check.ts
 import assert from 'node:assert/strict';
+import JSZip from 'jszip';
 import {
-  agruparPorOS, corrigirAutomatico, nomeIndicaOS, parseColado, paraTSV, validar,
+  agruparPorOS, corrigirAutomatico, nomeIndicaOS, parseColado, parseXlsx, paraTSV, validar,
   type LinhaEAP,
 } from './eapImport';
 
@@ -163,6 +164,16 @@ function linha(over: Partial<Record<number, string>> = {}): LinhaEAP {
 {
   const semHeader = parseColado('1\tTarefa\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t');
   assert.equal(semHeader.length, 1);
+}
+
+{
+  const zip = new JSZip();
+  zip.file('xl/sharedStrings.xml', '<sst><si><t>1.1</t></si><si><t>Tarefa XLSX</t></si></sst>');
+  zip.file('xl/worksheets/sheet1.xml', '<worksheet><sheetData><row r="1"><c r="A1"/><c r="D1" t="s"><v>0</v></c><c r="E1" t="s"><v>1</v></c></row></sheetData></worksheet>');
+  const parsed = await parseXlsx(await zip.generateAsync({ type: 'arraybuffer' }));
+  assert.equal(parsed[0].celulas[3], '1.1');
+  assert.equal(parsed[0].celulas[4], 'Tarefa XLSX');
+  assert.equal(parsed[0].celulas[0], '');
 }
 
 console.log('eapImport: OK');

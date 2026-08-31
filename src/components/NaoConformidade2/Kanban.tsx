@@ -4,7 +4,7 @@ import { sameContractCode } from '../../lib/contractCode';
 import { subscribeFirebaseCollection } from '../../lib/firebaseDb';
 import { getSheetStatus, GoogleIcon, moveSheetStatus, type AnnotationSheet } from '../CoordenacaoEngenharia/Anotacoes';
 import { getDisciplineDisplayName, getDisciplineIconInfo } from '../Atividades';
-import { acceptNoteProposal, isNoteOwner, previewNoteProposal, rejectNoteProposal } from '../../lib/noteProposals';
+import { isNoteOwner, previewNoteProposal, type NoteSaveIntent } from '../../lib/noteProposals';
 import {
   confirmItemCorrection,
   canViewNc2Record,
@@ -48,7 +48,7 @@ interface KanbanProps {
   onAbrirNota?: (id: string) => void;
   currentUser: { nome: string; email: string; role?: string; isAdmin?: boolean; disciplina?: string; disciplinas?: string[] | string };
   // Mesma persistencia que Anotacoes.tsx usa (App.saveAnnotationSheet); ausente = quadro so leitura.
-  onSalvarNota?: (sheet: AnnotationSheet) => Promise<void>;
+  onSalvarNota?: (sheet: AnnotationSheet, intent?: NoteSaveIntent) => Promise<void>;
 }
 
 const COLUNAS: Array<{ key: 'criado' | 'iniciado' | 'concluido'; label: string }> = [
@@ -218,13 +218,13 @@ export default function Kanban({
   const podeMoverNota = (sheet: AnnotationSheet) =>
     Boolean(onSalvarNota) && (ehLider || (sheet.marcadosUsuarios || []).includes(currentUser.email));
 
-  // Autor decide sobre a proposta pendente direto no card do Kanban (mesma persistencia da nota).
+  // Autor decide sobre a proposta pendente direto no card do Kanban (mesma persistencia da nota:
+  // App.saveAnnotationSheet resolve accept/reject a partir da nota atual no Firebase via intent,
+  // igual ao reviewProposal de Anotacoes.tsx - nunca aplicar a decisao no cliente e reenviar a
+  // nota inteira, senao o proximo save do dono restaura a proposta que acabou de ser aceita).
   const decidirProposta = (sheet: AnnotationSheet, decisao: 'accept' | 'reject') => {
     if (!onSalvarNota) return;
-    const next = decisao === 'accept'
-      ? acceptNoteProposal(sheet, currentUser.email, new Date().toISOString())
-      : rejectNoteProposal(sheet, currentUser.email);
-    void onSalvarNota(next).catch((error) => {
+    void onSalvarNota(sheet, { proposalDecision: decisao }).catch((error) => {
       window.alert(error instanceof Error ? error.message : 'Nao foi possivel revisar a proposta.');
     });
   };

@@ -262,6 +262,10 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
     () => truncateAfterRealCompletion(liveSeries, (s: any) => extractPct(s.realAcumulado)),
     [liveSeries],
   );
+  const completedPoint = useMemo(
+    () => visibleSeries.find((point: any) => extractPct(point.realAcumulado) >= 100),
+    [visibleSeries],
+  );
 
   const chartDataFinal = useMemo(() => {
     let filtered = visibleSeries.filter((s: any) => {
@@ -313,6 +317,7 @@ function OsPanel({ data, globalConfig, onSaveReajuste }: { data: any, globalConf
       <div className="flex items-center justify-between gap-4 mb-6">
         <h3 className="text-xl font-bold text-gray-800 flex items-center gap-3 border-l-4 border-[#3B82F6] pl-4">
           <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-md text-sm">OS {data.osCode}</span> {data.osName}
+          {completedPoint && <span className="rounded-full bg-[#ECFDF5] px-3 py-1 text-[10px] font-black uppercase tracking-[0.5px] text-[#047857]">Finalizada em {formatDateBR(completedPoint.dateObj)}</span>}
         </h3>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => setEditMode(!editMode)} className={`h-9 px-4 rounded-xl flex items-center gap-2 text-[11px] font-bold transition-all border ${editMode ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-500 hover:text-blue-500'}`}>

@@ -34,8 +34,8 @@ export function ProjectVbaConfigCard() {
         <div className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#F9FAFB] text-[#757575] text-[11px] font-bold w-fit">
           MS Project
         </div>
-        <h3 className="text-[16px] font-bold text-[#2D2D2D]">Configuração Project</h3>
-        <p className="text-[13px] text-[#757575] leading-relaxed">Baixa o script VBA e o tutorial de instalação para publicar a EAP do MS Project direto no Firebase.</p>
+        <h3 className="text-[16px] font-bold text-[#2D2D2D]">Exportar EAP do Project</h3>
+        <p className="text-[13px] text-[#757575] leading-relaxed">Baixa a macro que gera o arquivo de 19 colunas para importação segura nesta tela.</p>
       </div>
 
       <button
@@ -44,7 +44,7 @@ export function ProjectVbaConfigCard() {
         className="h-11 px-5 rounded-xl bg-[#F05D28] text-white text-[13px] font-bold hover:bg-[#D94E1F] transition-colors inline-flex items-center justify-center gap-2 w-fit"
       >
         <Download size={16} />
-        Baixar Configuração Project
+        Baixar macro do Project
       </button>
     </div>
   );

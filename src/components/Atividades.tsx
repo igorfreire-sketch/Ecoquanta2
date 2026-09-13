@@ -3047,11 +3047,19 @@ export default function Atividades({
     }
     setVerTodasDisciplinas(false);
     let limpo = next.filter((item) => item !== VER_TODAS_DISCIPLINAS_OPTION);
-    // Desmarcou Engenharia: some com todas as filhas que ela tinha marcado junto.
-    if (filterDisciplinas.includes('Engenharia') && !limpo.includes('Engenharia')) {
+    const tinhaEngenharia = filterDisciplinas.includes('Engenharia');
+    const temEngenhariaAgora = limpo.includes('Engenharia');
+    if (tinhaEngenharia && !temEngenhariaAgora) {
+      // Desmarcou Engenharia: some com todas as filhas que ela tinha marcado junto.
       limpo = limpo.filter((item) => !DISCIPLINAS_FILHAS_DE_ENGENHARIA.includes(item));
+    } else if (!tinhaEngenharia && temEngenhariaAgora) {
+      // Marcou Engenharia agora: traz todas as filhas juntas (cascata so nesse instante,
+      // nao em toggles seguintes de uma filha isolada).
+      limpo = expandEngenhariaNaSelecao(limpo);
     }
-    setFilterDisciplinas(expandEngenhariaNaSelecao(limpo));
+    // Senao (estado de Engenharia nao mudou nesta chamada): toggle de uma filha isolada,
+    // mantem `limpo` exatamente como o usuario marcou, sem reexpandir.
+    setFilterDisciplinas(limpo);
   };
 
   const disciplineAutoMatchedRef = useRef(false);

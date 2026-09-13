@@ -163,6 +163,7 @@ const Cronogramas = React.lazy(() => import('./components/Cronogramas'));
 const Notes = React.lazy(() => import('./components/CoordenacaoEngenharia/Notes'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
 const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
+const CeptDashboard = React.lazy(() => import('./components/CoordenacaoEngenharia/CeptDashboard'));
 const Administracao = React.lazy(() => import('./components/Administracao'));
 const EAP_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
 const APP_VERSION_LABEL = getAppVersionLabel();
@@ -239,7 +240,7 @@ function shouldLockUserToContract(user?: AuthUser | null) {
 type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'solucoes' | 'banco-links' | 'administracao';
 // 'project' e irma de 'disciplinas' (Notas): as duas sao paginas globais, iguais em toda area.
 type AreaTecnicaSubTab = 'atividades' | 'disciplinas' | 'project';
-type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas' | 'project';
+type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cept' | 'disciplinas' | 'project';
 type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas' | 'project';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'disciplinas' | 'project';
 type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | 'disciplinas' | 'project';
@@ -3658,6 +3659,7 @@ export default function App() {
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
+        { key: 'cept', label: 'CEPT', icon: <ClipboardList size={16} />, active: subTab === 'cept', onClick: () => setSubTab('cept') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: subTab === 'disciplinas', onClick: () => setSubTab('disciplinas') },
       ];
     }
@@ -4030,6 +4032,8 @@ export default function App() {
                   ? notesPage
                   : subTab === 'project'
                   ? projectsPage
+                  : subTab === 'cept'
+                  ? <CeptDashboard currentUser={currentUser} />
                   : <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />
               )}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (

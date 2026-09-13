@@ -1,12 +1,19 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, CalendarClock, Check, ChevronLeft, ChevronRight, Clock, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, History, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, CalendarClock, Check, ChevronLeft, ChevronRight, Clock, Copy, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, History, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
 import SearchableSelect from '../SearchableSelect';
 import CampoDialog from '../CampoDialog';
 import PdfExportDialog from '../PdfExportDialog';
 import { getDisciplineDisplayName, getDisciplineIconInfo, type EngineeringActivity } from '../Atividades';
 import { disciplineMatchesSector, getSectorOptions, getDisciplineGroups, expandEngenhariaNaSelecao } from '../../lib/disciplineCatalog';
 import { exportNoteToCsv, exportNoteToPdf, exportNotesToMarkdown } from '../../lib/noteExport';
+import NotesFilterBar from './NotesFilterBar';
+import {
+  AUTOR_EU as FILTRO_AUTOR_EU,
+  FILTRO_NOTAS_VAZIO,
+  temFiltroAtivo,
+  type NotesFilterState,
+} from '../../lib/notesFilter';
 import { canDeleteNote, canEditNote, signInWithGooglePopup, getGoogleCalendarToken } from '../../lib/firebaseDb';
 import { listTodayCalendarEvents, linkNoteToEvent, fetchGoogleDocText, type CalendarEventOption } from '../../lib/googleCalendar';
 import {
@@ -238,7 +245,6 @@ type ContextMenuState = { bancoIndex: number; row: number; col: number; x: numbe
 type CellSelection = { bancoIndex: number; r1: number; c1: number; r2: number; c2: number };
 
 // Sentinela do filtro de autor: nao colide com nenhum email real.
-const AUTOR_EU = '__eu__';
 
 const FONTES = ['Montserrat', 'Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana'];
 const TAMANHOS = [10, 11, 12, 13, 14, 16, 18, 20, 24];
@@ -637,6 +643,47 @@ export function noteMatchesTextSearch(sheet: AnnotationSheet, query: string, bus
   return chunks.some((value) => normalizeText(value).includes(normalizedQuery));
 }
 
+/**
+ * Aplica os filtros de nota e ordena. UNICA implementacao: a lista principal e a janela
+ * "Nova nota" chamam esta funcao, entao um filtro novo vale nos dois lugares de uma vez.
+ * Mora aqui (e nao em lib/notesFilter.ts) porque depende dos getters de nota deste arquivo;
+ * importa-los de la criaria ciclo.
+ */
+export function filtrarNotas(
+  sheets: AnnotationSheet[],
+  filtros: NotesFilterState,
+  ctx: { currentUserEmail: string; osOptions: Array<{ codigo: string; contratoCodigo?: string }> },
+): AnnotationSheet[] {
+  const codigosDoContrato = new Set(
+    ctx.osOptions
+      .filter((os) => !filtros.contrato || os.contratoCodigo === filtros.contrato)
+      .map((os) => os.codigo),
+  );
+
+  return sheets
+    .filter((sheet) => {
+      if (!filtros.autor) return true;
+      if (filtros.autor === FILTRO_AUTOR_EU) return isNoteOwner(sheet, ctx.currentUserEmail);
+      return sheet.autorEmail === filtros.autor;
+    })
+    .filter((sheet) => !filtros.contrato || getSheetOsCodigos(sheet).some((codigo) => codigosDoContrato.has(codigo)))
+    .filter((sheet) => !filtros.os || getSheetOsCodigos(sheet).includes(filtros.os))
+    .filter((sheet) => !filtros.edificacao || sheet.edificacao === filtros.edificacao)
+    // Filtro fala em setor: escolher 'Arquitetura' traz URB, LAY, LUM...
+    .filter((sheet) => !filtros.disciplina || getSheetDisciplinas(sheet).some((item) => disciplineMatchesSector(item, filtros.disciplina)))
+    .filter((sheet) => filtros.vinculo !== 'vinculado' || (sheet.marcadosUsuarios || []).includes(ctx.currentUserEmail))
+    .filter((sheet) => noteMatchesTextSearch(sheet, filtros.texto, filtros.buscarConteudo))
+    .sort((a, b) => {
+      if (filtros.ordenacao === 'alfabetica') {
+        return normalizeText(a.titulo || '').localeCompare(normalizeText(b.titulo || ''), 'pt-BR');
+      }
+      // criadoEm pode faltar em notas antigas (ver AnnotationSheet.criadoEm); cai pro updatedAt.
+      const dataA = new Date(a.criadoEm || a.updatedAt || 0).getTime();
+      const dataB = new Date(b.criadoEm || b.updatedAt || 0).getTime();
+      return filtros.ordenacao === 'data-asc' ? dataA - dataB : dataB - dataA;
+    });
+}
+
 // ponytail: smoke check em dev, sem framework - so garante que o toggle de escopo nao regrida.
 if (import.meta.env?.DEV) {
   const notaTeste = { titulo: 'Reunião Estrutura', textos: [{ id: '1', texto: 'assunto: fundação' }] } as AnnotationSheet;
@@ -781,21 +828,18 @@ export default function Anotacoes({
   const [sidebarDisciplina, setSidebarDisciplina] = React.useState<string | null>(null);
   const [sidebarRecolhida, setSidebarRecolhida] = React.useState(false);
   const [contratoFiltro, setContratoFiltro] = React.useState('');
-  // Filtro da lista de notas (Autor > Contrato > OS > Disciplina), independente do filtro do editor.
-  const [listaAutor, setListaAutor] = React.useState('');
-  const [listaContrato, setListaContrato] = React.useState('');
-  const [listaOs, setListaOs] = React.useState('');
-  const [listaDisciplina, setListaDisciplina] = React.useState('');
-  const [listaVinculo, setListaVinculo] = React.useState('');
-  const [listaEdificacao, setListaEdificacao] = React.useState('');
-  const [listaTextoBusca, setListaTextoBusca] = React.useState('');
+  // Filtro da lista de notas (Autor > Contrato > OS > Edificacao > Disciplina > Vinculo),
+  // independente do filtro do editor. Um objeto so, do mesmo tipo que a janela "Nova nota"
+  // usa — era o que garantia a divergencia entre as duas telas.
+  const [filtrosLista, setFiltrosLista] = React.useState<NotesFilterState>(FILTRO_NOTAS_VAZIO);
   // Desligado por padrao: busca so no titulo. Ligado: titulo + conteudo (textos/checklists/bancos).
-  const [listaBuscarConteudo, setListaBuscarConteudo] = React.useState(false);
-  const [listaOrdenacao, setListaOrdenacao] = React.useState<'alfabetica' | 'data-asc' | 'data-desc'>('data-asc');
   // Aba ativa da lista de notas: minhas (Kanban), publicas de outros, ou concluidas ha 10+ dias.
   const [notasTab, setNotasTab] = React.useState<'minhas' | 'publicas' | 'concluidas'>('minhas');
   // Menu do card em posicao FIXED (calculada do botao) para nao ser recortado pelo overflow-hidden do card.
   const [cardMenuPos, setCardMenuPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  // O botao que abriu o menu e o proprio menu: posicionar exige medir os dois.
+  const cardMenuTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const cardMenuRef = React.useRef<HTMLDivElement | null>(null);
   const [pdfTarget, setPdfTarget] = React.useState<{ sheet: AnnotationSheet; linkedTitles: string[] } | null>(null);
   const textoRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
   const celulaRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
@@ -835,18 +879,38 @@ export default function Anotacoes({
   const [agendaPickerOpen, setAgendaPickerOpen] = React.useState(false);
   const [agendaEventos, setAgendaEventos] = React.useState<CalendarEventOption[]>([]);
 
-  // Fecha o menu do card ao rolar, redimensionar ou apertar Escape (menu fixed nao acompanha o scroll do card).
+  // Fecha o menu do card no Escape.
   React.useEffect(() => {
     if (!openCardMenuId) return;
-    const close = () => setOpenCardMenuId(null);
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenCardMenuId(null); };
     window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openCardMenuId]);
+
+  // Posiciona o menu a partir do botao, e REPOSICIONA ao rolar/redimensionar em vez de
+  // fechar. Roda em layout effect (antes da pintura), entao nao ha piscada na posicao antiga.
+  React.useLayoutEffect(() => {
+    if (!openCardMenuId) return;
+    const MARGEM = 8;
+    const medir = () => {
+      const trigger = cardMenuTriggerRef.current;
+      if (!trigger) return;
+      const r = trigger.getBoundingClientRect();
+      const largura = cardMenuRef.current?.offsetWidth || 176;
+      const altura = cardMenuRef.current?.offsetHeight || 0;
+      // Alinha a borda direita do menu ao botao, sem sair pela lateral.
+      const x = Math.max(MARGEM, Math.min(r.right - largura, window.innerWidth - largura - MARGEM));
+      // Sem espaco abaixo, abre PRA CIMA. Sem isso, card no rodape jogava o menu fora da tela.
+      const cabeAbaixo = r.bottom + 4 + altura <= window.innerHeight - MARGEM;
+      const y = cabeAbaixo ? r.bottom + 4 : Math.max(MARGEM, r.top - altura - 4);
+      setCardMenuPos({ x, y });
+    };
+    medir();
+    window.addEventListener('scroll', medir, true);
+    window.addEventListener('resize', medir);
     return () => {
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', medir, true);
+      window.removeEventListener('resize', medir);
     };
   }, [openCardMenuId]);
 
@@ -1485,37 +1549,19 @@ export default function Anotacoes({
   });
 
   // OS do contrato escolhido: o filtro de contrato e pre-filtro do de OS (padrao do Instrucoes.md).
-  const osDaLista = listaContrato
-    ? uniqueOsOptions.filter((os) => os.contratoCodigo === listaContrato)
+  const osDaLista = filtrosLista.contrato
+    ? uniqueOsOptions.filter((os) => os.contratoCodigo === filtrosLista.contrato)
     : uniqueOsOptions;
-  const codigosDoContrato = new Set(osDaLista.map((os) => os.codigo));
   // Edificacoes da OS escolhida no filtro - ver padrão.md "Filtro de Edificação".
-  const edificacoesDaListaOs = listaOs
-    ? Array.from(new Set((activities || []).filter((a) => a.osCodigo === listaOs && a.edificio).map((a) => a.edificio as string)))
+  const edificacoesDaListaOs = filtrosLista.os
+    ? Array.from(new Set((activities || []).filter((a) => a.osCodigo === filtrosLista.os && a.edificio).map((a) => a.edificio as string)))
       .sort((a, b) => a.localeCompare(b, 'pt-BR'))
     : [];
-  const listaFiltrada = visiveis
-    .filter((sheet) => {
-      if (!listaAutor) return true;
-      if (listaAutor === AUTOR_EU) return isNoteOwner(sheet, currentUser.email);
-      return sheet.autorEmail === listaAutor;
-    })
-    .filter((sheet) => !listaContrato || getSheetOsCodigos(sheet).some((codigo) => codigosDoContrato.has(codigo)))
-    .filter((sheet) => !listaOs || getSheetOsCodigos(sheet).includes(listaOs))
-    .filter((sheet) => !listaEdificacao || sheet.edificacao === listaEdificacao)
-    // Filtro fala em setor: escolher 'Arquitetura' traz URB, LAY, LUM...
-    .filter((sheet) => !listaDisciplina || getSheetDisciplinas(sheet).some((item) => disciplineMatchesSector(item, listaDisciplina)))
-    .filter((sheet) => listaVinculo !== 'vinculado' || (sheet.marcadosUsuarios || []).includes(currentUser.email))
-    .filter((sheet) => noteMatchesTextSearch(sheet, listaTextoBusca, listaBuscarConteudo))
-    .sort((a, b) => {
-      if (listaOrdenacao === 'alfabetica') return normalizeText(a.titulo || '').localeCompare(normalizeText(b.titulo || ''), 'pt-BR');
-      // criadoEm pode faltar em notas antigas (ver AnnotationSheet.criadoEm); cai pro updatedAt.
-      const dataA = new Date(a.criadoEm || a.updatedAt || 0).getTime();
-      const dataB = new Date(b.criadoEm || b.updatedAt || 0).getTime();
-      return listaOrdenacao === 'data-asc' ? dataA - dataB : dataB - dataA;
-    });
-  const temFiltroLista = Boolean(listaAutor || listaContrato || listaOs || listaEdificacao || listaDisciplina || listaVinculo || listaTextoBusca);
-  const limparFiltroLista = () => { setListaAutor(''); setListaContrato(''); setListaOs(''); setListaEdificacao(''); setListaDisciplina(''); setListaVinculo(''); setListaTextoBusca(''); };
+  const listaFiltrada = filtrarNotas(visiveis, filtrosLista, {
+    currentUserEmail: currentUser.email,
+    osOptions: uniqueOsOptions,
+  });
+  const temFiltroLista = temFiltroAtivo(filtrosLista);
   // Autores que aparecem no seletor: os cadastrados no sistema, sem o proprio usuario
   // (ele ja tem a opcao "Criado por mim").
   const autoresDisponiveis = usuarios
@@ -3338,7 +3384,13 @@ export default function Anotacoes({
                 visibility: contextMenuPos ? 'visible' : 'hidden',
               }}
             >
-            <div className="w-64 overflow-y-auto rounded-xl bg-white p-2 shadow-xl" style={{ maxHeight: contextMenuPos?.maxHeight }}>
+            <div
+              className="w-64 overflow-y-auto rounded-xl bg-white p-2 shadow-xl"
+              style={{ maxHeight: contextMenuPos?.maxHeight }}
+              // ponytail: mousedown aqui nao pode roubar foco da celula contentEditable antes do onClick do botao rodar,
+              // senao o blur desmonta o contentEditable (ver branch "editavel") e zera o ref antes de aplicar a 2a formatacao.
+              onMouseDown={(event) => event.preventDefault()}
+            >
               {(contextMenu.selStart !== undefined || contextMenu.temSelecaoDom) && (
                 <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[#F05D28]">Aplicando so ao trecho selecionado</p>
               )}
@@ -3961,9 +4013,7 @@ export default function Anotacoes({
           type="button"
           onClick={(event) => {
             event.stopPropagation();
-            const r = event.currentTarget.getBoundingClientRect();
-            // Alinha a borda direita do menu (w-44 = 176px) ao botao; clampa dentro da viewport.
-            setCardMenuPos({ x: Math.max(8, Math.min(r.right - 176, window.innerWidth - 184)), y: r.bottom + 4 });
+            cardMenuTriggerRef.current = event.currentTarget;
             setOpenCardMenuId((prev) => (prev === sheet.id ? null : sheet.id));
           }}
           className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#2D2D2D]"
@@ -3971,10 +4021,13 @@ export default function Anotacoes({
           <MoreVertical size={14} />
         </button>
 
-        {openCardMenuId === sheet.id && (
+        {openCardMenuId === sheet.id && createPortal(
+          // Portal pro body: `position: fixed` se ancora no ancestral quando ele tem transform
+          // (qualquer container animado por `motion` basta), e o menu nascia longe do botao.
+          // Mesmo motivo do dropdown de filtro em Atividades.tsx.
           <>
             <div className="fixed inset-0 z-[190]" onClick={() => setOpenCardMenuId(null)} />
-            <div className="fixed z-[191] w-44 rounded-xl bg-white p-1.5 shadow-xl" style={{ left: cardMenuPos.x, top: cardMenuPos.y }}>
+            <div ref={cardMenuRef} className="fixed z-[191] w-44 rounded-xl bg-white p-1.5 shadow-xl" style={{ left: cardMenuPos.x, top: cardMenuPos.y }}>
               <button
                 type="button"
                 onClick={() => { setOpenCardMenuId(null); exportNoteToCsv(sheet); }}
@@ -3999,6 +4052,15 @@ export default function Anotacoes({
                 <FileText size={14} />
                 Exportar MD
               </button>
+              <button
+                type="button"
+                onClick={() => { setOpenCardMenuId(null); openNote(copiarNota(sheet, currentUser)); }}
+                title="Abre uma cópia no editor; ela só existe depois que você salvar"
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+              >
+                <Copy size={14} />
+                Copiar
+              </button>
               {canDeleteSheet(sheet) && (
                 <button
                   type="button"
@@ -4010,13 +4072,13 @@ export default function Anotacoes({
                 </button>
               )}
             </div>
-          </>
+          </>,
+          document.body,
         )}
       </div>
     );
   };
 
-  const filtroClass = 'h-11 w-[200px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]';
 
   return (
     <div>
@@ -4026,110 +4088,18 @@ export default function Anotacoes({
         </p>
       )}
       {visiveis.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <SearchableSelect
-            value={listaAutor}
-            onChange={(event) => setListaAutor(event.target.value)}
-            searchPlaceholder="Pesquisar autor..."
-            className={filtroClass}
-          >
-            <option value="">Todos os autores</option>
-            <option value={AUTOR_EU}>Criado por mim</option>
-            {autoresDisponiveis.map((user) => (
-              <option key={user.email} value={user.email}>{user.nome || user.email}</option>
-            ))}
-          </SearchableSelect>
-          <SearchableSelect
-            value={listaContrato}
-            onChange={(event) => { setListaContrato(event.target.value); setListaOs(''); }}
-            searchPlaceholder="Pesquisar contrato..."
-            className={filtroClass}
-          >
-            <option value="">Todos os contratos</option>
-            {contractOptions.map((contrato) => (
-              <option key={contrato.codigo} value={contrato.codigo}>{contrato.codigo} - {contrato.nome}</option>
-            ))}
-          </SearchableSelect>
-          <SearchableSelect
-            value={listaOs}
-            onChange={(event) => { setListaOs(event.target.value); setListaEdificacao(''); }}
-            searchPlaceholder="Pesquisar OS..."
-            className={filtroClass}
-          >
-            <option value="">Todas as OS</option>
-            {osDaLista.map((os) => (
-              <option key={os.codigo} value={os.codigo}>{formatOsLabel(os)}</option>
-            ))}
-          </SearchableSelect>
-          <select
-            disabled={edificacoesDaListaOs.length === 0}
-            value={listaEdificacao}
-            onChange={(event) => setListaEdificacao(event.target.value)}
-            title={edificacoesDaListaOs.length === 0 ? 'Escolha uma OS com edificação cadastrada' : undefined}
-            className={`${filtroClass} disabled:cursor-not-allowed disabled:opacity-50`}
-          >
-            <option value="">{edificacoesDaListaOs.length === 0 ? 'Sem edificação nesta OS' : 'Todas as edificações'}</option>
-            {edificacoesDaListaOs.map((edificio) => (
-              <option key={edificio} value={edificio}>{edificio}</option>
-            ))}
-          </select>
-          <SearchableSelect
-            value={listaDisciplina}
-            onChange={(event) => setListaDisciplina(event.target.value)}
-            searchPlaceholder="Pesquisar disciplina..."
-            className={filtroClass}
-          >
-            <option value="">Todas as disciplinas</option>
-            {getSectorOptions(disciplinaOptions).map((setor) => (
-              <option key={setor} value={setor}>{setor}</option>
-            ))}
-          </SearchableSelect>
-          <SearchableSelect
-            value={listaVinculo}
-            onChange={(event) => setListaVinculo(event.target.value)}
-            searchPlaceholder="Pesquisar vinculo..."
-            className={filtroClass}
-          >
-            <option value="">Todas as notas</option>
-            <option value="vinculado">Fui vinculado</option>
-          </SearchableSelect>
-          <select
-            value={listaOrdenacao}
-            onChange={(event) => setListaOrdenacao(event.target.value as typeof listaOrdenacao)}
-            aria-label="Ordenar notas"
-            className={filtroClass}
-          >
-            <option value="alfabetica">Alfabética</option>
-            <option value="data-asc">Data Crescente</option>
-            <option value="data-desc">Data Decrescente</option>
-          </select>
-          <input
-            type="search"
-            value={listaTextoBusca}
-            onChange={(event) => setListaTextoBusca(event.target.value)}
-            aria-label="Buscar nas notas"
-            placeholder="Buscar nas notas..."
-            className={filtroClass}
-          />
-          <label className="flex h-11 items-center gap-1.5 text-[12px] font-medium text-[#64748B]">
-            <input
-              type="checkbox"
-              checked={listaBuscarConteudo}
-              onChange={(event) => setListaBuscarConteudo(event.target.checked)}
-              className="h-4 w-4 accent-[#F05D28] cursor-pointer"
-            />
-            Buscar dentro da nota
-          </label>
-          {temFiltroLista && (
-            <button
-              type="button"
-              onClick={limparFiltroLista}
-              className="h-11 rounded-xl px-3 text-[12px] font-bold text-[#64748B] hover:text-[#F05D28]"
-            >
-              Limpar filtros
-            </button>
-          )}
-          <div className="relative ml-auto">
+        <div className="mb-4">
+          <NotesFilterBar
+            value={filtrosLista}
+            onChange={setFiltrosLista}
+            autores={autoresDisponiveis}
+            contratos={contractOptions}
+            osOptions={osDaLista}
+            edificacoes={edificacoesDaListaOs}
+            disciplinas={disciplinaOptions}
+            formatOs={formatOsLabel}
+            acoes={(
+              <>
             <button
               type="button"
               onClick={() => setExportMenuOpen((prev) => !prev)}
@@ -4168,7 +4138,9 @@ export default function Anotacoes({
                 </div>
               </>
             )}
-          </div>
+              </>
+            )}
+          />
         </div>
       )}
 

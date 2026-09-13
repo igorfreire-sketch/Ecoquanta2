@@ -12,7 +12,6 @@ type ItemKey = 'carimbo' | 'desenho' | 'relatorio' | 'faltaArquivo';
 interface ItemState {
   c: string;
   t: string;
-  resolucao: '' | 'conformidade' | 'terceiro';
   observacao: string;
   historico: Array<{ autor: string; mensagem: string; dataHora: string }>;
 }
@@ -34,10 +33,10 @@ const ITEM_UNIT: Record<ItemKey, Nc2Item['unit']> = {
 const ITEM_KEYS: ItemKey[] = ['carimbo', 'desenho', 'relatorio', 'faltaArquivo'];
 
 const EMPTY_ITENS: Record<ItemKey, ItemState> = {
-  carimbo: { c: '', t: '', resolucao: '', observacao: '', historico: [] },
-  desenho: { c: '', t: '', resolucao: '', observacao: '', historico: [] },
-  relatorio: { c: '', t: '', resolucao: '', observacao: '', historico: [] },
-  faltaArquivo: { c: '', t: '', resolucao: '', observacao: '', historico: [] },
+  carimbo: { c: '', t: '', observacao: '', historico: [] },
+  desenho: { c: '', t: '', observacao: '', historico: [] },
+  relatorio: { c: '', t: '', observacao: '', historico: [] },
+  faltaArquivo: { c: '', t: '', observacao: '', historico: [] },
 };
 
 const selectStyle: React.CSSProperties = {
@@ -127,7 +126,6 @@ function itensFromRecord(record: Nc2Record): Record<ItemKey, ItemState> {
     next[key] = {
       c: item.quantidadeC ? String(item.quantidadeC) : '',
       t: item.quantidadeT ? String(item.quantidadeT) : '',
-      resolucao: item.correcaoOrigem === 'outro_setor' ? 'terceiro' : item.correcaoOrigem === 'conformidade' ? 'conformidade' : '',
       observacao: item.observacao || '',
       historico: item.observacoesHistorico || [],
     };
@@ -348,7 +346,6 @@ export default function Preenchimento({
   const selectedItems = ITEM_KEYS.filter((key) => (
     (parseInt(itens[key].c, 10) || 0) + (parseInt(itens[key].t, 10) || 0) > 0
   ));
-  const unresolvedItems = selectedItems.filter((key) => !itens[key].resolucao);
   const totalC = selectedItems.reduce((sum, key) => sum + (parseInt(itens[key].c, 10) || 0), 0);
   const totalT = selectedItems.reduce((sum, key) => sum + (parseInt(itens[key].t, 10) || 0), 0);
 
@@ -362,21 +359,7 @@ export default function Preenchimento({
   const setItemQty = (key: ItemKey, field: 'c' | 't', value: string) => {
     if (!generalDataReady) return;
     const num = value.replace(/\D/g, '').slice(0, 3);
-    setItens((prev) => ({
-      ...prev,
-      [key]: {
-        ...prev[key],
-        [field]: num,
-        ...(Number(num) === 0 && !((field === 'c' ? prev[key].t : prev[key].c) || '').trim()
-          ? { resolucao: '' as const }
-          : {}),
-      },
-    }));
-  };
-
-  const setItemResolution = (key: ItemKey, resolucao: ItemState['resolucao']) => {
-    if (!generalDataReady) return;
-    setItens((prev) => ({ ...prev, [key]: { ...prev[key], resolucao } }));
+    setItens((prev) => ({ ...prev, [key]: { ...prev[key], [field]: num } }));
   };
 
   const setItemObservacao = (key: ItemKey, observacao: string) => {
@@ -398,9 +381,7 @@ export default function Preenchimento({
   };
 
   const buildRecord = (): Nc2Record | null => {
-    if (
-      !generalDataReady || unresolvedItems.length > 0
-    ) {
+    if (!generalDataReady) {
       return null;
     }
 
@@ -412,31 +393,32 @@ export default function Preenchimento({
     const itensRegistrados = ITEM_KEYS.map((key): Nc2Item => {
         const quantidadeC = parseInt(itens[key].c, 10) || 0;
         const quantidadeT = parseInt(itens[key].t, 10) || 0;
+        // T preenchido sempre precisa do setor, mesmo que C tambem esteja preenchido no mesmo item;
+        // C sozinho ja foi resolvido pela propria Conformidade.
+        const correcaoOrigem = quantidadeT > 0 ? 'outro_setor' as const : quantidadeC > 0 ? 'conformidade' as const : undefined;
         // Editando um item que ja estava corrigido (pela Conformidade no Preenchimento ou
         // confirmado em Revisoes) sem mudar a via de resolucao: mantem statusCorrecao e o
         // registro original de quem/quando corrigiu, em vez de reverter/reescrever neste save.
         const originalItem = editRecord ? getRecordItems(editRecord).find((item) => item.itemKey === key) : undefined;
-        const sameResolution =
-          originalItem?.correcaoOrigem ===
-          (itens[key].resolucao === 'terceiro' ? 'outro_setor' : 'conformidade');
+        const sameResolution = originalItem?.correcaoOrigem === correcaoOrigem;
         const keepsOriginalFix =
-          Boolean(itens[key].resolucao) && originalItem?.statusCorrecao === 'corrigido' && sameResolution;
+          Boolean(correcaoOrigem) && originalItem?.statusCorrecao === 'corrigido' && sameResolution;
         return {
           itemKey: key,
           itemLabel: ITEM_LABELS[key],
           quantidadeC,
           quantidadeT,
           unit: ITEM_UNIT[key],
-          revisado: quantidadeT === 0 || itens[key].resolucao === 'conformidade',
+          revisado: quantidadeT === 0 || correcaoOrigem === 'conformidade',
           ...(itens[key].observacao.trim() ? { observacao: itens[key].observacao.trim() } : {}),
           ...(itens[key].historico.length > 0 ? { observacoesHistorico: itens[key].historico } : {}),
-          ...(itens[key].resolucao
+          ...(correcaoOrigem
             ? {
-                correcaoOrigem: itens[key].resolucao === 'terceiro' ? 'outro_setor' as const : 'conformidade' as const,
+                correcaoOrigem,
                 ...(quantidadeT > 0
                   ? {
                       statusCorrecao:
-                        keepsOriginalFix || itens[key].resolucao === 'conformidade'
+                        keepsOriginalFix || correcaoOrigem === 'conformidade'
                           ? ('corrigido' as const)
                           : ('pendente' as const),
                       ...(keepsOriginalFix
@@ -444,7 +426,7 @@ export default function Preenchimento({
                             corrigidoEm: originalItem!.corrigidoEm || new Date().toISOString(),
                             corrigidoPor: originalItem!.corrigidoPor || currentUser.nome || currentUser.email || '',
                           }
-                        : itens[key].resolucao === 'conformidade'
+                        : correcaoOrigem === 'conformidade'
                           ? {
                               corrigidoEm: new Date().toISOString(),
                               corrigidoPor: currentUser.nome || currentUser.email || '',
@@ -528,9 +510,7 @@ export default function Preenchimento({
     }
     const record = buildRecord();
     if (!record) {
-      setErrorMessage(unresolvedItems.length > 0
-        ? 'Escolha Conformidade ou Terceiro para cada item preenchido.'
-        : 'Preencha os campos obrigatorios e informe C ou T maior que zero em pelo menos um item.');
+      setErrorMessage('Preencha os campos obrigatorios e informe C ou T maior que zero em pelo menos um item.');
       return;
     }
     setSending(true);
@@ -614,7 +594,7 @@ export default function Preenchimento({
     }
   };
 
-  const canRegisterCurrent = generalDataReady && unresolvedItems.length === 0;
+  const canRegisterCurrent = generalDataReady;
   const isEditing = Boolean(editRecord);
 
   return (
@@ -801,29 +781,6 @@ export default function Preenchimento({
 
                   {isSelected && (
                     <div className="col-start-4 row-start-1 col-span-1 row-span-2 flex flex-wrap items-center gap-3 rounded-lg bg-[#F8FAFC] px-3 py-2">
-                      <span className="text-[10px] font-extrabold uppercase tracking-[0.8px] text-[#64748B]">
-                        Resolvido por
-                      </span>
-                      {([
-                        ['conformidade', 'Já foi resolvido pela Conformidade'],
-                        ['terceiro', 'Terceiro'],
-                      ] as const).map(([value, label]) => (
-                        <label key={value} className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] font-bold text-[#475569]">
-                          <input
-                            type="radio"
-                            name={`resolucao-${key}`}
-                            value={value}
-                            checked={item.resolucao === value}
-                            onChange={() => setItemResolution(key, value)}
-                            disabled={readOnly || !generalDataReady}
-                            className="h-3.5 w-3.5 accent-[#F05D28]"
-                          />
-                          {label}
-                        </label>
-                      ))}
-                      {!item.resolucao && (
-                        <span className="text-[10px] font-semibold text-[#B45309]">selecione uma opção</span>
-                      )}
                       {item.historico.map((mensagem, index) => (
                         <p key={`${mensagem.dataHora}-${index}`} className="w-full basis-full rounded-md bg-white px-2 py-1 text-[11px] text-[#475569]">
                           <strong>{mensagem.autor}:</strong> {mensagem.mensagem}

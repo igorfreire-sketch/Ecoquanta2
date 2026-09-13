@@ -1,0 +1,32 @@
+{
+  "001|ARQ": {
+    "responsavel": "QUANTA",
+    "tipo": "internal",
+    "origem": "linha_direta"
+  },
+  "001|HIDA": {
+    "responsavel": "QUANTA",
+    "tipo": "internal",
+    "origem": "linha_direta"
+  },
+  "001|ESG": {
+    "responsavel": "QUANTA",
+    "tipo": "internal",
+    "origem": "linha_direta"
+  },
+  "001|ELET": {
+    "responsavel": "Volt Engenharia",
+    "tipo": "external",
+    "origem": "linha_direta"
+  },
+  "002|ARQ": {
+    "responsavel": "QUANTA",
+    "tipo": "internal",
+    "origem": "coringa_todas"
+  },
+  "002|ELET": {
+    "responsavel": "QUANTA",
+    "tipo": "internal",
+    "origem": "coringa_todas"
+  }
+}

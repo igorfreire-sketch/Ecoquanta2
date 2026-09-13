@@ -70,12 +70,11 @@ function displayNameWithCode(name: string, code: string) {
   return name && !sameContractCode(name, code) ? `${name} (${code})` : name || code;
 }
 
-// Um card por Nc2Record.id, para item encaminhado a Terceiro com C ou T preenchido.
-// A selecao de Terceiro ja deixa o item pendente; a disciplina conclui no Kanban.
+// Um card por Nc2Record.id, para item encaminhado ao setor com T preenchido.
+// C sozinho ja foi resolvido pela propria Conformidade e nunca chega aqui.
 function outroSetorItems(record: Nc2Record) {
   return getRecordItems(record).filter(
-    (item) => item.correcaoOrigem === 'outro_setor'
-      && (safeAmount(item.quantidadeC) > 0 || safeAmount(item.quantidadeT) > 0),
+    (item) => item.correcaoOrigem === 'outro_setor' && safeAmount(item.quantidadeT) > 0,
   );
 }
 

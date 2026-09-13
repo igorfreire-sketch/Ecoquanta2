@@ -89,6 +89,23 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // CEPT | Acompanhamento de Entregas (docs/decisoes/0001-cept-acompanhamento-entregas-firestore.md §4)
+    match /ceptComponentes/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if false;
+    }
+
+    match /ceptValidacoes/{document} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.action in ['RESOLVED', 'CONFIRMED_OUTDATED', 'REOPENED']
+        && request.resource.data.recordKey is string && request.resource.data.recordKey.size() > 0
+        && request.resource.data.signature is string
+        && request.resource.data.usuarioEmail is string && request.resource.data.usuarioEmail.size() > 0
+        && request.resource.data.criadoEm == request.time;
+      allow update, delete: if false;
+    }
+
     match /planningTodos/{document} {
       allow read, create, update: if isSignedIn();
       allow delete: if isSignedIn();

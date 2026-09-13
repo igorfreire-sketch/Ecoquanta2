@@ -2,16 +2,15 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { Calendar, FileText, Globe, Lock, Network, Plus } from 'lucide-react';
 import { getDisciplineDisplayName, buildActivitiesFromEap } from '../Atividades';
-import SearchableSelect from '../SearchableSelect';
-import { disciplineMatchesSector, getSectorOptions } from '../../lib/disciplineCatalog';
 import Anotacoes, {
   copiarNota,
-  getSheetDisciplinas,
+  filtrarNotas,
   getSheetOsCodigos,
-  noteMatchesTextSearch,
   novaNotaBase,
   type AnnotationSheet,
 } from './Anotacoes';
+import NotesFilterBar from './NotesFilterBar';
+import { FILTRO_NOTAS_VAZIO, type NotesFilterState } from '../../lib/notesFilter';
 import MindMap from './MindMap';
 
 // Pagina Notes: unica em todo o app, identica em qualquer area. Todo usuario ve as
@@ -41,12 +40,8 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
   const [sheetAberta, setSheetAberta] = React.useState<AnnotationSheet | null>(null);
   // Janela de criacao: escolher uma nota existente pra copiar, ou comecar em branco.
   const [criarAberto, setCriarAberto] = React.useState(false);
-  const [filtroContrato, setFiltroContrato] = React.useState('');
-  const [filtroOs, setFiltroOs] = React.useState('');
-  const [filtroEdificacao, setFiltroEdificacao] = React.useState('');
-  const [filtroDisciplina, setFiltroDisciplina] = React.useState('');
-  const [filtroAutor, setFiltroAutor] = React.useState('');
-  const [filtroTextoBusca, setFiltroTextoBusca] = React.useState('');
+  // Mesmo estado e mesma barra da lista principal: a janela nao pode mais ter menos filtros.
+  const [filtros, setFiltros] = React.useState<NotesFilterState>(FILTRO_NOTAS_VAZIO);
 
   React.useEffect(() => {
     if (!abrirNota) return;
@@ -99,8 +94,8 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
 
   // OS do contrato escolhido: o filtro de contrato e pre-filtro do de OS.
   const osFiltradas = React.useMemo(
-    () => (filtroContrato ? sortedOs.filter((os) => os.contratoCodigo === filtroContrato) : sortedOs),
-    [sortedOs, filtroContrato]
+    () => (filtros.contrato ? sortedOs.filter((os) => os.contratoCodigo === filtros.contrato) : sortedOs),
+    [sortedOs, filtros.contrato]
   );
 
   // Autores disponiveis no filtro: eu primeiro, depois os usuarios cadastrados.
@@ -113,37 +108,23 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
 
   // Edificacoes da OS escolhida no filtro - ver padrão.md "Filtro de Edificação".
   const edificacoesFiltradas = React.useMemo<string[]>(() => {
-    if (!filtroOs) return [];
+    if (!filtros.os) return [];
     const nomes = new Set<string>();
-    scopedActivities.forEach((a) => { if (a.osCodigo === filtroOs && a.edificio) nomes.add(a.edificio); });
+    scopedActivities.forEach((a) => { if (a.osCodigo === filtros.os && a.edificio) nomes.add(a.edificio); });
     return Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  }, [scopedActivities, filtroOs]);
+  }, [scopedActivities, filtros.os]);
 
   // Janela de criacao: minhas notas (publicas e particulares) + todas as publicas dos outros.
-  const minhasNotas = React.useMemo(() => {
-    const codigosDoContrato = new Set(osFiltradas.map((os) => os.codigo));
-    return scopedNotes
-      .filter((nota) => nota.autorEmail === currentUser.email || nota.publica !== false)
-      .filter((nota) => !filtroAutor || nota.autorEmail === filtroAutor)
-      .filter((nota) => !filtroContrato || (nota.osCodigo ? codigosDoContrato.has(nota.osCodigo) : false))
-      .filter((nota) => !filtroOs || nota.osCodigo === filtroOs)
-      .filter((nota) => !filtroEdificacao || nota.edificacao === filtroEdificacao)
-      .filter((nota) => !filtroDisciplina || getSheetDisciplinas(nota).some((item) => disciplineMatchesSector(item, filtroDisciplina)))
-      .filter((nota) => noteMatchesTextSearch(nota, filtroTextoBusca))
-      .sort((a, b) => {
-        const byCreatedAt = (b.criadoEm || '').localeCompare(a.criadoEm || '');
-        return byCreatedAt || (a.titulo || '').localeCompare(b.titulo || '', 'pt-BR', { sensitivity: 'base' });
-      });
-  }, [scopedNotes, currentUser.email, filtroAutor, filtroContrato, filtroOs, filtroEdificacao, filtroDisciplina, filtroTextoBusca, osFiltradas]);
+  // Esse recorte de ORIGEM e exclusivo da janela; dali pra frente vale exatamente o mesmo
+  // filtro da lista principal (filtrarNotas), inclusive ordenacao e busca no conteudo.
+  const candidatasParaCopia = React.useMemo(() => {
+    const copiaveis = scopedNotes.filter((nota) => nota.autorEmail === currentUser.email || nota.publica !== false);
+    return filtrarNotas(copiaveis, filtros, { currentUserEmail: currentUser.email, osOptions });
+  }, [scopedNotes, currentUser.email, filtros, osOptions]);
 
   const abrirCriacao = () => {
     if (readOnly) return;
-    setFiltroContrato('');
-    setFiltroOs('');
-    setFiltroEdificacao('');
-    setFiltroDisciplina('');
-    setFiltroAutor('');
-    setFiltroTextoBusca('');
+    setFiltros(FILTRO_NOTAS_VAZIO);
     setCriarAberto(true);
   };
 
@@ -233,7 +214,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
         // baixo; ele nasce mais alto (pt-[8vh]) em vez de centralizado lá embaixo.
         <div className="fixed inset-0 z-[220] flex items-start justify-center bg-slate-950/40 px-4 pb-4 pt-[8vh]" onClick={() => setCriarAberto(false)}>
           <div
-            className="flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white p-5 shadow-xl"
+            className="flex max-h-[86vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white p-6 shadow-xl"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3">
@@ -252,82 +233,27 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
               Ou parta de uma nota já criada (sua ou pública de outro usuário) — ela será copiada com bancos, notas e checklists.
             </p>
 
-            <div className="mt-3 flex flex-wrap gap-2">
-              <SearchableSelect
-                value={filtroAutor}
-                onChange={(event) => setFiltroAutor(event.target.value)}
-                searchPlaceholder="Pesquisar autor..."
-                className="h-11 w-[240px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
-              >
-                <option value="">Todas as notas públicas</option>
-                <option value={currentUser.email}>Notas criadas por mim</option>
-                {autorOptions.map((autor) => (
-                  <option key={autor.email} value={autor.email}>{autor.nome || autor.email}</option>
-                ))}
-              </SearchableSelect>
-              <SearchableSelect
-                value={filtroContrato}
-                onChange={(event) => { setFiltroContrato(event.target.value); setFiltroOs(''); }}
-                searchPlaceholder="Todos os contratos"
-                className="h-11 w-[240px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
-              >
-                <option value="">Todos os contratos</option>
-                {contractOptions.map((contrato: { codigo: string; nome: string }) => (
-                  <option key={contrato.codigo} value={contrato.codigo}>{contrato.codigo} - {contrato.nome}</option>
-                ))}
-              </SearchableSelect>
-              <SearchableSelect
-                value={filtroOs}
-                onChange={(event) => { setFiltroOs(event.target.value); setFiltroEdificacao(''); }}
-                searchPlaceholder="Pesquisar OS..."
-                className="h-11 w-[240px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
-              >
-                <option value="">Ordem de Serviço</option>
-                {osFiltradas.map((os) => (
-                  <option key={os.codigo} value={os.codigo}>{os.codigo} - {os.nome}</option>
-                ))}
-              </SearchableSelect>
-              <select
-                disabled={edificacoesFiltradas.length === 0}
-                value={filtroEdificacao}
-                onChange={(event) => setFiltroEdificacao(event.target.value)}
-                title={edificacoesFiltradas.length === 0 ? 'Escolha uma OS com edificação cadastrada' : undefined}
-                className="h-11 w-[240px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <option value="">{edificacoesFiltradas.length === 0 ? 'Sem edificação nesta OS' : 'Edificação'}</option>
-                {edificacoesFiltradas.map((edificio) => (
-                  <option key={edificio} value={edificio}>{edificio}</option>
-                ))}
-              </select>
-              <SearchableSelect
-                value={filtroDisciplina}
-                onChange={(event) => setFiltroDisciplina(event.target.value)}
-                searchPlaceholder="Pesquisar disciplina..."
-                className="h-11 w-[240px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
-              >
-                <option value="">Todas as disciplinas</option>
-                {getSectorOptions(sortedDisciplinas).map((setor) => (
-                  <option key={setor} value={setor}>{setor}</option>
-                ))}
-              </SearchableSelect>
-              <input
-                type="search"
-                value={filtroTextoBusca}
-                onChange={(event) => setFiltroTextoBusca(event.target.value)}
-                aria-label="Buscar no conteúdo das notas para copiar"
-                placeholder="Buscar no conteúdo das notas..."
-                className="h-11 w-[240px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] outline-none focus:border-[#F05D28]"
+            <div className="mt-3">
+              <NotesFilterBar
+                value={filtros}
+                onChange={setFiltros}
+                autores={autorOptions}
+                contratos={contractOptions}
+                osOptions={osFiltradas}
+                edificacoes={edificacoesFiltradas}
+                disciplinas={sortedDisciplinas}
+                largura="fluida"
               />
             </div>
 
             <div className="mt-4 flex-1 overflow-auto">
-              {minhasNotas.length === 0 ? (
+              {candidatasParaCopia.length === 0 ? (
                 <p className="px-1 py-3 text-[13px] text-[#94A3B8]">
                   Nenhuma nota com esses filtros. Use "Criar em branco".
                 </p>
               ) : (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {minhasNotas.map((nota) => {
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {candidatasParaCopia.map((nota) => {
                     const os = sortedOs.find((item) => item.codigo === nota.osCodigo);
                     return (
                       <button

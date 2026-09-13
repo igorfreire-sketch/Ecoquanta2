@@ -1,0 +1,9 @@
+Disciplina,Rotulo,Tipo,001 - Implantação,DATA ENTREGA,002 - Expressões,DATA ENTREGA
+ARQ,Prancha Arquitetura,RVT,TRUE,05/03/2026,FALSE,
+,Prancha 01 - Planta Baixa,PDF,TRUE,05/03/2026,-,
+,Modelo Federado,IFC,TRUE,06/03/2026,FALSE,
+,Memorial de Cálculo,MC (PDF),SIM,10/03/2026,NAO,
+ELE,Memorial Descritivo,MD (DOCX),VERDADEIRO,01/04/2026,FALSO,
+,Relatório Técnico,ET / RT (PDF),TRUE,,FALSE,
+,Anexo de Materiais,MA (XLSX),-,,TRUE,15/04/2026
+TOPO,Levantamento Planialtimétrico,MC (PDF),TRUE,20/01/2026,TRUE,20/01/2026

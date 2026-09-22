@@ -58,6 +58,7 @@ export type AppTabKey =
   | 'alocacoes'
   | 'nc'
   | 'nc2'
+  | 'compatibilizacao'
   | 'cronograma'
   | 'solucoes'
   | 'banco-links'

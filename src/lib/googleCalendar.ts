@@ -3,7 +3,15 @@ export interface CalendarEventOption {
   title: string;
   htmlLink: string;
   start: string;
+  attendeeEmails: string[];
   geminiNotesUrl?: string;
+}
+
+const normalizeEmail = (value: unknown) => String(value || '').trim().toLowerCase();
+
+export function matchCalendarAttendees(event: CalendarEventOption, users: Array<{ email: string }>): string[] {
+  const attendees = new Set(event.attendeeEmails.map(normalizeEmail).filter(Boolean));
+  return Array.from(new Set(users.map((user) => normalizeEmail(user.email)).filter((email) => attendees.has(email))));
 }
 
 // Eventos da Agenda Google no dia de `at` (usado pra abrir um popup e o usuario escolher
@@ -28,11 +36,16 @@ export async function listTodayCalendarEvents(accessToken: string, at: Date = ne
       // abre no próprio Google com a permissão dele).
       const attachments: any[] = event.attachments || [];
       const geminiDoc = attachments.find((att) => String(att.mimeType || '').includes('document')) || attachments[0];
+      const attendeeEmails = [
+        ...(Array.isArray(event.attendees) ? event.attendees.map((attendee: any) => attendee?.email) : []),
+        event.organizer?.email,
+      ].map(normalizeEmail).filter(Boolean);
       return {
         id: event.id,
         title: event.summary || 'Reunião sem título',
         htmlLink: event.htmlLink,
         start: event.start.dateTime,
+        attendeeEmails: Array.from(new Set(attendeeEmails)),
         geminiNotesUrl: geminiDoc?.fileUrl,
       };
     });

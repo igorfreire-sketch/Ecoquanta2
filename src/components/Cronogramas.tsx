@@ -189,13 +189,16 @@ export default function Cronogramas({ currentUser, usuarios = [], notes = [], on
 
       <button
         type="button"
+        aria-label={`Abrir opções de ${c.titulo || 'cronograma'}`}
+        title="Opções"
+        onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
           const r = event.currentTarget.getBoundingClientRect();
           setCardMenuPos({ x: Math.max(8, Math.min(r.right - 176, window.innerWidth - 184)), y: r.bottom + 4 });
           setOpenCardMenuId((prev) => (prev === c.id ? null : c.id));
         }}
-        className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#F3F4F6] hover:text-[#2D2D2D]"
+        className="absolute right-1 top-1 z-10 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-[#64748B] hover:bg-[#F3F4F6] hover:text-[#F05D28]"
       >
         <MoreVertical size={14} />
       </button>

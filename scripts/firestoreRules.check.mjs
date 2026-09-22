@@ -23,6 +23,15 @@ assert.match(app, /!preRegistration && !isCorporateEmail\(email\)/, 'dominio cor
 assert.match(app, /\{ key: 'banco-links', label: 'Banco de Links' \}/, 'Banco de Links nao pode ser liberado pelo admin');
 assert.doesNotMatch(app, /if \(tab === 'banco-links'\) return true;/, 'Banco de Links liberado sem permissao');
 
+const ceptBlock = rules.match(/match \/ceptComponentes\/\{document\} \{([\s\S]*?)\n    \}/)?.[1] || '';
+assert.match(ceptBlock, /allow create: if isSignedInWithEmail\(\) && ceptComponentPayloadIsSafe\(\) && request\.resource\.data\.version == 1;/, 'CEPT permite criação sem versão/autor validado');
+assert.match(ceptBlock, /allow update: if isSignedInWithEmail\(\) && ceptComponentPayloadIsSafe\(\) && request\.resource\.data\.version == resource\.data\.get\('version', 0\) \+ 1;/, 'CEPT permite sobrescrita sem incremento de versão');
+assert.match(firebaseDb, /export function nextDocumentVersion[\s\S]*currentVersion !== expectedVersion/, 'cliente CEPT não detecta conflito de versão');
+const feedbackBlock = rules.match(/match \/feedbackReports\/\{reportId\} \{([\s\S]*?)\n    \}/)?.[1] || '';
+assert.match(rules, /function isFeedbackAdmin\(\)[\s\S]*igor\.freire@quantaconsultoria\.com/, 'Demandas Digitais nao reconhece o administrador do EcoQuanta');
+assert.match(feedbackBlock, /allow read: if isFeedbackAdmin\(\)/, 'leitura de feedback nao usa a permissao do administrador EcoQuanta');
+assert.match(feedbackBlock, /allow update: if isFeedbackAdmin\(\) && feedbackStatusUpdateIsSafe\(\);/, 'movimentacao de feedback perdeu validacao de status');
+
 for (const name of ['appData', ...collections]) {
   const block = rules.match(new RegExp(`match /${name}[^}]*\\} \\{([\\s\\S]*?)\\n    \\}`))?.[1] || '';
   assert.match(block, /isSignedIn\(\)/, `${name} bloqueia o login operacional atual`);

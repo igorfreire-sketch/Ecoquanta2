@@ -9,6 +9,9 @@ export type CeptEditable = true | false | null;
 
 export interface CeptComponent {
   recordKey: string;
+  /** OS acima da edificação; ausente em importações CEPT legadas. */
+  osCode?: string;
+  osName?: string;
   projectCode: string;
   disciplineCode: string;
   family: string;
@@ -21,6 +24,8 @@ export interface CeptComponent {
   dateIso: string;
   edificacao?: string;
   updatedAt?: string;
+  /** Controle otimista de concorrência; ausente em documentos CEPT legados. */
+  version?: number;
   updatedByEmail?: string;
   updatedByNome?: string;
 }
@@ -149,6 +154,11 @@ export function buildRecordKey(projectCode: string, disciplineCode: string, fami
   return [projectCode, disciplineCode, family, sourceType].map(sanitizeKeySegment).join('|');
 }
 
+/** Chave nova para todas as OS; o formato legado sem OS continua legível. */
+export function buildScopedRecordKey(osCode: string, projectCode: string, disciplineCode: string, family: string, sourceType: string): string {
+  return [sanitizeKeySegment(osCode), buildRecordKey(projectCode, disciplineCode, family, sourceType)].join('|');
+}
+
 const familyGroupKey = (c: Pick<CeptComponent, 'projectCode' | 'disciplineCode' | 'family'>) =>
   [c.projectCode, c.disciplineCode, c.family].join('|');
 
@@ -200,13 +210,27 @@ function diffDays(fromIso: string, toIso: string): number {
   return (to - from) / 86400000;
 }
 
+// O Apps Script so compara datas quando `normalizeDashboardDateInfo_` conseguiu
+// produzir um ISO completo. Em especial, "DD/MM" continua apenas texto de
+// exibicao: nao assumimos o ano corrente para fabricar um alerta.
+function isValidIsoDate(value: string): boolean {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
 // As tres regras (ADR §2). Rodam sobre o conjunto completo de componentes.
 export function computeAlerts(components: CeptComponent[], cutoffIso: string = DEFAULT_CUTOFF_ISO): CeptAlert[] {
   const alerts: CeptAlert[] = [];
 
-  // Regra 1: entregue e postado antes do corte.
+  // Regra 1: qualquer arquivo com data valida anterior ao corte. O status
+  // contratual nao interfere no alerta temporal.
   for (const c of components) {
-    if (c.status === 'delivered' && c.dateIso && c.dateIso < cutoffIso) {
+    if (isValidIsoDate(c.dateIso) && isValidIsoDate(cutoffIso) && c.dateIso < cutoffIso) {
       alerts.push({
         recordKey: c.recordKey,
         projectCode: c.projectCode,
@@ -216,7 +240,7 @@ export function computeAlerts(components: CeptComponent[], cutoffIso: string = D
         // duas); amarelo e o default ate o dono do produto confirmar. Trocar aqui se vier especificado.
         severity: 'yellow',
         fileDate: c.dateIso,
-        reasons: [`Entregue em ${c.dateIso}, antes do corte ${cutoffIso}`],
+        reasons: [`Arquivo postado em ${c.dateIso}, antes do corte ${cutoffIso}`],
       });
     }
   }
@@ -235,8 +259,8 @@ export function computeAlerts(components: CeptComponent[], cutoffIso: string = D
   }
 
   for (const group of groups.values()) {
-    const editables = group.filter((c) => resolveEditable(c) === true && c.dateIso);
-    const noneditables = group.filter((c) => resolveEditable(c) === false && c.dateIso);
+    const editables = group.filter((c) => resolveEditable(c) === true && isValidIsoDate(c.dateIso));
+    const noneditables = group.filter((c) => resolveEditable(c) === false && isValidIsoDate(c.dateIso));
     if (!editables.length || !noneditables.length) continue;
 
     const latestEditableDate = editables.reduce((max, c) => (c.dateIso > max ? c.dateIso : max), editables[0].dateIso);
@@ -253,16 +277,29 @@ export function computeAlerts(components: CeptComponent[], cutoffIso: string = D
           counterpartDate: latestEditableDate,
           reasons: [`Versao editavel (${latestEditableDate}) e posterior ao entregavel nao-editavel (${n.dateIso})`],
         });
-      } else if (diffDays(latestEditableDate, n.dateIso) > 7) {
+      }
+    }
+
+    // A regra de defasagem pertence ao EDITAVEL. Cada editavel e comparado
+    // individualmente com os nao-editaveis posteriores, portanto coexistem
+    // alertas de regras diferentes na mesma familia quando aplicaveis.
+    for (const e of editables) {
+      const laterNonEditables = noneditables
+        .map((n) => ({ component: n, days: diffDays(e.dateIso, n.dateIso) }))
+        .filter((entry) => entry.days > 7)
+        .sort((a, b) => b.days - a.days);
+
+      if (laterNonEditables.length) {
+        const counterpart = laterNonEditables[0];
         alerts.push({
-          recordKey: n.recordKey,
-          projectCode: n.projectCode,
-          disciplineCode: n.disciplineCode,
+          recordKey: e.recordKey,
+          projectCode: e.projectCode,
+          disciplineCode: e.disciplineCode,
           rule: 'NONEDITABLE_MORE_THAN_7_DAYS_AFTER_EDITABLE',
           severity: 'yellow',
-          fileDate: n.dateIso,
-          counterpartDate: latestEditableDate,
-          reasons: [`Entregavel nao-editavel (${n.dateIso}) mais de 7 dias apos a versao editavel (${latestEditableDate})`],
+          fileDate: e.dateIso,
+          counterpartDate: counterpart.component.dateIso,
+          reasons: [`O nao-editavel (${counterpart.component.dateIso}) foi postado mais de 7 dias depois do editavel (${e.dateIso})`],
         });
       }
     }
@@ -277,14 +314,13 @@ export function rollupFamilyStatus(components: CeptComponent[]): Omit<CeptFamily
   let delivered = 0;
   let pending = 0;
   let unknown = 0;
-  let na = 0;
   for (const c of components) {
     if (c.status === 'delivered') delivered++;
     else if (c.status === 'pending') pending++;
     else if (c.status === 'unknown') unknown++;
-    else na++;
   }
-  const applicable = components.length - na;
+  // N/A e unknown nao sao campos determinaveis e ficam fora do denominador.
+  const applicable = delivered + pending;
   const percent = applicable > 0 ? Math.round((delivered / applicable) * 100) : 0;
 
   let status: CeptStatus;

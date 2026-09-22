@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   buildCeptModel,
   buildRecordKey,
+  buildScopedRecordKey,
   buildSignature,
   computeAlerts,
   resolveValidationStatus,
@@ -9,6 +10,9 @@ import {
   type CeptComponent,
   type CeptValidacao,
 } from './ceptModel';
+
+// A OS entra na chave nova; chaves CEPT já gravadas continuam sem esse prefixo.
+assert.equal(buildScopedRecordKey('OS061', '001', 'ARQ', 'RVT', 'Modelo'), 'OS061|001|ARQ|RVT|Modelo');
 
 const c = (overrides: Partial<CeptComponent>): CeptComponent => ({
   recordKey: buildRecordKey(
@@ -33,14 +37,23 @@ const c = (overrides: Partial<CeptComponent>): CeptComponent => ({
   ...overrides,
 });
 
-// --- Regra 1: POSTED_BEFORE_CUTOFF ---
+// --- Regra 1: POSTED_BEFORE_CUTOFF para qualquer status com data ISO valida ---
 {
-  const beforeCutoff = c({ dateIso: '2026-08-10', sourceType: 'Cutoff-1' });
+  const beforeCutoff = c({ dateIso: '2026-08-10', sourceType: 'Cutoff-1', status: 'pending' });
   const afterCutoff = c({ dateIso: '2026-08-20', sourceType: 'Cutoff-2' });
   const alerts = computeAlerts([beforeCutoff, afterCutoff], '2026-08-18');
   const hits = alerts.filter((a) => a.rule === 'POSTED_BEFORE_CUTOFF');
   assert.equal(hits.length, 1);
   assert.equal(hits[0].recordKey, beforeCutoff.recordKey);
+}
+
+// --- DD/MM sem ano nao entra em comparacoes: nunca inventar ISO/ano ---
+{
+  const ddMm = c({ dateIso: '10/08', sourceType: 'Cutoff-sem-ano' });
+  const editable = c({ sourceType: 'RVT sem ano', family: 'RVT', format: 'RVT', editable: true, dateIso: '01/08' });
+  const noneditable = c({ sourceType: 'PDF com ano', family: 'RVT', format: 'PDF', editable: false, dateIso: '2026-08-20' });
+  assert.equal(computeAlerts([ddMm], '2026-08-18').length, 0);
+  assert.equal(computeAlerts([editable, noneditable], '2026-08-18').some((a) => a.rule === 'NONEDITABLE_MORE_THAN_7_DAYS_AFTER_EDITABLE'), false);
 }
 
 // --- Regra 2: EDITABLE_AFTER_NONEDITABLE (vermelho) -- editavel posterior ao nao-editavel.
@@ -64,7 +77,13 @@ const c = (overrides: Partial<CeptComponent>): CeptComponent => ({
   const hit = alerts.find((a) => a.rule === 'NONEDITABLE_MORE_THAN_7_DAYS_AFTER_EDITABLE');
   assert.ok(hit, 'esperava alerta NONEDITABLE_MORE_THAN_7_DAYS_AFTER_EDITABLE');
   assert.equal(hit!.severity, 'yellow');
-  assert.equal(hit!.recordKey, noneditable.recordKey);
+  assert.equal(hit!.recordKey, editable.recordKey);
+  assert.equal(hit!.fileDate, editable.dateIso);
+  assert.equal(hit!.counterpartDate, noneditable.dateIso);
+  assert.deepEqual(
+    alerts.filter((a) => a.recordKey === editable.recordKey).map((a) => a.rule).sort(),
+    ['NONEDITABLE_MORE_THAN_7_DAYS_AFTER_EDITABLE', 'POSTED_BEFORE_CUTOFF']
+  );
   assert.equal(alerts.some((a) => a.rule === 'EDITABLE_AFTER_NONEDITABLE'), false);
 }
 
@@ -78,7 +97,7 @@ const c = (overrides: Partial<CeptComponent>): CeptComponent => ({
   const alerts = computeAlerts([editable, noneditable]);
   const hit = alerts.find((a) => a.rule === 'NONEDITABLE_MORE_THAN_7_DAYS_AFTER_EDITABLE');
   assert.ok(hit, 'esperava alerta cruzando sourceType diferente dentro da mesma familia MC');
-  assert.equal(hit!.recordKey, noneditable.recordKey);
+  assert.equal(hit!.recordKey, editable.recordKey);
 }
 
 // --- Lag <= 7 dias: sem alerta de par editavel/nao-editavel ---
@@ -97,12 +116,12 @@ const c = (overrides: Partial<CeptComponent>): CeptComponent => ({
     c({ status: 'delivered', sourceType: 'C' }),
   ];
   const rollup = rollupFamilyStatus(familyComponents);
-  assert.equal(rollup.applicable, 2); // exclui o 'na'
+  assert.equal(rollup.applicable, 1); // exclui N/A e unknown
   assert.equal(rollup.status, 'unknown'); // unknown > 0, pending == 0
   assert.equal(rollup.delivered, 1);
   assert.equal(rollup.unknown, 1);
   assert.equal(rollup.pending, 0);
-  assert.equal(rollup.percent, 50);
+  assert.equal(rollup.percent, 100);
 }
 
 // --- Rollup: pending sempre vence ---

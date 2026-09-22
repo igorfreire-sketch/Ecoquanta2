@@ -1,6 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { Calendar, FileText, Globe, Lock, Network, Plus } from 'lucide-react';
+import { Bot, Calendar, FileText, Globe, Lock, Network, Plus } from 'lucide-react';
 import { getDisciplineDisplayName, buildActivitiesFromEap } from '../Atividades';
 import Anotacoes, {
   copiarNota,
@@ -197,6 +197,15 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
           </button>
         )}
         </div>
+        <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => { window.location.hash = '#ia'; }}
+          className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-4 text-[13px] font-bold text-[#2D2D2D] transition-colors hover:border-[#F7C7B7] hover:text-[#F05D28] cursor-pointer"
+        >
+          <Bot size={15} />
+          Link para IA
+        </button>
         <button
           type="button"
           onClick={() => setMapaAberto(true)}
@@ -205,6 +214,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
           <Network size={15} />
           Mapa Mental
         </button>
+        </div>
       </div>
 
       {editor}

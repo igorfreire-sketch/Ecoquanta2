@@ -53,91 +53,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Demandas Digitais: this app's real user registry is the single doc
-    // appData/auth (src/App.tsx fetchFirebaseAppData('auth')), NOT the
-    // siteUsers collection (that belongs to a different app sharing this
-    // Firebase project). Rules can't safely query the array/map shape inside
-    // appData/auth, so "approved" here just means "signed in with Google" --
-    // every real session carries request.auth.token.email (LoginScreen is
-    // Google-only); anonymous sessions (VITE_FIREBASE_ANONYMOUS_AUTH) have no
-    // email and are denied. Admins are included via isAdmin().
-    function isSignedInWithEmail() {
-      return request.auth != null &&
-        request.auth.token.email is string &&
-        request.auth.token.email.size() > 0;
-    }
-
-    function feedbackPayloadIsSafe() {
-      return request.resource.data.keys().hasOnly([
-          'kind', 'route', 'targetToken', 'xRatio', 'yRatio', 'body', 'title',
-          'status', 'authorUid', 'authorEmail', 'createdAt', 'updatedAt'
-        ]) &&
-        request.resource.data.keys().hasAll([
-          'kind', 'route', 'status', 'authorUid', 'authorEmail', 'createdAt', 'updatedAt'
-        ]) &&
-        request.resource.data.kind in ['bug', 'request', 'idea'] &&
-        request.resource.data.status == 'new' &&
-        request.resource.data.route is string && request.resource.data.route.size() > 0 &&
-        request.resource.data.route.size() <= 500 &&
-        request.resource.data.authorUid == request.auth.uid &&
-        request.resource.data.authorEmail == request.auth.token.email.lower() &&
-        request.resource.data.createdAt == request.time &&
-        request.resource.data.updatedAt == request.time &&
-        (!('targetToken' in request.resource.data) ||
-          (request.resource.data.targetToken is string && request.resource.data.targetToken.size() > 0 && request.resource.data.targetToken.size() <= 200)) &&
-        (!('title' in request.resource.data) ||
-          (request.resource.data.title is string && request.resource.data.title.size() <= 200)) &&
-        (!('body' in request.resource.data) ||
-          (request.resource.data.body is string && request.resource.data.body.size() <= 5000)) &&
-        (!('xRatio' in request.resource.data) ||
-          (request.resource.data.xRatio is number && request.resource.data.xRatio >= 0 && request.resource.data.xRatio <= 1)) &&
-        (!('yRatio' in request.resource.data) ||
-          (request.resource.data.yRatio is number && request.resource.data.yRatio >= 0 && request.resource.data.yRatio <= 1));
-    }
-
-    function feedbackStatusUpdateIsSafe() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']) &&
-        request.resource.data.status in ['new', 'triage', 'planned', 'doing', 'done', 'archived'] &&
-        request.resource.data.updatedAt == request.time;
-    }
-
-    // ponytail: a lista de admins do EcoQuanta ainda vive em appData/auth, que Rules nao
-    // consegue consultar por e-mail. Mantenha esta excecao so para Demandas Digitais;
-    // migrar para claim/doc por UID quando houver backend de provisionamento.
-    function isFeedbackAdmin() {
-      return isAdmin() || (isSignedInWithEmail() && request.auth.token.email.lower() == 'igor.freire@quantaconsultoria.com');
-    }
-
-    function ceptComponentPayloadIsSafe() {
-      return request.resource.data.keys().hasOnly([
-          'recordKey', 'osCode', 'osName', 'projectCode', 'disciplineCode', 'family', 'familyLabel',
-          'sourceLabel', 'sourceType', 'format', 'editable', 'status', 'dateIso', 'edificacao',
-          'updatedAt', 'updatedByEmail', 'updatedByNome', 'version'
-        ]) &&
-        request.resource.data.keys().hasAll([
-          'recordKey', 'projectCode', 'disciplineCode', 'family', 'familyLabel', 'sourceLabel',
-          'sourceType', 'format', 'editable', 'status', 'dateIso', 'updatedAt', 'updatedByEmail', 'version'
-        ]) &&
-        request.resource.data.recordKey is string && request.resource.data.recordKey.size() > 0 && request.resource.data.recordKey.size() <= 500 &&
-        request.resource.data.projectCode is string && request.resource.data.projectCode.matches('^[0-9]{3}$') &&
-        request.resource.data.disciplineCode is string && request.resource.data.disciplineCode.size() > 0 && request.resource.data.disciplineCode.size() <= 40 &&
-        request.resource.data.family is string && request.resource.data.family.size() > 0 && request.resource.data.family.size() <= 80 &&
-        request.resource.data.familyLabel is string && request.resource.data.familyLabel.size() <= 200 &&
-        request.resource.data.sourceLabel is string && request.resource.data.sourceLabel.size() <= 300 &&
-        request.resource.data.sourceType is string && request.resource.data.sourceType.size() > 0 && request.resource.data.sourceType.size() <= 300 &&
-        request.resource.data.format is string && request.resource.data.format.size() <= 80 &&
-        (request.resource.data.editable == true || request.resource.data.editable == false || request.resource.data.editable == null) &&
-        request.resource.data.status in ['delivered', 'pending', 'na', 'unknown'] &&
-        request.resource.data.dateIso is string && request.resource.data.dateIso.size() <= 10 &&
-        request.resource.data.updatedByEmail == request.auth.token.email.lower() &&
-        request.resource.data.updatedAt == request.time &&
-        request.resource.data.version is int &&
-        (!('osCode' in request.resource.data) || (request.resource.data.osCode is string && request.resource.data.osCode.size() > 0 && request.resource.data.osCode.size() <= 100)) &&
-        (!('osName' in request.resource.data) || (request.resource.data.osName is string && request.resource.data.osName.size() <= 200)) &&
-        (!('edificacao' in request.resource.data) || (request.resource.data.edificacao is string && request.resource.data.edificacao.size() <= 200)) &&
-        (!('updatedByNome' in request.resource.data) || (request.resource.data.updatedByNome is string && request.resource.data.updatedByNome.size() <= 200));
-    }
-
     // App operacional (cronograma/atividades/admin) -- collections antigas do
     // painel interno, perdidas no rewrite de 2026-08-08 que trouxe isAdmin()/
     // siteUsers. Restauradas com a mesma isSignedIn() de antes.
@@ -164,33 +79,9 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    match /atividadesIssues/{document} {
-      allow read, create, update: if isSignedIn();
-      allow delete: if false;
-    }
-
     match /nc2Records/{document} {
       allow read, create, update: if isSignedIn();
       allow delete: if false;
-    }
-
-    // CEPT | Acompanhamento de Entregas (docs/decisoes/0001-cept-acompanhamento-entregas-firestore.md §4)
-    match /ceptComponentes/{document} {
-      allow read: if isSignedIn();
-      allow create: if isSignedInWithEmail() && ceptComponentPayloadIsSafe() && request.resource.data.version == 1;
-      allow update: if isSignedInWithEmail() && ceptComponentPayloadIsSafe() && request.resource.data.version == resource.data.get('version', 0) + 1;
-      allow delete: if false;
-    }
-
-    match /ceptValidacoes/{document} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn()
-        && request.resource.data.action in ['RESOLVED', 'CONFIRMED_OUTDATED', 'REOPENED']
-        && request.resource.data.recordKey is string && request.resource.data.recordKey.size() > 0
-        && request.resource.data.signature is string
-        && request.resource.data.usuarioEmail is string && request.resource.data.usuarioEmail.size() > 0
-        && request.resource.data.criadoEm == request.time;
-      allow update, delete: if false;
     }
 
     match /planningTodos/{document} {
@@ -292,16 +183,6 @@ service cloud.firestore {
         isAdmin()
       );
       allow delete: if isAdmin();
-    }
-
-    // Demandas Digitais is intentionally separate from Project/SolucoesDigitais
-    // cronograms. A regular approved user can create/read only their own safe
-    // reports; only an admin can read all reports or change workflow status.
-    match /feedbackReports/{reportId} {
-      allow create: if isSignedInWithEmail() && feedbackPayloadIsSafe();
-      allow read: if isFeedbackAdmin() || (isSignedInWithEmail() && resource.data.authorUid == request.auth.uid);
-      allow update: if isFeedbackAdmin() && feedbackStatusUpdateIsSafe();
-      allow delete: if false;
     }
 
     // Media kit publico (pagina separada, agente paralelo) -- singleton em

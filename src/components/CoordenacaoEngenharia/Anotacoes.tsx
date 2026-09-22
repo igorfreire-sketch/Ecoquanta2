@@ -15,7 +15,7 @@ import {
   type NotesFilterState,
 } from '../../lib/notesFilter';
 import { canDeleteNote, canEditNote, signInWithGooglePopup, getGoogleCalendarToken } from '../../lib/firebaseDb';
-import { listTodayCalendarEvents, linkNoteToEvent, fetchGoogleDocText, type CalendarEventOption } from '../../lib/googleCalendar';
+import { listTodayCalendarEvents, linkNoteToEvent, fetchGoogleDocText, matchCalendarAttendees, type CalendarEventOption } from '../../lib/googleCalendar';
 import {
   alturaParaLinhas, BANCO_COL_WIDTH, BANCO_ROW_HEIGHT, cellCss, cellKey, fonteCss, isCovered,
   LARGURA_QUEBRA_PX, mergeAt, mergeIntersects, PADDING_CELULA_X, quebrarTexto, remapMerges,
@@ -33,6 +33,9 @@ import type { CronogramaDoc } from '../SolucoesDigitais';
 import { addDias, criarLinhaVazia, diffDias, proximoSeq, type CronoRow } from '../../lib/cronoRow';
 import CronogramaResumo from './CronogramaResumo';
 import MindMap from './MindMap';
+// Status/cor/colunas do banco "+ Demanda Digital" moram em DemandasDigitais.tsx (fonte unica -
+// o kanban le de la sem duplicar a paleta; aqui so consome pra montar o select e a linha inicial).
+import { demandaCols, DEMANDA_STATUS_COR, DEMANDA_STATUS_OPCOES, type DemandaStatus } from '../DemandasDigitais';
 
 export interface AnnotationBanco {
   id: string;
@@ -53,6 +56,9 @@ export interface AnnotationBanco {
   cellChecklists?: Record<string, AnnotationChecklistItem[]>;
   // Nome editavel do bloco. Ausente = usa o default "Banco N".
   nome?: string;
+  // Discriminador: ausente = banco comum. 'demanda' = banco "+ Demanda Digital" (col 3 = Status
+  // vira <select> e cada linha aparece como card em DemandasDigitais).
+  tipo?: 'demanda';
 }
 
 export interface AnnotationTextBlock {
@@ -275,6 +281,19 @@ export function createBanco(colCount = 3, rowCount = 3): AnnotationBanco {
   return { id: makeId('banco'), colCount, rows: createEmptyRows(colCount, rowCount) };
 }
 
+export function createDemandaBanco(): AnnotationBanco {
+  const banco = createBanco(3, 2);
+  banco.nome = 'Demanda Digital';
+  banco.tipo = 'demanda';
+  banco.rows[0] = ['Título', 'Descrição', 'Status'];
+  banco.rows[1] = ['', '', DEMANDA_STATUS_OPCOES[0]];
+  // ponytail: indice literal 2 e seguro aqui - layout acabou de ser escrito 2 linhas acima ('Status'
+  // e a 3a coluna), diferente de moveCol/render, que leem um banco ja existente e podem ter sido
+  // arrastados.
+  banco.styles = { [cellKey(1, 2)]: { bg: DEMANDA_STATUS_COR[DEMANDA_STATUS_OPCOES[0]] } };
+  return banco;
+}
+
 // Nota nova ja nasce com um banco 5x3 (largo, pra ocupar a faixa lateral) e um bloco de notas.
 export function novaNotaBase(autor: { nome: string; email: string }): AnnotationSheet {
   return {
@@ -391,7 +410,7 @@ export function stripCellMarkup(texto: string): string {
 }
 
 export function cellHasMarkup(texto: string): boolean {
-  return /\[c:#[0-9a-fA-F]{6}\][\s\S]*?\[\/c\]|\*\*[\s\S]*?\*\*|~~[\s\S]*?~~|\*[\s\S]*?\*/.test(texto || '');
+  return /\[c:#[0-9a-fA-F]{6}\]|\[\/c\]|\*\*[\s\S]*?\*\*|~~[\s\S]*?~~|\*[\s\S]*?\*/.test(texto || '');
 }
 
 // Posicao (start ou end de uma selecao) dos marcadores JA EXISTENTES no texto - usado so pra
@@ -455,21 +474,34 @@ type NoMarcado =
   | { tipo: 'cor'; cor: string; filhos: NoMarcado[] };
 
 function parseCellMarkup(texto: string): NoMarcado[] {
-  const regexUnificada = /\[c:(#[0-9a-fA-F]{6})\]([\s\S]*?)\[\/c\]|\*\*([\s\S]*?)\*\*|~~([\s\S]*?)~~|\*([\s\S]*?)\*/g;
-  const nos: NoMarcado[] = [];
+  const raiz: NoMarcado[] = [];
+  const pilha: Array<{ tipo: Exclude<NoMarcado['tipo'], 'texto'>; filhos: NoMarcado[] }> = [];
+  const atual = () => pilha.length ? pilha[pilha.length - 1].filhos : raiz;
+  const abrir = (tipo: Exclude<NoMarcado['tipo'], 'texto'>, cor?: string) => {
+    const node = tipo === 'cor' ? { tipo, cor: cor!, filhos: [] as NoMarcado[] } : { tipo, filhos: [] as NoMarcado[] };
+    atual().push(node as NoMarcado);
+    pilha.push(node as { tipo: Exclude<NoMarcado['tipo'], 'texto'>; filhos: NoMarcado[] });
+  };
+  const token = /\[c:(#[0-9a-fA-F]{6})\]|\[\/c\]|\*\*|~~|\*/g;
   const fonte = texto || '';
   let ultimo = 0;
-  let m: RegExpExecArray | null;
-  while ((m = regexUnificada.exec(fonte)) !== null) {
-    if (m.index > ultimo) nos.push({ tipo: 'texto', valor: fonte.slice(ultimo, m.index) });
-    if (m[1] !== undefined) nos.push({ tipo: 'cor', cor: m[1], filhos: parseCellMarkup(m[2]) });
-    else if (m[3] !== undefined) nos.push({ tipo: 'bold', filhos: parseCellMarkup(m[3]) });
-    else if (m[4] !== undefined) nos.push({ tipo: 'strike', filhos: parseCellMarkup(m[4]) });
-    else if (m[5] !== undefined) nos.push({ tipo: 'italic', filhos: parseCellMarkup(m[5]) });
-    ultimo = regexUnificada.lastIndex;
+  let match: RegExpExecArray | null;
+  while ((match = token.exec(fonte)) !== null) {
+    if (match.index > ultimo) atual().push({ tipo: 'texto', valor: fonte.slice(ultimo, match.index) });
+    const marcador = match[0];
+    const tipo = marcador.startsWith('[c:') ? 'cor' : marcador === '**' ? 'bold' : marcador === '~~' ? 'strike' : marcador === '*' ? 'italic' : null;
+    if (tipo && pilha[pilha.length - 1]?.tipo === tipo) pilha.pop();
+    else if (tipo) abrir(tipo, match[1]);
+    else {
+      // Dados antigos podem ter fechamento extra/cruzado; ele e metadado de formatacao,
+      // portanto nunca deve vazar como texto para o usuario.
+      const indiceCor = pilha.map((no) => no.tipo).lastIndexOf('cor');
+      if (indiceCor >= 0) pilha.length = indiceCor;
+    }
+    ultimo = token.lastIndex;
   }
-  if (ultimo < fonte.length) nos.push({ tipo: 'texto', valor: fonte.slice(ultimo) });
-  return nos;
+  if (ultimo < fonte.length) atual().push({ tipo: 'texto', valor: fonte.slice(ultimo) });
+  return raiz;
 }
 
 function renderNos(nos: NoMarcado[], prefixo = ''): React.ReactNode[] {
@@ -539,9 +571,9 @@ export function serializeCellDom(no: Node): string {
     case 'S': case 'STRIKE': case 'DEL': return `~~${inner}~~`;
     case 'SPAN': return elem.style.color ? `[c:${rgbParaHex(elem.style.color)}]${inner}[/c]` : inner;
     case 'BR': return '\n';
-    // Rede de seguranca: com Enter interceptado (insertText '\n', ver onKeyDown da celula), o
-    // navegador nao deveria criar DIV/P por linha - mas se criar mesmo assim, nao perde o texto.
-    case 'DIV': case 'P': return `\n${inner}`;
+    // Enter ja vira texto '\n'. DIV/P aqui sao wrappers que o browser pode criar ao formatar um
+    // trecho; prefixar '\n' transformava uma formatacao em linha invisivel a cada novo wrap.
+    case 'DIV': case 'P': return inner;
     default: return inner; // wrapper desconhecido (ex.: <font> que o navegador as vezes insere): so desembrulha
   }
 }
@@ -609,6 +641,9 @@ if (import.meta.env?.DEV) {
     const raiz = document.createElement('div');
     raiz.innerHTML = 'aaa<strong><span style="color:#16A34A">aa</span></strong>bbb';
     console.assert(serializeCellDom(raiz) === 'aaa**[c:#16A34A]aa[/c]**bbb', 'serializeCellDom deveria reconstruir a marcacao aninhada a partir do DOM');
+    raiz.innerHTML = '<div>Em a<strong>nda</strong>me<span style="color:#DC2626">nto</span></div>';
+    console.assert(serializeCellDom(raiz) === 'Em a**nda**me[c:#DC2626]nto[/c]', 'wrapper do browser nao pode virar linha invisivel');
+    console.assert(!cellMarkupToHtml('aaaa[c:#2563EB]a[c:#F05D28]a[/c][/c][c:#F05D28]aa**aa**[/c]').includes('[c:'), 'marcadores aninhados nao podem aparecer como texto');
   }
 }
 
@@ -1026,6 +1061,9 @@ export default function Anotacoes({
   const addBanco = () => setEditing((prev) => (
     prev ? { ...prev, bancos: [...(prev.bancos ?? []), createBanco(3, 3)] } : prev
   ));
+  const addDemandaBanco = () => setEditing((prev) => (
+    prev ? { ...prev, bancos: [...(prev.bancos ?? []), createDemandaBanco()] } : prev
+  ));
   const removeBanco = (bancoIndex: number) => setEditing((prev) => (
     prev ? { ...prev, bancos: (prev.bancos ?? []).filter((_, index) => index !== bancoIndex) } : prev
   ));
@@ -1040,6 +1078,19 @@ export default function Anotacoes({
     ...banco,
     rows: banco.rows.map((row, ri) => (ri === r ? row.map((cell, ci) => (ci === c ? value : cell)) : row)),
   }));
+  // Status do banco "+ Demanda Digital": muda o texto da celula E a cor de fundo da linha inteira
+  // (styles por cellKey), reusando DEMANDA_STATUS_COR - a mesma paleta que colore o card no kanban.
+  const setDemandaStatus = (bancoIndex: number, r: number, status: DemandaStatus) => updateBanco(bancoIndex, (banco) => {
+    const statusCol = demandaCols(banco.rows).status;
+    return {
+      ...banco,
+      rows: banco.rows.map((row, ri) => (ri === r ? row.map((cell, ci) => (ci === statusCol ? status : cell)) : row)),
+      styles: {
+        ...banco.styles,
+        ...Object.fromEntries(banco.rows[0].map((_, ci) => [cellKey(r, ci), { ...banco.styles?.[cellKey(r, ci)], bg: DEMANDA_STATUS_COR[status] }])),
+      },
+    };
+  });
   // Editor aberto: comeca a montar o dicionario ja, pra o menu nao esperar os ~13s de carga.
   React.useEffect(() => { if (editing) aquecerCorretor(); }, [Boolean(editing)]);
 
@@ -1648,11 +1699,13 @@ export default function Anotacoes({
     };
     const escolherEventoAgenda = async (evento: CalendarEventOption) => {
       const tituloNota = editing.titulo || evento.title;
+      const participantesDoSistema = matchCalendarAttendees(evento, usuarios);
       setEditing((prev) => (prev ? {
         ...prev,
         googleEventUrl: evento.htmlLink,
         geminiNotesUrl: evento.geminiNotesUrl || prev.geminiNotesUrl,
         titulo: prev.titulo || evento.title,
+        marcadosUsuarios: Array.from(new Set([...(prev.marcadosUsuarios || []), ...participantesDoSistema])),
       } : prev));
       setAgendaPickerOpen(false);
       // Deixa uma linha de referencia na descricao do EVENTO tambem (nao so na nota) - quem
@@ -2069,19 +2122,19 @@ export default function Anotacoes({
                       </button>
                       <button
                         type="button"
+                        onClick={() => { addDemandaBanco(); setConfigOpen(false); }}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                      >
+                        <FileSpreadsheet size={14} />
+                        + Demanda Digital
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => { addChecklist(); setConfigOpen(false); }}
                         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
                       >
                         <ListChecks size={14} />
                         + Checklist
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setHistoryOpen(true); setConfigOpen(false); }}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
-                      >
-                        <History size={14} />
-                        Histórico de salvamentos
                       </button>
                       <button
                         type="button"
@@ -2095,6 +2148,14 @@ export default function Anotacoes({
                       >
                         <CalendarClock size={14} />
                         + Project
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setHistoryOpen(true); setConfigOpen(false); }}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
+                      >
+                        <History size={14} />
+                        Histórico de salvamentos
                       </button>
                     </div>
                   </>
@@ -2259,6 +2320,9 @@ export default function Anotacoes({
                 Desvincular
               </button>
             )}
+            {editing.googleEventUrl && marcadosUsuarios.length > 0 && (
+              <span>{marcadosUsuarios.length} usuário(s) do evento vinculado(s)</span>
+            )}
           </div>
 
           <p className="mt-2 text-[11px] text-[#94A3B8]">
@@ -2270,7 +2334,10 @@ export default function Anotacoes({
 
           {bancos.length > 0 && (
             <div className="mt-3 flex flex-col gap-4">
-              {bancos.map((banco, bancoIndex) => (
+              {bancos.map((banco, bancoIndex) => {
+                // Achado uma vez por banco (nao por celula) - o <select> de status olha pra ca.
+                const demandaStatusCol = banco.tipo === 'demanda' ? demandaCols(banco.rows).status : -1;
+                return (
                 <div
                   key={banco.id}
                   className={`overflow-hidden rounded-xl border border-[#E5E7EB] ${ownerReview && pendingProposal?.changedBancoBlockIds.includes(banco.id) ? 'ring-2 ring-[#DC2626]/60' : ''}`}
@@ -2466,7 +2533,18 @@ export default function Anotacoes({
                                   {/* Celula de checklist (coluna inteira via checklistCols OU celula avulsa via
                                       checklistCells), r>=1: checkbox + texto lado a lado. r===0 continua
                                       textarea normal (titulo/rotulo), mesmo numa coluna de checklist. */}
-                                  {r > 0 && (banco.checklistCols?.includes(c) || banco.checklistCells?.includes(chave)) ? (
+                                  {r > 0 && banco.tipo === 'demanda' && c === demandaStatusCol ? (
+                                    <select
+                                      value={DEMANDA_STATUS_OPCOES.includes(cell as DemandaStatus) ? cell : DEMANDA_STATUS_OPCOES[0]}
+                                      disabled={!podeEditar}
+                                      onChange={(event) => setDemandaStatus(bancoIndex, r, event.target.value as DemandaStatus)}
+                                      className="h-full w-full cursor-pointer bg-transparent px-2 py-1.5 text-[13px] text-[#374151] outline-none"
+                                    >
+                                      {DEMANDA_STATUS_OPCOES.map((status) => (
+                                        <option key={status} value={status}>{status}</option>
+                                      ))}
+                                    </select>
+                                  ) : r > 0 && (banco.checklistCols?.includes(c) || banco.checklistCells?.includes(chave)) ? (
                                     checklistItens.length > 0 ? (
                                       <div className="flex h-full w-full flex-col gap-1 overflow-auto px-1.5 py-1">
                                         {checklistItens.map((item) => (
@@ -2747,7 +2825,8 @@ export default function Anotacoes({
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -3832,6 +3911,7 @@ export default function Anotacoes({
                     <span className="text-[11px] text-[#94A3B8]">
                       {new Date(evento.start).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                       {evento.geminiNotesUrl ? ' • com ata do Gemini' : ''}
+                      {matchCalendarAttendees(evento, usuarios).length ? ` • ${matchCalendarAttendees(evento, usuarios).length} usuário(s) do EcoQuanta` : ''}
                     </span>
                   </button>
                 ))}

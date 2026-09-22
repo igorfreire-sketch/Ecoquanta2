@@ -35,6 +35,71 @@
   }
 }
 
+/* O Recharts torna o SVG focável e o navegador desenha um retângulo preto após o clique.
+   A interação continua ativa; removemos somente esse contorno nativo dentro da Análise de OS. */
+.cept-interactive-chart .recharts-wrapper:focus,
+.cept-interactive-chart .recharts-wrapper:focus-visible,
+.cept-interactive-chart .recharts-surface:focus,
+.cept-interactive-chart .recharts-surface:focus-visible,
+.cept-interactive-chart svg:focus,
+.cept-interactive-chart svg:focus-visible {
+  outline: none !important;
+}
+
+.cept-os-dashboard button:focus {
+  outline: none;
+}
+
+.cept-os-dashboard button:focus-visible,
+.cept-os-dashboard [role="button"]:focus-visible {
+  outline: 2px solid rgba(240, 93, 40, 0.35);
+  outline-offset: 2px;
+}
+
+/* Camada ambiente tipo shader: decorativa, sem mudar os dados nem a legibilidade do gráfico. */
+.cept-chart-card {
+  isolation: isolate;
+  overflow: hidden;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.cept-chart-card::before {
+  content: '';
+  position: absolute;
+  inset: -42%;
+  z-index: -1;
+  background: conic-gradient(from 210deg, rgba(240, 93, 40, 0.16), rgba(72, 160, 214, 0.12), rgba(252, 187, 60, 0.14), rgba(240, 93, 40, 0.16));
+  filter: blur(32px);
+  opacity: 0.78;
+  animation: cept-chart-ambient 18s linear infinite;
+  pointer-events: none;
+}
+
+.cept-chart-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(122deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0.28) 45%, rgba(255, 247, 242, 0.62));
+  pointer-events: none;
+}
+
+.cept-chart-card:hover {
+  border-color: rgba(240, 93, 40, 0.3);
+  box-shadow: 0 22px 46px -31px rgba(15, 23, 42, 0.58);
+  transform: translateY(-2px);
+}
+
+@keyframes cept-chart-ambient {
+  to { transform: rotate(1turn); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cept-chart-card { transition: none; }
+  .cept-chart-card::before { animation: none; }
+  .cept-chart-card:hover { transform: none; }
+}
+
 /* ================= CARTOES TRANSLUCIDOS =================
    Os cartoes de conteudo deixam a folha do fundo transparecer. O alvo e a sombra do padrao
    "folha aberta" — seletor por substring da classe, que evita escapar parenteses e virgulas

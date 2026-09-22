@@ -27,6 +27,7 @@ import {
   Sun,
   CalendarDays,
   CalendarClock,
+  Lightbulb,
 } from 'lucide-react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import type {
@@ -60,6 +61,11 @@ import Notificacoes from './components/Notificacoes';
 import FirebaseExplorer from './components/FirebaseExplorer';
 import Principal from './components/Principal';
 import BancoLinksPage from './components/BancoLinksPage';
+import FeedbackLauncher, { type FeedbackDraft } from './components/FeedbackLauncher';
+import IaExport from './components/IaExport';
+import DemandasDigitais, { mapNotesToDemandas } from './components/DemandasDigitais';
+import { createFeedbackReport, listFeedbackReports, subscribeFeedbackReports } from './lib/feedbackReports';
+import type { FeedbackReport, FeedbackReportStatus } from './types/feedbackReport';
 
 // Firestore rejects nested arrays, so `rows: string[][]` (legado) and `bancos` (cada um com seu
 // proprio rows: string[][]) sao JSON-encoded em strings unicas para storage.
@@ -163,7 +169,8 @@ const Cronogramas = React.lazy(() => import('./components/Cronogramas'));
 const Notes = React.lazy(() => import('./components/CoordenacaoEngenharia/Notes'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
 const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
-const CeptDashboard = React.lazy(() => import('./components/CoordenacaoEngenharia/CeptDashboard'));
+const CeptDashboard = React.lazy(() => import('./components/Compatibilizacao/AnaliseOS'));
+const CompatibilizacaoPreenchimento = React.lazy(() => import('./components/Compatibilizacao/Preenchimento'));
 const Administracao = React.lazy(() => import('./components/Administracao'));
 const EAP_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
 const APP_VERSION_LABEL = getAppVersionLabel();
@@ -237,17 +244,19 @@ function shouldLockUserToContract(user?: AuthUser | null) {
   return Boolean(String(user.contrato || '').trim());
 }
 
-type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'cronograma' | 'solucoes' | 'banco-links' | 'administracao';
+type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato' | 'nc2' | 'compatibilizacao' | 'cronograma' | 'solucoes' | 'banco-links' | 'demandas' | 'administracao';
 // 'project' e irma de 'disciplinas' (Notas): as duas sao paginas globais, iguais em toda area.
 type AreaTecnicaSubTab = 'atividades' | 'disciplinas' | 'project';
-type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'cept' | 'disciplinas' | 'project';
+type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas' | 'project';
 type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas' | 'project';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'disciplinas' | 'project';
+type CompatibilizacaoSubTab = 'analise-os' | 'preenchimento';
 type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | 'disciplinas' | 'project';
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro' | 'firebase';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
   { key: 'nc2', label: 'Conformidade' },
+  { key: 'compatibilizacao', label: 'Compatibilização' },
   { key: 'controle', label: 'Coordenação de Engenharia' },
   { key: 'planejamento', label: 'Planejamento' },
   { key: 'contrato', label: 'Contrato' },
@@ -262,6 +271,7 @@ const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
 const AREA_LABELS: Record<string, string> = {
   principal: 'Principal',
   'banco-links': 'Banco de Links',
+  demandas: 'Demandas Digitais',
   ...Object.fromEntries(ADMIN_APP_TABS.map((tab) => [tab.key, tab.label])),
 };
 
@@ -995,6 +1005,10 @@ function getUserInitials(nome: string) {
 function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleTabPermissions = {}) {
   if (tab === 'principal') return true; // Principal e a casa de todo usuario logado.
   if (user.isAdmin) return true;
+  // Todo usuario aprovado recebe as areas comuns do ecossistema. As demais continuam
+  // dependentes da permissao persistida e da logica especial de contrato/empresa.
+  if (String(user.status || '').trim().toLowerCase() === 'approved'
+    && (tab === 'registro' || tab === 'cronograma' || tab === 'solucoes' || tab === 'banco-links' || tab === 'demandas')) return true;
   // Dominio corporativo ja entra liberado nessas 3 abas, sem depender de permissao do admin.
   if (isCorporateEmail(user.email || '') && (tab === 'registro' || tab === 'cronograma' || tab === 'banco-links')) {
     return true;
@@ -1021,6 +1035,7 @@ function userHasTabAccess(user: AuthUser, tab: AppTab, roleTabPermissions: RoleT
     const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
     return getUserDisciplineList(user).some((d) => norm(d).includes('solucoes digitais'));
   }
+  if (tab === 'demandas') return false;
   return hasPersistedTabAccess(userTabs, tab);
 }
 
@@ -1613,6 +1628,17 @@ export default function App() {
   }, [acessibilidade]);
 
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  // Link para IA (#ia): pagina fullscreen sem passar pelo activeTab. O app nao tem router;
+  // hash e o menor jeito de ter uma URL estavel pra apontar uma IA local.
+  const [locationHash, setLocationHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const onHashChange = () => setLocationHash(window.location.hash);
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+  const [feedbackReports, setFeedbackReports] = useState<FeedbackReport[]>([]);
+  const [feedbackLoadError, setFeedbackLoadError] = useState('');
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   const [activeTab, setActiveTab] = React.useState<AppTab>('principal');
   const [principalSubTab, setPrincipalSubTab] = React.useState<'inicio' | 'project'>('inicio');
@@ -1620,6 +1646,7 @@ export default function App() {
   const [subTab, setSubTab] = React.useState<ControleSubTab>('planejamento');
   const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('atividades');
   const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
+  const [compatibilizacaoSubTab, setCompatibilizacaoSubTab] = React.useState<CompatibilizacaoSubTab>('analise-os');
   // Registro clicado no Kanban da Principal: fica aqui ate a Conformidade montar e consumir.
   const [pendingNc2EditRecord, setPendingNc2EditRecord] = React.useState<Nc2Record | null>(null);
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('atividades');
@@ -1713,6 +1740,56 @@ export default function App() {
   const deletedUserEmailsRef = React.useRef<Set<string>>(new Set());
   const databaseLinksComSeed = React.useMemo(() => withSeedDatabaseLinks(databaseLinks), [databaseLinks]);
 
+  const loadFeedbackReports = useCallback(async () => {
+    if (!currentUser) return;
+    setFeedbackLoading(true);
+    setFeedbackLoadError('');
+    try {
+      setFeedbackReports(await listFeedbackReports({ includeAll: Boolean(currentUser.isAdmin) }));
+    } catch (error) {
+      setFeedbackLoadError(error instanceof Error ? error.message : 'Não foi possível carregar as demandas.');
+    } finally {
+      setFeedbackLoading(false);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setFeedbackReports([]);
+      return;
+    }
+    void loadFeedbackReports();
+    return subscribeFeedbackReports(
+      (reports) => setFeedbackReports(reports),
+      { includeAll: Boolean(currentUser.isAdmin) },
+      (error) => setFeedbackLoadError(error.message),
+    );
+  }, [currentUser, loadFeedbackReports]);
+
+  const submitFeedback = useCallback(async (draft: FeedbackDraft) => {
+    if (!currentUser) throw new Error('Entre novamente para enviar um relato.');
+    await createFeedbackReport({
+      kind: draft.kind,
+      route: draft.target?.path || `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      targetToken: draft.target?.dataTarget,
+      xRatio: draft.target?.x,
+      yRatio: draft.target?.y,
+      title: draft.title,
+      body: draft.description,
+    });
+    await loadFeedbackReports();
+  }, [currentUser, loadFeedbackReports]);
+
+  const moveFeedback = useCallback(async (id: string, status: FeedbackReportStatus) => {
+    if (!currentUser?.isAdmin) return;
+    const current = feedbackReports.find((report) => report.id === id);
+    if (!current) return;
+    // Status transitions are admin-only in Firestore. The adapter intentionally uses
+    // the existing document helper; no client-side role claim is treated as authority.
+    await setFirebaseDocument('feedbackReports', id, { status });
+    await loadFeedbackReports();
+  }, [currentUser, feedbackReports, loadFeedbackReports]);
+
   const markUserDirty = useCallback((userId: string) => {
     dirtyUserIdsRef.current.add(userId);
     setDirtyUserIds((prev) => prev.includes(userId) ? prev : [...prev, userId]);
@@ -1721,6 +1798,9 @@ export default function App() {
   // ANOTACOES (Disciplinas)
   const [notes, setNotes] = useState<AnnotationSheet[]>([]);
   const [notesLoadError, setNotesLoadError] = useState('');
+  // Cards do kanban de Demandas Digitais derivados dos bancos "+ Demanda Digital" das notas
+  // (a nota e a dona do dado, este e so leitura - mesmo padrao do "+ Project"/CronogramaDoc).
+  const noteDemands = React.useMemo(() => mapNotesToDemandas(notes), [notes]);
   // Notas que aparecem no Kanban da Principal, sem as concluidas ha 10+ dias (essas vivem na aba
   // "Notas Concluidas" de Anotacoes.tsx). As do seu setor so pra lider/coordenador (isNc2Leader,
   // mesmo gate dos cards de conformidade); as que te marcaram, ou privadas suas, aparecem pra
@@ -2604,6 +2684,7 @@ export default function App() {
     planejamento: planejamentoSubTab,
     contrato: contratoSubTab,
     nc2: nc2SubTab,
+    compatibilizacao: compatibilizacaoSubTab,
     cronograma: cronogramaSubTab,
     administracao: adminSubTab,
   } as Record<string, string>)[activeTab];
@@ -2616,6 +2697,7 @@ export default function App() {
       planejamento: setPlanejamentoSubTab,
       contrato: setContratoSubTab,
       nc2: setNc2SubTab,
+      compatibilizacao: setCompatibilizacaoSubTab,
       cronograma: setCronogramaSubTab,
     };
     const ir = setters[activeTab];
@@ -3658,9 +3740,7 @@ export default function App() {
     if (activeTab === 'controle') {
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: subTab === 'planejamento', onClick: () => setSubTab('planejamento') },
-        { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },
-        { key: 'cept', label: 'CEPT', icon: <ClipboardList size={16} />, active: subTab === 'cept', onClick: () => setSubTab('cept') },
-        { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: subTab === 'disciplinas', onClick: () => setSubTab('disciplinas') },
+        { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: subTab === 'curva-s', onClick: () => setSubTab('curva-s') },        { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: subTab === 'disciplinas', onClick: () => setSubTab('disciplinas') },
       ];
     }
 
@@ -3681,6 +3761,13 @@ export default function App() {
         { key: 'terceirizadas', label: 'Terceirizadas', icon: <Users size={16} />, active: nc2SubTab === 'terceirizadas', onClick: () => setNc2SubTab('terceirizadas') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: nc2SubTab === 'disciplinas', onClick: () => setNc2SubTab('disciplinas') },
         ...projectSubTab(nc2SubTab, () => setNc2SubTab('project')),
+      ];
+    }
+
+    if (activeTab === 'compatibilizacao') {
+      return [
+        { key: 'analise-os', label: 'Análise de OS', icon: <ClipboardList size={16} />, active: compatibilizacaoSubTab === 'analise-os', onClick: () => setCompatibilizacaoSubTab('analise-os') },
+        { key: 'preenchimento', label: 'Preenchimento', icon: <Clipboard size={16} />, active: compatibilizacaoSubTab === 'preenchimento', onClick: () => setCompatibilizacaoSubTab('preenchimento') },
       ];
     }
 
@@ -3729,6 +3816,10 @@ export default function App() {
       ))}
     </div>
   ) : null;
+
+  if (locationHash === '#ia' && currentUser) {
+    return <IaExport notes={notes} reports={feedbackReports} onClose={() => { window.location.hash = ''; }} />;
+  }
 
   if (!currentUser && !preloading) {
     return (
@@ -3864,6 +3955,15 @@ export default function App() {
               {currentUser && userHasTabAccess(currentUser, 'banco-links', roleTabPermissions) && (
                 <NavItem icon={<Database size={20} />} label="Banco de Links" active={activeTab === 'banco-links'} onClick={() => setActiveTab('banco-links')} />
               )}
+              {currentUser && userHasTabAccess(currentUser, 'compatibilizacao', roleTabPermissions) && (
+                <>
+                  <NavItem icon={<Layers size={20} />} label="Compatibilização" active={activeTab === 'compatibilizacao'} onClick={() => setActiveTab('compatibilizacao')} />
+                  {activeTab === 'compatibilizacao' && subNav}
+                </>
+              )}
+              {currentUser && userHasTabAccess(currentUser, 'demandas', roleTabPermissions) && (
+<NavItem icon={<Lightbulb size={20} />} label="Soluções Digitais" active={activeTab === 'demandas'} onClick={() => setActiveTab('demandas')} />
+              )}
               {currentUser && currentUser.isAdmin && (
                 <>
                   <NavItem icon={<ShieldCheck size={20} />} label="Administração" active={activeTab === 'administracao'} onClick={() => setActiveTab('administracao')} />
@@ -3987,7 +4087,7 @@ export default function App() {
         )}
 
         <main className="relative z-10 flex-1 overflow-y-auto px-8 pb-8 pt-2">
-          <TabErrorBoundary resetKey={`${activeTab}:${principalSubTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${adminSubTab}:${cronogramaSubTab}`}>
+          <TabErrorBoundary resetKey={`${activeTab}:${principalSubTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${compatibilizacaoSubTab}:${adminSubTab}:${cronogramaSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
             {/* Troca de pagina = fade out + fade in (~0.5s no total) pra suavizar e cobrir o load.
                 mode="wait": a tela antiga some antes da nova entrar; sem deslize (y), so opacidade. */}
@@ -4032,8 +4132,6 @@ export default function App() {
                   ? notesPage
                   : subTab === 'project'
                   ? projectsPage
-                  : subTab === 'cept'
-                  ? <CeptDashboard currentUser={currentUser} />
                   : <ControleEngenharia currentUser={currentUser} filtrosAtivos={filtrosAtivos} subTab={subTab} onSubTabChange={setSubTab} preloadedData={effectiveGlobalData} lockedContractCode={lockedContractCode} disciplinas={disciplinas} />
               )}
               {activeTab === 'planejamento' && currentUser && userHasTabAccess(currentUser, 'planejamento', roleTabPermissions) && (
@@ -4068,6 +4166,14 @@ export default function App() {
               )}
               {activeTab === 'banco-links' && currentUser && userHasTabAccess(currentUser, 'banco-links', roleTabPermissions) && (
                 <BancoLinksPage links={databaseLinksComSeed} canManage={Boolean(currentUser?.isAdmin)} onSaveLink={currentUser?.isAdmin ? saveDatabaseLinkAndPersist : undefined} />
+              )}
+              {activeTab === 'compatibilizacao' && currentUser && userHasTabAccess(currentUser, 'compatibilizacao', roleTabPermissions) && (
+                compatibilizacaoSubTab === 'analise-os'
+                  ? <CeptDashboard currentUser={currentUser} osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []} />
+                  : <CompatibilizacaoPreenchimento osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []} currentUser={currentUser} />
+              )}
+              {activeTab === 'demandas' && currentUser && (
+                <DemandasDigitais reports={feedbackReports} noteDemands={noteDemands} canAccess={userHasTabAccess(currentUser, 'demandas', roleTabPermissions)} loading={feedbackLoading} error={feedbackLoadError} onStatusChange={currentUser.isAdmin ? moveFeedback : undefined} onArchive={currentUser.isAdmin ? (id) => moveFeedback(id, 'archived') : undefined} />
               )}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
                 nc2SubTab === 'disciplinas'
@@ -4123,6 +4229,7 @@ export default function App() {
         </main>
       </div>
     </div>
+    {currentUser && <FeedbackLauncher onSubmit={submitFeedback} />}
     </MotionConfig>
     </NoteProjectsContext.Provider>
   );

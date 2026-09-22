@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckSquare, ChevronDown, Square } from 'lucide-react';
 
 export interface SearchableMultiSelectProps {
@@ -10,6 +11,24 @@ export interface SearchableMultiSelectProps {
   className?: string;
   emptyMessage?: string;
   disabled?: boolean;
+}
+
+export function getMultiSelectPlacement(
+  rect: { left: number; top: number; bottom: number; width: number },
+  viewport: { width: number; height: number },
+) {
+  const gutter = 12;
+  const panelWidth = Math.max(rect.width, 260);
+  const left = Math.min(Math.max(gutter, rect.left), Math.max(gutter, viewport.width - panelWidth - gutter));
+  const spaceBelow = viewport.height - rect.bottom;
+  const openUpward = spaceBelow < 320 && rect.top > spaceBelow;
+  return {
+    left,
+    width: Math.min(panelWidth, viewport.width - gutter * 2),
+    openUpward,
+    top: rect.bottom + 6,
+    bottom: viewport.height - rect.top + 6,
+  };
 }
 
 function normalizeText(value: string) {
@@ -37,7 +56,9 @@ export default function SearchableMultiSelect({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [placement, setPlacement] = useState({ left: 0, width: 260, top: 0, bottom: 0, openUpward: false });
 
   const labelOf = useCallback(
     (option: string) => (getOptionLabel ? getOptionLabel(option) : option),
@@ -60,7 +81,8 @@ export default function SearchableMultiSelect({
   useEffect(() => {
     if (!open) return;
     const handlePointer = (event: MouseEvent | TouchEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) close();
+      const target = event.target as Node;
+      if (!wrapperRef.current?.contains(target) && !panelRef.current?.contains(target)) close();
     };
     document.addEventListener('mousedown', handlePointer);
     document.addEventListener('touchstart', handlePointer);
@@ -69,6 +91,22 @@ export default function SearchableMultiSelect({
       document.removeEventListener('touchstart', handlePointer);
     };
   }, [open, close]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setPlacement(getMultiSelectPlacement(rect, { width: window.innerWidth, height: window.innerHeight }));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+    };
+  }, [open]);
 
   const toggleOption = (option: string) => {
     onChange(selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option]);
@@ -120,8 +158,16 @@ export default function SearchableMultiSelect({
         </button>
       </div>
 
-      {open && (
-        <div className="absolute left-0 right-0 z-30 mt-1 max-h-[300px] min-w-[260px] overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white p-2 shadow-xl">
+      {open && createPortal(
+        <div
+          ref={panelRef}
+          className="fixed z-[600] max-h-[300px] overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white p-2 shadow-[0_22px_50px_-18px_rgba(15,23,42,.38)]"
+          style={{
+            left: placement.left,
+            width: placement.width,
+            ...(placement.openUpward ? { bottom: placement.bottom } : { top: placement.top }),
+          }}
+        >
           {options.length === 0 ? (
             <p className="px-3 py-2 text-center text-[12px] text-[#9CA3AF]">{emptyMessage}</p>
           ) : filtered.length === 0 ? (
@@ -154,7 +200,8 @@ export default function SearchableMultiSelect({
               })}
             </>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

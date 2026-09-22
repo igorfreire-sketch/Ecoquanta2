@@ -605,7 +605,20 @@ export async function fetchGlobalDataFromFirebase(user?: AuthUserLike): Promise<
   return fullData;
 }
 
-function mergePendingAuthUsersIntoAdmin(admin: any, auth: any): any {
+const AUTH_PROFILE_FIELDS = [
+  'id', 'nome', 'name', 'email', 'cargo', 'role', 'disciplina', 'disciplinas',
+  'contrato', 'contract', 'alocacao', 'allocation', 'status', 'allowedTabs', 'abas',
+  'isAdmin', 'onlyThirdParty', 'onlyThirdPartyUsers', 'somenteTerceirizados',
+  'showInCharts', 'sessionVersion', 'sessionversion', 'adminReviewed',
+] as const;
+
+function authProfile(user: any) {
+  return Object.fromEntries(AUTH_PROFILE_FIELDS
+    .filter((field) => user && user[field] !== undefined)
+    .map((field) => [field, user[field]]));
+}
+
+export function mergePendingAuthUsersIntoAdmin(admin: any, auth: any): any {
   const authUsers: any[] = Array.isArray(auth?.users) ? auth.users
     : auth?.usersByEmail && typeof auth.usersByEmail === 'object' ? Object.values(auth.usersByEmail)
     : [];
@@ -614,17 +627,21 @@ function mergePendingAuthUsersIntoAdmin(admin: any, auth: any): any {
   const safeAdmin = admin && typeof admin === 'object' ? admin : {};
   const adminUsers: any[] = Array.isArray(safeAdmin.users) ? safeAdmin.users
     : Array.isArray(safeAdmin.usuarios) ? safeAdmin.usuarios : [];
-  const adminEmailSet = new Set(
-    adminUsers.map((u: any) => String(u.email || u.id || '').toLowerCase().trim()).filter(Boolean),
-  );
-
-  const newFromAuth = authUsers.filter((u: any) => {
-    const email = String(u.email || u.id || '').toLowerCase().trim();
-    return email && !adminEmailSet.has(email);
+  const authByEmail = new Map(authUsers.map((user: any) => [
+    String(user.email || user.id || '').toLowerCase().trim(), user,
+  ]));
+  const adminEmailSet = new Set(adminUsers.map((user: any) => String(user.email || user.id || '').toLowerCase().trim()).filter(Boolean));
+  const reconciledUsers = adminUsers.map((user: any) => {
+    const authUser = authByEmail.get(String(user.email || user.id || '').toLowerCase().trim());
+    // auth e o registro usado no login e e atualizado junto pelo painel administrativo;
+    // se um publicador externo regravar admin com um snapshot antigo, ele nao pode desfazer perfil/acesso.
+    return authUser ? { ...user, ...authProfile(authUser) } : user;
   });
+  const newFromAuth = authUsers
+    .filter((user: any) => !adminEmailSet.has(String(user.email || user.id || '').toLowerCase().trim()))
+    .map(authProfile);
 
-  if (newFromAuth.length === 0) return admin;
-  return { ...safeAdmin, users: [...adminUsers, ...newFromAuth] };
+  return { ...safeAdmin, users: [...reconciledUsers, ...newFromAuth] };
 }
 
 export async function fetchBootstrapDataFromFirebase(): Promise<GlobalData> {
@@ -1050,6 +1067,28 @@ export async function setFirebaseDocument(collectionName: string, id: string, da
     ...payload,
     updatedAt: payload.updatedAt || serverTimestamp(),
   }, { merge: true });
+}
+
+/** Escrita otimista: evita que uma tela sobrescreva edição humana recém-feita. */
+export function nextDocumentVersion(expectedVersion: number, currentVersion: number): number {
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 0 || !Number.isInteger(currentVersion) || currentVersion < 0) {
+    throw new Error('Versão esperada inválida. Recarregue os dados antes de salvar.');
+  }
+  if (currentVersion !== expectedVersion) throw new Error('Este registro foi alterado por outra pessoa. Recarregue antes de salvar.');
+  return currentVersion + 1;
+}
+
+export async function setFirebaseDocumentVersioned(collectionName: string, id: string, data: object, expectedVersion: number): Promise<number> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  return runTransaction(dbRef, async (transaction) => {
+    const ref = doc(dbRef, collectionName, id);
+    const snapshot = await transaction.get(ref);
+    const currentVersion = snapshot.exists() ? Number(snapshot.data()?.version || 0) : 0;
+    const version = nextDocumentVersion(expectedVersion, currentVersion);
+    transaction.set(ref, { ...(data as Record<string, unknown>), version, updatedAt: serverTimestamp() }, { merge: true });
+    return version;
+  });
 }
 
 export async function setFirebaseDocuments(collectionName: string, rows: Array<object & { id: string }>) {

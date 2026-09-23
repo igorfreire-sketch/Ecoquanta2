@@ -15,7 +15,7 @@ import {
   type NotesFilterState,
 } from '../../lib/notesFilter';
 import { canDeleteNote, canEditNote, signInWithGooglePopup, getGoogleCalendarToken } from '../../lib/firebaseDb';
-import { listTodayCalendarEvents, linkNoteToEvent, fetchGoogleDocText, matchCalendarAttendees, type CalendarEventOption } from '../../lib/googleCalendar';
+import { listCalendarEvents, linkNoteToEvent, fetchGoogleDocText, matchCalendarAttendees, type CalendarEventOption } from '../../lib/googleCalendar';
 import {
   alturaParaLinhas, BANCO_COL_WIDTH, BANCO_ROW_HEIGHT, cellCss, cellKey, fonteCss, isCovered,
   LARGURA_QUEBRA_PX, mergeAt, mergeIntersects, PADDING_CELULA_X, quebrarTexto, remapMerges,
@@ -913,6 +913,9 @@ export default function Anotacoes({
   const [sincronizandoAgenda, setSincronizandoAgenda] = React.useState(false);
   const [agendaPickerOpen, setAgendaPickerOpen] = React.useState(false);
   const [agendaEventos, setAgendaEventos] = React.useState<CalendarEventOption[]>([]);
+  const [agendaEventoSelecionado, setAgendaEventoSelecionado] = React.useState<CalendarEventOption | null>(null);
+  const [agendaParticipantesSelecionados, setAgendaParticipantesSelecionados] = React.useState<string[]>([]);
+  const [agendaData, setAgendaData] = React.useState(() => new Date().toISOString().slice(0, 10));
 
   // Fecha o menu do card no Escape.
   React.useEffect(() => {
@@ -1678,7 +1681,7 @@ export default function Anotacoes({
     const updateTitulo = (titulo: string) => setEditing((prev) => (prev ? { ...prev, titulo } : prev));
     // Pede (de novo) o login Google com escopo de Agenda - gesto real do usuario, popup nao
     // e bloqueado - busca os eventos de hoje e abre o popup pra escolher qual vincular.
-    const vincularAgenda = async () => {
+    const carregarAgenda = async (data: string) => {
       setSincronizandoAgenda(true);
       try {
         let token = getGoogleCalendarToken();
@@ -1687,9 +1690,15 @@ export default function Anotacoes({
           token = getGoogleCalendarToken();
         }
         if (!token) throw new Error('Não foi possível obter acesso à Agenda do Google.');
-        const eventos = await listTodayCalendarEvents(token);
-        if (eventos.length === 0) { window.alert('Nenhum evento com horário na sua Agenda hoje.'); return; }
+        const [ano, mes, dia] = data.split('-').map(Number);
+        const inicio = new Date(ano, mes - 1, dia);
+        inicio.setDate(inicio.getDate() - ((inicio.getDay() + 6) % 7));
+        const fim = new Date(inicio);
+        fim.setDate(fim.getDate() + 7);
+        const eventos = await listCalendarEvents(token, inicio, fim);
         setAgendaEventos(eventos);
+        setAgendaEventoSelecionado(null);
+        setAgendaParticipantesSelecionados([]);
         setAgendaPickerOpen(true);
       } catch (err) {
         window.alert(err instanceof Error ? err.message : 'Falha ao vincular a Agenda do Google.');
@@ -1697,14 +1706,23 @@ export default function Anotacoes({
         setSincronizandoAgenda(false);
       }
     };
-    const escolherEventoAgenda = async (evento: CalendarEventOption) => {
+    const vincularAgenda = async () => {
+      try {
+        await signInWithGooglePopup();
+        await carregarAgenda(agendaData);
+      } catch (err: any) {
+        if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') return;
+        window.alert(err instanceof Error ? err.message : 'Falha ao abrir a Agenda do Google.');
+      }
+    };
+    const escolherEventoAgenda = async (evento: CalendarEventOption, participantesDoSistema: string[]) => {
       const tituloNota = editing.titulo || evento.title;
-      const participantesDoSistema = matchCalendarAttendees(evento, usuarios);
       setEditing((prev) => (prev ? {
         ...prev,
         googleEventUrl: evento.htmlLink,
         geminiNotesUrl: evento.geminiNotesUrl || prev.geminiNotesUrl,
         titulo: prev.titulo || evento.title,
+        publica: true,
         marcadosUsuarios: Array.from(new Set([...(prev.marcadosUsuarios || []), ...participantesDoSistema])),
       } : prev));
       setAgendaPickerOpen(false);
@@ -1713,7 +1731,7 @@ export default function Anotacoes({
       const token = getGoogleCalendarToken();
       if (!token) return;
       try {
-        await linkNoteToEvent(token, evento.id, tituloNota, `https://ecoquanta2.pages.dev/?nota=${editing.id}`);
+        await linkNoteToEvent(token, evento.calendarId, evento.id, `https://ecoquanta2.pages.dev/?nota=${editing.id}`);
       } catch (err) {
         window.alert(err instanceof Error ? err.message : 'Nota vinculada aqui, mas não consegui escrever no evento do Google.');
       }
@@ -1991,6 +2009,12 @@ export default function Anotacoes({
       return !query || normalizeText(sheet.titulo).includes(query);
     });
     const marcadosUsuarios = editing.marcadosUsuarios || [];
+    const agendaDias = Array.from({ length: 7 }, (_, indice) => {
+      const [ano, mes, dia] = agendaData.split('-').map(Number);
+      const data = new Date(ano, mes - 1, dia);
+      data.setDate(data.getDate() - ((data.getDay() + 6) % 7) + indice);
+      return { data, chave: `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, '0')}-${String(data.getDate()).padStart(2, '0')}` };
+    });
     const userPickerResults = usuarios.filter((user) => {
       const query = normalizeText(userSearch);
       return !query || normalizeText(user.nome).includes(query) || normalizeText(user.email).includes(query);
@@ -3801,7 +3825,7 @@ export default function Anotacoes({
 
         {userPickerOpen && (
           <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setUserPickerOpen(false)}>
-            <div className="flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-xl bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex h-[90vh] max-h-[90vh] w-[90vw] max-w-none flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
               <input
                 autoFocus
                 value={userSearch}
@@ -3897,32 +3921,63 @@ export default function Anotacoes({
 
         {agendaPickerOpen && (
           <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setAgendaPickerOpen(false)}>
-            <div className="flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-xl bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
-              <p className="mb-2 text-[13px] font-bold text-[#2D2D2D]">Escolha o evento de hoje pra vincular</p>
-              <div className="flex-1 overflow-auto">
-                {agendaEventos.map((evento) => (
-                  <button
-                    key={evento.id}
-                    type="button"
-                    onClick={() => void escolherEventoAgenda(evento)}
-                    className="flex w-full flex-col rounded-lg px-3 py-2 text-left text-[13px] text-[#2D2D2D] hover:bg-[#F9FAFB]"
-                  >
-                    <span className="font-bold">{evento.title}</span>
-                    <span className="text-[11px] text-[#94A3B8]">
-                      {new Date(evento.start).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                      {evento.geminiNotesUrl ? ' • com ata do Gemini' : ''}
-                      {matchCalendarAttendees(evento, usuarios).length ? ` • ${matchCalendarAttendees(evento, usuarios).length} usuário(s) do EcoQuanta` : ''}
-                    </span>
-                  </button>
-                ))}
+            <div className="flex h-[90vh] max-h-[90vh] w-[90vw] max-w-none flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              <header className="flex flex-wrap items-center gap-3 border-b border-[#E5E7EB] px-5 py-3">
+                <div className="mr-auto"><p className="text-[16px] font-black text-[#202124]">Agenda Google</p><p className="text-[11px] text-[#64748B]">Selecione um evento público para vincular a nota.</p></div>
+                <button type="button" aria-label="Dia anterior" onClick={() => {
+                  const data = new Date(`${agendaData}T00:00:00`); data.setDate(data.getDate() - 7);
+                  const proxima = data.toISOString().slice(0, 10); setAgendaData(proxima); void carregarAgenda(proxima);
+                }} className="rounded-full p-2 text-[#5F6368] hover:bg-[#F1F3F4]"><ChevronLeft size={18} /></button>
+                <input aria-label="Semana da agenda" type="date" value={agendaData} onChange={(event) => { setAgendaData(event.target.value); void carregarAgenda(event.target.value); }} className="h-9 rounded-lg border border-[#DADCE0] bg-white px-2 text-[12px] font-bold text-[#202124]" />
+                <button type="button" aria-label="Próximo dia" onClick={() => {
+                  const data = new Date(`${agendaData}T00:00:00`); data.setDate(data.getDate() + 7);
+                  const proxima = data.toISOString().slice(0, 10); setAgendaData(proxima); void carregarAgenda(proxima);
+                }} className="rounded-full p-2 text-[#5F6368] hover:bg-[#F1F3F4]"><ChevronRight size={18} /></button>
+                <button type="button" onClick={() => setAgendaPickerOpen(false)} className="rounded-full p-2 text-[#5F6368] hover:bg-[#F1F3F4]" aria-label="Fechar agenda"><X size={18} /></button>
+              </header>
+              <div className="min-h-0 flex-1 overflow-auto px-5 pb-5">
+                {!agendaEventoSelecionado ? (
+                  <div className="min-w-[1050px]">
+                    <div className="sticky top-0 z-10 grid grid-cols-[58px_repeat(7,minmax(140px,1fr))] border-b border-[#DADCE0] bg-white">
+                      <div />{agendaDias.map(({ data, chave }) => <div key={chave} className="border-l border-[#DADCE0] py-3 text-center"><p className="text-[11px] font-bold uppercase text-[#5F6368]">{data.toLocaleDateString('pt-BR', { weekday: 'short' })}</p><p className="text-[26px] font-normal text-[#202124]">{data.getDate()}</p></div>)}
+                    </div>
+                    <div className="grid grid-cols-[58px_repeat(7,minmax(140px,1fr))]">
+                      <div className="relative h-[1440px] text-right text-[10px] text-[#5F6368]">{Array.from({ length: 25 }, (_, hora) => <span key={hora} className="absolute right-2 -translate-y-1/2" style={{ top: `${hora * 60}px` }}>{String(hora).padStart(2, '0')}:00</span>)}</div>
+                    {agendaDias.map(({ chave }) => {
+                      const eventosDia = agendaEventos.filter((evento) => {
+                        const inicio = new Date(evento.start);
+                        return `${inicio.getFullYear()}-${String(inicio.getMonth() + 1).padStart(2, '0')}-${String(inicio.getDate()).padStart(2, '0')}` === chave;
+                      });
+                      return <section key={chave} className="relative h-[1440px] border-l border-[#DADCE0] bg-[repeating-linear-gradient(to_bottom,transparent_0,transparent_59px,#E8EAED_60px)]">
+                        {eventosDia.map((evento) => {
+                          const inicio = new Date(evento.start); const fim = new Date(evento.end);
+                          const inicioMinutos = inicio.getHours() * 60 + inicio.getMinutes();
+                          const duracao = Math.max(45, (fim.getTime() - inicio.getTime()) / 60000);
+                          return <button key={evento.id} type="button" onClick={() => {
+                          setAgendaEventoSelecionado(evento);
+                          setAgendaParticipantesSelecionados(matchCalendarAttendees(evento, usuarios));
+                        }} style={{ top: `${inicioMinutos}px`, height: `${Math.min(duracao, 1440)}px` }} className="absolute left-1 right-1 overflow-hidden rounded-md border border-[#AECBFA] bg-[#E8F0FE] p-2 text-left shadow-sm transition hover:z-10 hover:shadow-md">
+                          <span className="block text-[11px] font-black text-[#1967D2]">{inicio.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span><span className="block text-[12px] font-bold text-[#174EA6]">{evento.title}</span>
+                        </button>;
+                        })}
+                      </section>;
+                    })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mx-auto mt-10 w-full max-w-md space-y-2 rounded-xl border border-[#E5E7EB] p-5 shadow-sm">
+                    <button type="button" onClick={() => setAgendaEventoSelecionado(null)} className="text-[12px] font-bold text-[#F05D28] hover:underline">← Trocar evento</button>
+                    <p className="text-[13px] font-bold text-[#2D2D2D]">{agendaEventoSelecionado.title}</p>
+                    {matchCalendarAttendees(agendaEventoSelecionado, usuarios).map((email) => {
+                      const usuario = usuarios.find((item) => item.email.toLowerCase() === email);
+                      const marcado = agendaParticipantesSelecionados.includes(email);
+                      return <label key={email} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[13px] hover:bg-[#F9FAFB]"><input type="checkbox" checked={marcado} onChange={() => setAgendaParticipantesSelecionados((prev) => marcado ? prev.filter((item) => item !== email) : [...prev, email])} className="h-4 w-4 accent-[#F05D28]" />{usuario?.nome || email}</label>;
+                    })}
+                    {matchCalendarAttendees(agendaEventoSelecionado, usuarios).length === 0 && <p className="text-[12px] text-[#64748B]">Nenhum participante deste evento possui cadastro no EcoQuanta.</p>}
+                    <button type="button" onClick={() => void escolherEventoAgenda(agendaEventoSelecionado, agendaParticipantesSelecionados)} className="h-9 w-full rounded-lg bg-[#F05D28] px-4 text-[12px] font-bold text-white hover:bg-[#D94E1F]">Vincular nota</button>
+                  </div>
+                )}
               </div>
-              <button
-                type="button"
-                onClick={() => setAgendaPickerOpen(false)}
-                className="mt-3 h-9 rounded-lg bg-[#F05D28] px-4 text-[12px] font-bold text-white hover:bg-[#D94E1F]"
-              >
-                Cancelar
-              </button>
             </div>
           </div>
         )}

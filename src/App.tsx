@@ -290,9 +290,13 @@ function withSeedDatabaseLinks(items: any[]): DatabaseLinkRecord[] {
       nome: String(item?.nome || item?.name || ''),
       link: String(item?.link || item?.url || ''),
       descricao: String(item?.descricao || item?.description || ''),
+      tipo: item?.tipo === 'pasta' ? 'pasta' as const : 'link' as const,
+      pastaId: item?.pastaId ? String(item.pastaId) : undefined,
+      publico: item?.publico !== false,
+      criadoPor: item?.criadoPor ? String(item.criadoPor) : undefined,
       atualizadoEm: item?.atualizadoEm ? String(item.atualizadoEm) : undefined,
     }))
-    .filter((item) => item.nome.trim() && item.link.trim());
+    .filter((item) => item.nome.trim() && (item.tipo === 'pasta' || item.link.trim()));
 
   let seeded = false;
   const merged = links.filter((item) => {
@@ -887,6 +891,7 @@ function normalizeUser(raw: any): AuthUser {
   const disciplinas = splitDisciplineValues(raw.disciplinas || raw.disciplines || raw.disciplina);
   return {
     nome: raw.nome || '',
+    apelido: raw.apelido || '',
     email: raw.email || '',
     role: raw.role || '',
     disciplina: getPrimaryDisciplineValue(raw.disciplina || disciplinas[0] || ''),
@@ -937,6 +942,7 @@ function normalizeUserAccessRecord(raw: any): UserAccessRecord {
   return {
     id: String(raw?.id || raw?.email || ''),
     nome: String(raw?.nome || raw?.name || ''),
+    apelido: String(raw?.apelido || ''),
     email: String(raw?.email || raw?.id || ''),
     online: Boolean(raw?.online),
     disciplina: getPrimaryDisciplineValue(raw?.disciplina || raw?.discipline || raw?.disciplinas || ''),
@@ -1408,6 +1414,8 @@ function applyAdminUserContext(user: AuthUser, admin: any): AuthUser {
 
   return {
     ...user,
+    nome: String(match?.apelido || match?.nome || user.nome),
+    apelido: String(match?.apelido || user.apelido || ''),
     role: String(match?.role || match?.cargo || user.role || ''),
     abas: Array.isArray(match?.allowedTabs)
       ? match.allowedTabs.map((tab: any) => String(tab).trim()).filter(Boolean)
@@ -1701,6 +1709,7 @@ export default function App() {
     rememberMode: boolean;
   } | null>(null);
   const [corporateDisciplinaChoice, setCorporateDisciplinaChoice] = useState('');
+  const [corporateDisplayName, setCorporateDisplayName] = useState('');
   const [corporateSignupSubmitting, setCorporateSignupSubmitting] = useState(false);
   const [adminConfirmationOpen, setAdminConfirmationOpen] = useState(false);
   const pendingAdminConfirmationRef = React.useRef<{
@@ -1787,6 +1796,12 @@ export default function App() {
     // Status transitions are admin-only in Firestore. The adapter intentionally uses
     // the existing document helper; no client-side role claim is treated as authority.
     await setFirebaseDocument('feedbackReports', id, { status });
+    await loadFeedbackReports();
+  }, [currentUser, feedbackReports, loadFeedbackReports]);
+
+  const editFeedback = useCallback(async (id: string, values: { title: string; body: string }) => {
+    if (!currentUser?.isAdmin || !feedbackReports.some((report) => report.id === id)) return;
+    await setFirebaseDocument('feedbackReports', id, { title: values.title.trim().slice(0, 200), body: values.body.trim().slice(0, 5_000) });
     await loadFeedbackReports();
   }, [currentUser, feedbackReports, loadFeedbackReports]);
 
@@ -1905,6 +1920,7 @@ export default function App() {
       users: snapshotUsers.map((user) => ({
         id: user.id,
         nome: user.nome,
+        apelido: user.apelido || '',
         email: user.email,
         online: user.online,
         disciplina: user.disciplina,
@@ -1949,6 +1965,7 @@ export default function App() {
       return {
         id: user.id,
         nome: user.nome,
+        apelido: user.apelido || '',
         email: user.email,
         role: user.cargo,
         cargo: user.cargo,
@@ -2471,7 +2488,7 @@ export default function App() {
   }, [applyLoadedGlobalData, currentUser, globalData]);
 
   const persistAdminChanges = useCallback(async (options?: { silent?: boolean }) => {
-    if (!currentUser) return;
+    if (!currentUser) return false;
 
     const versionToSave = adminDraftVersionRef.current;
     if (!options?.silent) {
@@ -2488,7 +2505,7 @@ export default function App() {
         existingAuth,
         deletedUserEmails,
       } = await prepareAdminSnapshotForSave(draftState);
-      if (adminDraftVersionRef.current !== versionToSave) return;
+      if (adminDraftVersionRef.current !== versionToSave) return false;
       await Promise.all([
         writeAdminSnapshotToFirebase(adminSnapshot),
         syncAuthSnapshotToFirebase(safeDraftState.usuarios, existingAuth, deletedUserEmails),
@@ -2525,12 +2542,14 @@ export default function App() {
         setAdminHasPendingChanges(false);
         deletedUserEmailsRef.current = new Set();
       }
+      return true;
     } catch (error) {
       console.error('Falha ao salvar alteracoes administrativas:', error);
       // "silent" so suprime o spinner de sucesso - uma falha real (ex: disciplina/cargo que
       // "nao entra") tem que aparecer sempre, senao o usuario nao tem como saber que a
       // gravacao caiu e o item nunca foi salvo.
       window.alert(error instanceof Error ? error.message : 'Falha ao salvar alteracoes administrativas.');
+      return false;
     } finally {
       if (!options?.silent) {
         setIsSavingAdminChanges(false);
@@ -3105,11 +3124,12 @@ export default function App() {
     normalizedEmail: string;
     preRegistration: any;
     disciplinas: string[];
+    nomeExibicao?: string;
     authData: any;
     adminState: ReturnType<typeof getAdminState>;
     rememberMode: boolean;
   }) => {
-    const { email, normalizedEmail, preRegistration, disciplinas, authData, adminState, rememberMode } = params;
+    const { email, normalizedEmail, preRegistration, disciplinas, nomeExibicao, authData, adminState, rememberMode } = params;
     const preRegistrationAny = (preRegistration || {}) as any;
     const cargo = String(preRegistration?.cargo || preRegistrationAny.role || '').trim();
     const allowedTabs = Array.from(new Set(
@@ -3119,7 +3139,8 @@ export default function App() {
     )) as AppTabKey[];
     const approvedUser = normalizeUserAccessRecord({
       id: normalizedEmail,
-      nome: String(preRegistrationAny.nome || preRegistrationAny.name || email.split('@')[0] || email).trim(),
+      nome: String(nomeExibicao || preRegistrationAny.nome || preRegistrationAny.name || email.split('@')[0] || email).trim(),
+      apelido: String(nomeExibicao || '').trim(),
       email,
       cargo,
       disciplina: disciplinas[0] || '',
@@ -3180,6 +3201,7 @@ export default function App() {
 
     if (disciplinas.length === 0) {
       setCorporateDisciplinaChoice('');
+      setCorporateDisplayName(email.split('@')[0] || '');
       setPendingCorporateSignup({ email, normalizedEmail, preRegistration, authData, adminState, rememberMode });
       return;
     }
@@ -3188,13 +3210,13 @@ export default function App() {
   };
 
   const confirmCorporateSignupDiscipline = async () => {
-    if (!pendingCorporateSignup || !corporateDisciplinaChoice) return;
+    if (!pendingCorporateSignup || !corporateDisciplinaChoice || !corporateDisplayName.trim()) return;
     const { email, normalizedEmail, preRegistration, authData, adminState, rememberMode } = pendingCorporateSignup;
     setCorporateSignupSubmitting(true);
     try {
       await createAndFinishGoogleUser({
         email, normalizedEmail, preRegistration, authData, adminState, rememberMode,
-        disciplinas: [corporateDisciplinaChoice],
+        disciplinas: [corporateDisciplinaChoice], nomeExibicao: corporateDisplayName.trim(),
       });
       setPendingCorporateSignup(null);
     } catch (error) {
@@ -3226,6 +3248,27 @@ export default function App() {
     setNotesLoadError('');
     setNoteProjectsLoadError('');
   };
+
+  const saveOwnProfile = useCallback(async ({ nome, disciplina }: { nome: string; disciplina: string }) => {
+    if (!currentUser) throw new Error('Sessão encerrada. Entre novamente.');
+    const sourceUsers = adminDraftRef.current?.usuarios || usuarios;
+    const email = normalizeUserText(currentUser.email);
+    const currentRecord = sourceUsers.find((user) => normalizeUserText(user.email) === email);
+    if (!currentRecord) throw new Error('Seu cadastro não foi encontrado.');
+    const nextUsers = sourceUsers.map((user) => normalizeUserText(user.email) !== email ? user : {
+      ...user,
+      nome,
+      apelido: nome,
+      disciplina,
+      disciplinas: [disciplina],
+    });
+    setUsuarios(nextUsers);
+    updateAdminDraftRef({ usuarios: nextUsers });
+    markUserDirty(currentRecord.id || currentUser.email);
+    markAdminChangesPending();
+    if (!await persistAdminChanges({ silent: true })) throw new Error('Não foi possível salvar seu perfil.');
+    handleLogout();
+  }, [currentUser, handleLogout, markAdminChangesPending, markUserDirty, persistAdminChanges, updateAdminDraftRef, usuarios]);
 
   const handleRegister = async (name: string, email: string, password: string) => {
     // Trava de e-mail duplicado no cliente: le os usuarios do auth (Firebase, leitura anonima) e
@@ -3490,14 +3533,20 @@ export default function App() {
   }, [getAdminSnapshotState, markAdminChangesPending, persistAdminChanges, updateAdminDraftRef]);
 
   const saveDatabaseLink = useCallback(async (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => {
+    if (!currentUser) throw new Error('Sessão encerrada. Entre novamente.');
     const sourceLinks = adminDraftRef.current?.databaseLinks || databaseLinks;
+    const existing = payload.id ? sourceLinks.find((item) => item.id === payload.id) : undefined;
+    if (existing && !currentUser.isAdmin && normalizeUserText(existing.criadoPor) !== normalizeUserText(currentUser.email)) {
+      throw new Error('Apenas quem criou este item ou um administrador pode alterá-lo.');
+    }
+    const safePayload = { ...payload, criadoPor: existing?.criadoPor || currentUser.email, atualizadoEm: new Date().toISOString() };
     const nextDatabaseLinks = withSeedDatabaseLinks(payload.id
-      ? sourceLinks.map((item) => item.id === payload.id ? { ...item, ...payload } : item)
-      : [...sourceLinks, { id: payload.id || createDraftId('db-link'), ...payload }]);
+      ? sourceLinks.map((item) => item.id === payload.id ? { ...item, ...safePayload } : item)
+      : [...sourceLinks, { id: payload.id || createDraftId('db-link'), ...safePayload }]);
     setDatabaseLinks(nextDatabaseLinks);
     updateAdminDraftRef({ databaseLinks: nextDatabaseLinks });
     markAdminChangesPending();
-  }, [databaseLinks, markAdminChangesPending, updateAdminDraftRef]);
+  }, [currentUser, databaseLinks, markAdminChangesPending, updateAdminDraftRef]);
 
   const deleteDatabaseLink = useCallback(async (id: string) => {
     const sourceLinks = adminDraftRef.current?.databaseLinks || databaseLinks;
@@ -3509,7 +3558,7 @@ export default function App() {
 
   const saveDatabaseLinkAndPersist = useCallback(async (payload: Omit<DatabaseLinkRecord, 'id'> & { id?: string }) => {
     await saveDatabaseLink(payload);
-    await persistAdminChanges();
+    if (!await persistAdminChanges()) throw new Error('Não foi possível salvar o link.');
   }, [persistAdminChanges, saveDatabaseLink]);
 
   const saveTerceirizada = useCallback(async (payload: Omit<TerceirizadaRecord, 'id'> & { id?: string }) => {
@@ -3828,14 +3877,15 @@ export default function App() {
         {pendingCorporateSignup && (
           <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 p-4">
             <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-              <h2 className="text-[16px] font-bold text-[#2D2D2D]">Qual é a sua disciplina?</h2>
+              <h2 className="text-[16px] font-bold text-[#2D2D2D]">Complete seu perfil</h2>
               <p className="mt-1.5 text-[13px] leading-relaxed text-[#757575]">
-                Seu e-mail corporativo já está liberado. Escolha sua disciplina pra concluir o acesso — cargo e permissões o administrador ajusta depois.
+                Seu e-mail corporativo já está liberado. Escolha como quer ser chamado e sua disciplina.
               </p>
+              <label className="mt-4 block text-[12px] font-bold text-[#64748B]">Como quer ser chamado<input autoFocus value={corporateDisplayName} onChange={(e) => setCorporateDisplayName(e.target.value)} maxLength={60} placeholder="Ex.: Igor ou Igão" className="mt-1 h-11 w-full rounded-xl border border-[#E5E7EB] px-3 text-[13px] font-medium text-[#2D2D2D] focus:border-[#F05D28] focus:outline-none" /></label>
               <select
                 value={corporateDisciplinaChoice}
                 onChange={(e) => setCorporateDisciplinaChoice(e.target.value)}
-                className="mt-4 h-11 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28]"
+                className="mt-3 h-11 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] focus:outline-none focus:border-[#F05D28]"
               >
                 <option value="">Selecionar disciplina</option>
                 {pendingCorporateSignup.adminState.disciplinas.map((nome) => (
@@ -3844,7 +3894,7 @@ export default function App() {
               </select>
               <button
                 type="button"
-                disabled={!corporateDisciplinaChoice || corporateSignupSubmitting}
+                disabled={!corporateDisciplinaChoice || !corporateDisplayName.trim() || corporateSignupSubmitting}
                 onClick={confirmCorporateSignupDiscipline}
                 className="mt-4 h-11 w-full rounded-xl bg-[#F05D28] text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F] disabled:opacity-50"
               >
@@ -4102,7 +4152,7 @@ export default function App() {
             >
               {activeTab === 'principal' && currentUser && principalSubTab === 'project' && projectsPage}
               {activeTab === 'principal' && currentUser && !(principalSubTab === 'project' && projectsPage) && (
-                <Principal currentUser={currentUser}>
+                <Principal currentUser={currentUser} disciplinas={disciplinas} onSaveProfile={saveOwnProfile}>
                   <Nc2Kanban
                     lockedContractCode={lockedContractCode}
                     preloadedData={effectiveGlobalData}
@@ -4165,7 +4215,7 @@ export default function App() {
                 cronogramaPage
               )}
               {activeTab === 'banco-links' && currentUser && userHasTabAccess(currentUser, 'banco-links', roleTabPermissions) && (
-                <BancoLinksPage links={databaseLinksComSeed} canManage={Boolean(currentUser?.isAdmin)} onSaveLink={currentUser?.isAdmin ? saveDatabaseLinkAndPersist : undefined} />
+                <BancoLinksPage links={databaseLinksComSeed} canManage={Boolean(currentUser?.isAdmin)} currentUserEmail={currentUser.email} onSaveLink={saveDatabaseLinkAndPersist} />
               )}
               {activeTab === 'compatibilizacao' && currentUser && userHasTabAccess(currentUser, 'compatibilizacao', roleTabPermissions) && (
                 compatibilizacaoSubTab === 'analise-os'
@@ -4173,7 +4223,7 @@ export default function App() {
                   : <CompatibilizacaoPreenchimento osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []} currentUser={currentUser} />
               )}
               {activeTab === 'demandas' && currentUser && (
-                <DemandasDigitais reports={feedbackReports} noteDemands={noteDemands} canAccess={userHasTabAccess(currentUser, 'demandas', roleTabPermissions)} loading={feedbackLoading} error={feedbackLoadError} onStatusChange={currentUser.isAdmin ? moveFeedback : undefined} onArchive={currentUser.isAdmin ? (id) => moveFeedback(id, 'archived') : undefined} />
+                <DemandasDigitais reports={feedbackReports} noteDemands={noteDemands} canAccess={userHasTabAccess(currentUser, 'demandas', roleTabPermissions)} loading={feedbackLoading} error={feedbackLoadError} onStatusChange={currentUser.isAdmin ? moveFeedback : undefined} onArchive={currentUser.isAdmin ? (id) => moveFeedback(id, 'archived') : undefined} onEdit={currentUser.isAdmin ? editFeedback : undefined} />
               )}
               {activeTab === 'nc2' && currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
                 nc2SubTab === 'disciplinas'

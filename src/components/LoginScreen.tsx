@@ -2,6 +2,7 @@ import React from 'react';
 
 export interface AuthUser {
   nome: string;
+  apelido?: string;
   email: string;
   role: string;
   disciplina: string;

@@ -86,6 +86,7 @@ export interface DisciplineSettingRecord {
 export interface UserAccessRecord {
   id: string;
   nome: string;
+  apelido?: string;
   email: string;
   online: boolean;
   disciplina: string;
@@ -108,6 +109,10 @@ export interface DatabaseLinkRecord {
   nome: string;
   link: string;
   descricao: string;
+  tipo?: 'link' | 'pasta';
+  pastaId?: string;
+  publico?: boolean;
+  criadoPor?: string;
   atualizadoEm?: string;
 }
 

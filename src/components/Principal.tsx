@@ -1,9 +1,11 @@
 import React from 'react';
-import { Clock3, ShieldCheck } from 'lucide-react';
+import { Clock3, Pencil, ShieldCheck, X } from 'lucide-react';
 import type { AuthUser } from './LoginScreen';
 
 interface PrincipalProps {
   currentUser: AuthUser;
+  disciplinas: string[];
+  onSaveProfile: (profile: { nome: string; disciplina: string }) => Promise<void>;
   // Blocos extras da Principal (hoje o Kanban unificado Conformidade + notas): so pra quem ja foi aprovado.
   children?: React.ReactNode;
 }
@@ -29,9 +31,25 @@ function Dado({ icone, rotulo, valor }: { icone?: React.ReactNode; rotulo: strin
   );
 }
 
-export default function Principal({ currentUser, children }: PrincipalProps) {
+export default function Principal({ currentUser, disciplinas, onSaveProfile, children }: PrincipalProps) {
   const aprovado = String(currentUser.status || '').trim().toLowerCase() !== 'pending';
   const primeiroNome = (currentUser.nome || '').trim().split(/\s+/)[0] || 'Bem-vindo';
+  const [perfilAberto, setPerfilAberto] = React.useState(false);
+  const [nome, setNome] = React.useState(currentUser.apelido || currentUser.nome);
+  const [disciplina, setDisciplina] = React.useState(currentUser.disciplina);
+  const [salvando, setSalvando] = React.useState(false);
+
+  const abrirPerfil = () => {
+    setNome(currentUser.apelido || currentUser.nome);
+    setDisciplina(currentUser.disciplina);
+    setPerfilAberto(true);
+  };
+  const salvarPerfil = async () => {
+    if (!nome.trim() || !disciplina) return;
+    setSalvando(true);
+    try { await onSaveProfile({ nome: nome.trim(), disciplina }); }
+    finally { setSalvando(false); }
+  };
 
   if (!aprovado) {
     return (
@@ -52,7 +70,7 @@ export default function Principal({ currentUser, children }: PrincipalProps) {
     // Sem cartao envolvendo a pagina: o conteudo assenta direto no fundo, sobre a folha.
     <div className="mx-auto w-full max-w-5xl">
       <Rotulo>EcoQuanta</Rotulo>
-      <h2 className="text-[26px] font-black leading-tight text-[#2D2D2D]">Olá, {primeiroNome}</h2>
+      <div className="flex items-center gap-2"><h2 className="text-[26px] font-black leading-tight text-[#2D2D2D]">Olá, {primeiroNome}</h2><button type="button" onClick={abrirPerfil} title="Editar meu perfil" className="rounded-full p-1.5 text-[#64748B] hover:bg-[#FFF3EC] hover:text-[#F05D28]"><Pencil size={16} /></button></div>
 
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Dado icone={<ShieldCheck size={12} />} rotulo="Contrato" valor={currentUser.contrato} />
@@ -60,6 +78,13 @@ export default function Principal({ currentUser, children }: PrincipalProps) {
       </div>
 
       {children && <div className="mt-7">{children}</div>}
+      {perfilAberto && <div className="fixed inset-0 z-[230] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setPerfilAberto(false)}><form onSubmit={(event) => { event.preventDefault(); void salvarPerfil(); }} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-center justify-between"><h3 className="text-[17px] font-black text-[#2D2D2D]">Meu perfil</h3><button type="button" onClick={() => setPerfilAberto(false)} aria-label="Fechar" className="rounded-full p-1 text-[#64748B] hover:bg-[#F3F4F6]"><X size={18} /></button></div>
+        <label className="mt-4 block text-[12px] font-bold text-[#64748B]">Como quer ser chamado<input autoFocus value={nome} onChange={(event) => setNome(event.target.value)} placeholder="Ex.: Igor ou Igão" maxLength={60} className="mt-1 h-11 w-full rounded-xl border border-[#E5E7EB] px-3 text-[14px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]" /></label>
+        <label className="mt-3 block text-[12px] font-bold text-[#64748B]">Disciplina<select value={disciplina} onChange={(event) => setDisciplina(event.target.value)} className="mt-1 h-11 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[14px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]">{disciplinas.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <p className="mt-3 text-[11px] text-[#94A3B8]">Seu e-mail continua único e não pode ser alterado. Ao salvar, entre novamente.</p>
+        <button disabled={salvando || !nome.trim() || !disciplina} className="mt-4 h-11 w-full rounded-xl bg-[#F05D28] text-[13px] font-bold text-white hover:bg-[#D94E1F] disabled:opacity-60">{salvando ? 'Salvando...' : 'Salvar e sair'}</button>
+      </form></div>}
     </div>
   );
 }

@@ -194,6 +194,7 @@ async function ensureFirebaseAuth() {
 // nota na descricao do evento (ver linkNoteToEvent em googleCalendar.ts). documents.readonly -
 // ler o CONTEUDO da ata do Gemini (Google Doc anexado ao evento), nao so o link.
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+const GOOGLE_CALENDAR_LIST_SCOPE = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly';
 const GOOGLE_DOCS_SCOPE = 'https://www.googleapis.com/auth/documents.readonly';
 let googleCalendarToken: { token: string; expiresAt: number } | null = null;
 
@@ -206,6 +207,7 @@ export async function signInWithGooglePopup(): Promise<string> {
   if (!app) app = initializeApp(config);
   const provider = new GoogleAuthProvider();
   provider.addScope(GOOGLE_CALENDAR_SCOPE);
+  provider.addScope(GOOGLE_CALENDAR_LIST_SCOPE);
   provider.addScope(GOOGLE_DOCS_SCOPE);
   const result = await signInWithPopup(getAuth(app), provider);
   const email = result.user.email;

@@ -1,8 +1,10 @@
 export interface CalendarEventOption {
   id: string;
+  calendarId: string;
   title: string;
   htmlLink: string;
   start: string;
+  end: string;
   attendeeEmails: string[];
   geminiNotesUrl?: string;
 }
@@ -14,23 +16,20 @@ export function matchCalendarAttendees(event: CalendarEventOption, users: Array<
   return Array.from(new Set(users.map((user) => normalizeEmail(user.email)).filter((email) => attendees.has(email))));
 }
 
-// Eventos da Agenda Google no dia de `at` (usado pra abrir um popup e o usuario escolher
-// qual reuniao vincular a nota - so eventos com horario, ignora os de dia inteiro).
-export async function listTodayCalendarEvents(accessToken: string, at: Date = new Date()): Promise<CalendarEventOption[]> {
-  const inicioDoDia = new Date(at.getFullYear(), at.getMonth(), at.getDate(), 0, 0, 0);
-  const fimDoDia = new Date(at.getFullYear(), at.getMonth(), at.getDate(), 23, 59, 59);
-  const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(inicioDoDia.toISOString())}&timeMax=${encodeURIComponent(fimDoDia.toISOString())}&singleEvents=true&orderBy=startTime`;
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`Não foi possível consultar a Agenda do Google (${response.status}): ${body.slice(0, 300)}`);
-  }
-
-  const data = await response.json();
-  const items: any[] = data.items || [];
-  return items
-    .filter((event) => event.start?.dateTime)
-    .map((event) => {
+export async function listCalendarEvents(accessToken: string, inicio: Date, fim: Date): Promise<CalendarEventOption[]> {
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  const calendarsResponse = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250', { headers });
+  if (!calendarsResponse.ok) throw new Error(`Autorize novamente a Agenda do Google para ler todos os calendários (${calendarsResponse.status}).`);
+  const calendars = ((await calendarsResponse.json()).items || []).filter((calendar: any) => !calendar.deleted && calendar.selected !== false);
+  const results = await Promise.all(calendars.map(async (calendar: any) => {
+    const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendar.id)}/events?timeMin=${encodeURIComponent(inicio.toISOString())}&timeMax=${encodeURIComponent(fim.toISOString())}&singleEvents=true&orderBy=startTime`;
+    const response = await fetch(url, { headers });
+    if (!response.ok) return [];
+    return ((await response.json()).items || []).map((event: any) => ({ event, calendarId: calendar.id }));
+  }));
+  return results.flat()
+    .filter(({ event }) => event.start?.dateTime)
+    .map(({ event, calendarId }) => {
       // O Gemini anexa a ata da reuniao como um Google Doc no proprio evento (attachments) -
       // nao precisa de escopo do Drive pra pegar o link, só pra abrir o conteudo (o usuario
       // abre no próprio Google com a permissão dele).
@@ -42,33 +41,49 @@ export async function listTodayCalendarEvents(accessToken: string, at: Date = ne
       ].map(normalizeEmail).filter(Boolean);
       return {
         id: event.id,
+        calendarId,
         title: event.summary || 'Reunião sem título',
         htmlLink: event.htmlLink,
         start: event.start.dateTime,
+        end: event.end?.dateTime || event.start.dateTime,
         attendeeEmails: Array.from(new Set(attendeeEmails)),
         geminiNotesUrl: geminiDoc?.fileUrl,
       };
     });
 }
 
+// Compatibilidade com o seletor antigo de um dia.
+export function listTodayCalendarEvents(accessToken: string, at: Date = new Date()): Promise<CalendarEventOption[]> {
+  const inicioDoDia = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+  const fimDoDia = new Date(inicioDoDia);
+  fimDoDia.setDate(fimDoDia.getDate() + 1);
+  return listCalendarEvents(accessToken, inicioDoDia, fimDoDia);
+}
+
 // Escreve (ou atualiza) uma linha de referencia a nota no campo description do evento -
 // pra quem abre o evento no Google Agenda ver que existe uma nota da EcoQuanta vinculada.
-// Precisa do escopo de escrita (calendar.events, nao só readonly). Idempotente: se a linha
-// dessa nota ja estiver la, nao duplica.
-export async function linkNoteToEvent(accessToken: string, eventId: string, notaTitulo: string, notaUrl: string): Promise<void> {
-  const eventUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`;
+export async function linkNoteToEvent(accessToken: string, calendarId: string, eventId: string, notaUrl: string): Promise<void> {
+  const eventUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`;
   const getResponse = await fetch(eventUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!getResponse.ok) throw new Error(`Não foi possível ler o evento da Agenda (${getResponse.status}).`);
   const evento = await getResponse.json();
 
-  const linha = `📝 Nota EcoQuanta: "${notaTitulo || 'Sem título'}" — ${notaUrl}`;
+  const inicio = `— Nota EcoQuanta: ${notaUrl} —`;
+  const fim = `— Fim da nota EcoQuanta: ${notaUrl} —`;
+  const linha = `📝 Nota EcoQuanta: ${notaUrl}`;
   const descricaoAtual: string = evento.description || '';
-  if (descricaoAtual.includes(linha)) return;
+  const inicioIndice = descricaoAtual.indexOf(inicio);
+  const fimIndice = descricaoAtual.indexOf(fim, inicioIndice);
+  const descricaoSemCopia = inicioIndice >= 0 && fimIndice >= inicioIndice
+    ? `${descricaoAtual.slice(0, inicioIndice)}${descricaoAtual.slice(fimIndice + fim.length)}`.trim()
+    : descricaoAtual;
+  if (descricaoSemCopia.includes(linha)) return;
+  const descricao = descricaoSemCopia ? `${descricaoSemCopia}\n\n${linha}` : linha;
 
   const patchResponse = await fetch(eventUrl, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ description: descricaoAtual ? `${descricaoAtual}\n\n${linha}` : linha }),
+    body: JSON.stringify({ description: descricao }),
   });
   if (!patchResponse.ok) throw new Error(`Não foi possível escrever no evento da Agenda (${patchResponse.status}).`);
 }

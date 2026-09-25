@@ -1440,7 +1440,7 @@ export default function Cronograma({
     // CSS hides and blocks interaction when !showGantt.
     const rowHeight = GANTT_ROW_HEIGHT;
     const headerHeight = GANTT_HEADER_HEIGHT;
-    const leftWidth = 460;
+    const leftWidth = 640;
     const timelineWidth = ganttTimelineWidth;
     const chartHeight = ganttChartHeight;
     const todayLineX = ganttTodayLineX;
@@ -1523,7 +1523,7 @@ export default function Cronograma({
               style={{ width: `${leftWidth}px`, minWidth: `${leftWidth}px` }}
             >
               <div className="flex h-full flex-col">
-                <div className="grid grid-cols-[1.2fr_0.8fr] gap-2 px-4 text-[10px] font-black uppercase tracking-[1.1px] text-slate-500" style={{ height: `${headerHeight}px`, display: 'flex', alignItems: 'center' }}>
+                <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-2 px-4 text-[10px] font-black uppercase tracking-[1.1px] text-slate-500" style={{ height: `${headerHeight}px`, display: 'flex', alignItems: 'center' }}>
                   <span className="flex-1">Atividade</span>
                   <span className="text-right" style={{ width: '120px' }}>Datas / Progresso</span>
                 </div>
@@ -1547,7 +1547,7 @@ export default function Cronograma({
                       return (
                         <div
                           key={task.code}
-                          className="grid grid-cols-[1.2fr_0.8fr] items-center gap-2 px-4 overflow-hidden"
+                          className="grid grid-cols-[minmax(0,1fr)_120px] items-center gap-2 px-4 overflow-hidden"
                           style={{ height: `${rowHeight}px` }}
                           onClick={() => setSelectedGanttTaskCode(task.code)}
                         >
@@ -1586,7 +1586,7 @@ export default function Cronograma({
                                 )}
                               </span>
                               <div className="min-w-0 flex-1">
-                                <p className="truncate text-[13px] font-bold text-slate-800">
+                                <p className="line-clamp-2 text-[13px] font-bold leading-5 text-slate-800" title={`${task.code} - ${task.name}`}>
                                   {task.code} - {task.name}
                                 </p>
                                 <p className="mt-1 text-[11px] text-slate-500">

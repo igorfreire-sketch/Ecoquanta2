@@ -5,12 +5,16 @@ function osNumber(value: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** Lê apenas o bloco TSV gerado pela macro local do MS Project. */
+/** Lê o TSV da macro mesmo quando o editor acrescenta texto ou troca a cerca Markdown. */
 export function parseEapMarkdown(markdown: string): string[][] {
-  const match = markdown.replace(/^\uFEFF/, '').match(/^# EAP Ecoquanta\s+~~~tsv\r?\n([\s\S]*?)\r?\n~~~\s*$/);
-  if (!match) throw new Error('Arquivo .md fora do formato gerado pela macro Ecoquanta.');
-  const parsed = parseColado(match[1]).map((line) => line.celulas);
-  if (!parsed.length || parsed.some((row) => row.length !== COLUNAS.length)) {
+  const normalized = markdown.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const fenced = normalized.match(/(?:^|\n)(~~~|```)(?:tsv)?[^\n]*\n([\s\S]*?)\n\1(?:\n|$)/i);
+  const lines = (fenced?.[2] || normalized).split('\n');
+  const firstTsvLine = lines.findIndex((line) => (line.match(/\t/g) || []).length >= COLUNAS.length - 1);
+  if (firstTsvLine < 0) throw new Error('Arquivo .md fora do formato gerado pela macro Ecoquanta.');
+  const parsed = parseColado(lines.slice(firstTsvLine).join('\n')).map((line) => line.celulas)
+    .filter((row) => row[3].trim() || row[4].trim());
+  if (parsed.length < 2 || parsed.some((row) => row.length !== COLUNAS.length)) {
     throw new Error('A EAP não contém as 19 colunas esperadas.');
   }
   return parsed;

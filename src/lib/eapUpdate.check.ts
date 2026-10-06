@@ -15,6 +15,8 @@ function row(code: string, name: string, predecessor = '') {
 const markdown = `# EAP Ecoquanta\n\n~~~tsv\n${new Array(19).fill('').map((_, index) => index === 3 ? 'N° item' : index === 4 ? 'Nome da Tarefa' : '').join('\t')}\n${row('0', 'OS 054 - Teste').join('\t')}\n${row('1', 'Projeto', '0').join('\t')}\n${row('1.1', 'Tarefa', '1').join('\t')}\n~~~\n`;
 const parsed = parseEapMarkdown(markdown);
 assert.equal(parsed.length, 3);
+assert.equal(parseEapMarkdown(`texto extra\n\n${markdown.replace(/~~~tsv/, '```tsv').replace(/~~~\n$/, '```\n')}rodapé`).length, 3);
+assert.equal(parseEapMarkdown(markdown.match(/~~~tsv\n([\s\S]*?)\n~~~/)![1]).length, 3);
 
 const scoped = scopeProjectRows(parsed, '2.25', 'OS 054 - Teste', true);
 assert.deepEqual(scoped.map((item) => item[3]), ['2.25', '2.25.1', '2.25.1.1']);

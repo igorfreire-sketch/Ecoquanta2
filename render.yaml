@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: ecoquanta-eap
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./eap-service/Dockerfile
+    dockerContext: ./eap-service
+    healthCheckPath: /health
+    envVars:
+      - key: JAVA_TOOL_OPTIONS
+        value: -Xms64m -Xmx256m -XX:+UseSerialGC
+      - key: EAP_ALLOWED_ORIGINS
+        value: https://ecoquanta2.pages.dev,https://42c9c948.ecoquanta2.pages.dev
+      - key: GOOGLE_CLOUD_PROJECT
+        value: ecoquanta-c2720
+      - key: EAP_CONVERT_ONLY
+        value: "true"
+      - key: EAP_EDITOR_EMAILS
+        sync: false

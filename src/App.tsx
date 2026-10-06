@@ -161,6 +161,7 @@ import {
 const Atividades = React.lazy(() => import('./components/Atividades'));
 const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEngenharia'));
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
+const ImportarEAP = React.lazy(() => import('./components/Planejamento/ImportarEAP'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
 // Kanban vive na Principal; o clique no card atravessa pra aba de Conformidade (Preenchimento).
 const Nc2Kanban = React.lazy(() => import('./components/NaoConformidade2/Kanban'));
@@ -248,7 +249,7 @@ type AppTab = 'principal' | 'registro' | 'controle' | 'planejamento' | 'contrato
 // 'project' e irma de 'disciplinas' (Notas): as duas sao paginas globais, iguais em toda area.
 type AreaTecnicaSubTab = 'atividades' | 'disciplinas' | 'project';
 type ControleSubTab = 'profissionais' | 'dashboard' | 'alocacoes' | 'curva-s' | 'planejamento' | 'alertas' | 'disciplinas' | 'project';
-type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'disciplinas' | 'project';
+type PlanejamentoSubTab = 'dashboard' | 'alertas' | 'atividades' | 'curva-s' | 'atualizacao-eap' | 'disciplinas' | 'project';
 type Nc2SubTab = 'dashboard' | 'preenchimento' | 'revisoes' | 'terceirizadas' | 'disciplinas' | 'project';
 type CompatibilizacaoSubTab = 'analise-os' | 'preenchimento';
 type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | 'disciplinas' | 'project';
@@ -687,6 +688,42 @@ function applyUnifiedEapData(data: GlobalData, eapData: any): GlobalData {
         rootCodes: Array.isArray(next.registro?.rootCodes) && next.registro.rootCodes.length > 0 ? next.registro.rootCodes : derivedRegistro.rootCodes,
       };
     }
+  }
+
+  const osUpdates = Array.isArray(normalizedEapData.eapOsUpdates) ? normalizedEapData.eapOsUpdates : [];
+  if (osUpdates.length > 0) {
+    const changedCodes = new Set(osUpdates.map((entry: any) => String(entry.os)));
+    const belongsToChangedOs = (code: unknown) => Array.from(changedCodes).some((os) => {
+      const value = String(code || '').trim();
+      return value === os || value.startsWith(`${os}.`);
+    });
+    const registro = next.registro || {};
+    const osOptions = (Array.isArray(registro.osOptions) ? registro.osOptions : [])
+      .filter((entry: any) => !changedCodes.has(String(entry.codigo || '')));
+    const itemOptions = (Array.isArray(registro.itemOptions) ? registro.itemOptions : [])
+      .filter((entry: any) => !belongsToChangedOs(entry.codigo));
+    const hierarchyNodes = (Array.isArray(registro.hierarchyNodes) ? registro.hierarchyNodes : [])
+      .filter((entry: any) => !belongsToChangedOs(entry.codigo));
+    for (const update of osUpdates) {
+      const os = String(update.os);
+      const contractCode = os.split('.')[0];
+      for (const row of update.rows) {
+        const code = String(row.code || '');
+        const name = String(row.name || code);
+        const parentCode = code.includes('.') ? code.slice(0, code.lastIndexOf('.')) : '';
+        if (code === os) osOptions.push({ codigo: code, nome: name, contratoCodigo: contractCode });
+        else itemOptions.push({ codigo: code, nome: name, osCodigo: os });
+        hierarchyNodes.push({ codigo: code, nome: name, tipo: code === os ? 'os' : 'item',
+          nivel: code.split('.').length - 1, parentCodigo: parentCode,
+          contratoCodigo: contractCode, osCodigo: os });
+      }
+    }
+    const childrenByParent: Record<string, any[]> = {};
+    for (const node of hierarchyNodes) {
+      const parent = String(node.parentCodigo || 'ROOT');
+      (childrenByParent[parent] ||= []).push(node);
+    }
+    next.registro = { ...registro, osOptions, itemOptions, hierarchyNodes, childrenByParent };
   }
 
   const unifiedCronograma = pickFirstNonEmptyArray(
@@ -3797,6 +3834,7 @@ export default function App() {
       return [
         { key: 'atividades', label: 'Atividades', icon: <LayoutGrid size={16} />, active: planejamentoSubTab === 'atividades', onClick: () => setPlanejamentoSubTab('atividades') },
         { key: 'curva-s', label: 'Curva S', icon: <TrendingUp size={16} />, active: planejamentoSubTab === 'curva-s', onClick: () => setPlanejamentoSubTab('curva-s') },
+        { key: 'atualizacao-eap', label: 'Atualização EAP', icon: <ClipboardList size={16} />, active: planejamentoSubTab === 'atualizacao-eap', onClick: () => setPlanejamentoSubTab('atualizacao-eap') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: planejamentoSubTab === 'disciplinas', onClick: () => setPlanejamentoSubTab('disciplinas') },
         ...projectSubTab(planejamentoSubTab, () => setPlanejamentoSubTab('project')),
       ];
@@ -4191,6 +4229,8 @@ export default function App() {
                     : atividadesLoadFallback
                   : planejamentoSubTab === 'curva-s'
                     ? <CurvaS preloadedData={effectiveGlobalData?.eap || null} lockedContractCode={lockedContractCode} activeContractCode={lockedContractCode || filtrosAtivos.contrato} />
+                    : planejamentoSubTab === 'atualizacao-eap'
+                      ? <ImportarEAP osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []} contracts={Array.isArray(effectiveGlobalData?.registro?.contracts) ? effectiveGlobalData.registro.contracts : []} email={currentUser.email} lockedContractCode={lockedContractCode} onPublished={() => refreshRealtimeEnvironment(currentUser)} />
                     : planejamentoSubTab === 'disciplinas'
                       ? notesPage
                   : planejamentoSubTab === 'project'

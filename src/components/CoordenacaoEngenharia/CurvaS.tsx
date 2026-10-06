@@ -87,7 +87,8 @@ function resolveCurvaPayload(payload: any): CompressedPayload | null {
   const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
   if (!data || typeof data !== 'object') return null;
   const dedicated = data.curvaS && typeof data.curvaS === 'object' ? data.curvaS : null;
-  const source = Array.isArray(dedicated?.atual) && dedicated.atual.length > 0
+  const hasOsUpdates = Array.isArray(data.eapOsUpdates) && data.eapOsUpdates.length > 0;
+  const source = !hasOsUpdates && Array.isArray(dedicated?.atual) && dedicated.atual.length > 0
     ? dedicated
     : buildCurvaPayloadFromCronograma(data) || data;
   if (!Array.isArray(source.atual) || source.atual.length === 0) return null;

@@ -334,9 +334,17 @@ function normalizeEapCode(value: any) {
   return String(value || '').trim();
 }
 
+function eapRowCode(row: any) {
+  return normalizeEapCode(Array.isArray(row) ? row[0] : row?.code || row?.codigo);
+}
+
+function eapRowName(row: any) {
+  return normalizeEapCode(Array.isArray(row) ? row[1] : row?.name || row?.nome || eapRowCode(row));
+}
+
 function getEapRows(eapData: any) {
   const resolved = eapData?.data && typeof eapData.data === 'object' ? eapData.data : eapData;
-  return Array.isArray(resolved?.atual) ? resolved.atual.filter((row: any) => normalizeEapCode(row?.[0])) : [];
+  return Array.isArray(resolved?.atual) ? resolved.atual.filter((row: any) => eapRowCode(row)) : [];
 }
 
 function isEapOsName(value: any) {
@@ -364,9 +372,9 @@ function buildRegistroDataFromEapRows(eapData: any) {
     childrenByParent[parent].push(node);
   };
 
-  rows.forEach((row: any[]) => {
-    const codigo = normalizeEapCode(row?.[0]);
-    const nome = normalizeEapCode(row?.[1] || codigo);
+  rows.forEach((row: any) => {
+    const codigo = eapRowCode(row);
+    const nome = eapRowName(row);
     if (!codigo) return;
 
     const level = (codigo.match(/\./g) || []).length;
@@ -377,9 +385,9 @@ function buildRegistroDataFromEapRows(eapData: any) {
     }
   });
 
-  rows.forEach((row: any[]) => {
-    const codigo = normalizeEapCode(row?.[0]);
-    const nome = normalizeEapCode(row?.[1] || codigo);
+  rows.forEach((row: any) => {
+    const codigo = eapRowCode(row);
+    const nome = eapRowName(row);
     if (!codigo) return;
 
     const parts = codigo.split('.');
@@ -392,9 +400,9 @@ function buildRegistroDataFromEapRows(eapData: any) {
   });
 
   const osCodes = new Set(osOptions.map((os) => os.codigo));
-  rows.forEach((row: any[]) => {
-    const codigo = normalizeEapCode(row?.[0]);
-    const nome = normalizeEapCode(row?.[1] || codigo);
+  rows.forEach((row: any) => {
+    const codigo = eapRowCode(row);
+    const nome = eapRowName(row);
     if (!codigo) return;
 
     const osCodigo = Array.from(osCodes)

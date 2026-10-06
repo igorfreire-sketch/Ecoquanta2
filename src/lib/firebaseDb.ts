@@ -18,6 +18,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import { getUserDisciplineList } from './disciplineCatalog';
+import { mergeEapOs, type EapOsDocument } from './eapOsOverlay';
 interface FirebaseRuntimeConfig {
   apiKey: string;
   authDomain: string;
@@ -685,7 +686,6 @@ export async function fetchEapDataFromFirebase(): Promise<any> {
     await ensureFirebaseAuth();
     const dbRef = getDb();
     const eapData = await getAppDataDoc<any>(dbRef, 'eap');
-    if (!eapData) return null;
 
     let curvaSReajustado: any = null;
     try {
@@ -694,9 +694,31 @@ export async function fetchEapDataFromFirebase(): Promise<any> {
       console.error('❌ Erro ao fetch curvaSReajustado data:', error);
     }
 
+    let withOs = eapData;
+    try {
+      const osSnapshot = await getDocs(collection(dbRef, 'eapOs'));
+      const osResults = await Promise.allSettled(osSnapshot.docs.map(async (entry) => {
+        const data = entry.data() as EapOsDocument & { previewId?: string; chunkCount?: number };
+        if (data.rowsJson || !data.previewId || !data.chunkCount) return data;
+        const chunks = await getDocs(collection(dbRef, 'eapPreviews', data.previewId, 'chunks'));
+        const ordered = chunks.docs.sort((a, b) => a.id.localeCompare(b.id));
+        if (ordered.length !== data.chunkCount) throw new Error(`Partes ausentes da EAP ${data.os}.`);
+        const rows = ordered.flatMap((chunk) => JSON.parse(String(chunk.data().rowsJson || '[]')));
+        return { ...data, rowsJson: JSON.stringify(rows) };
+      }));
+      const osDocuments = osResults.flatMap((result) => {
+        if (result.status === 'fulfilled') return [result.value];
+        console.error('❌ Uma atualização EAP por OS foi ignorada:', result.reason);
+        return [];
+      });
+      if (osDocuments.length) withOs = mergeEapOs(eapData || {}, osDocuments);
+    } catch (error) {
+      console.error('❌ Erro ao carregar atualizações EAP por OS; mantendo a EAP legada:', error);
+    }
+    if (!withOs) return null;
     return Array.isArray(curvaSReajustado?.reajustado)
-      ? { ...eapData, reajustado: curvaSReajustado.reajustado }
-      : eapData;
+      ? { ...withOs, reajustado: curvaSReajustado.reajustado }
+      : withOs;
   } catch (error) {
     console.error('❌ Erro ao fetch EAP data:', error);
     return null;

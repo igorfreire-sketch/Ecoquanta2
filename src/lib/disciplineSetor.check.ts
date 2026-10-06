@@ -11,9 +11,14 @@ const todas = DEFAULT_DISCIPLINES.map((item) => item.label);
 assert.equal(getDisciplineSector('Urbanismo'), 'Arquitetura');
 assert.equal(getDisciplineSector('Layout'), 'Arquitetura');
 assert.equal(getDisciplineSector('Estrutura Metálica'), 'Estrutural');
+assert.equal(getDisciplineSector('SMAD'), 'Estrutural');
 assert.equal(getDisciplineSector('Impermeabilização'), 'Hidrossanitário', 'IMPE foi pra Hidrossanitário');
 assert.equal(getDisciplineSector('Telecom'), 'Elétrico');
 assert.equal(getDisciplineSector('Viário'), 'Terraplanagem/Pavimentação');
+assert.equal(getDisciplineSector('HIDL'), 'Hidrossanitário');
+assert.equal(getDisciplineSector('GEOM'), 'Geométrico');
+assert.equal(getDisciplineSector('HAB'), 'Habitação');
+assert.equal(getDisciplineSector('MOBI'), 'Mobilidade');
 
 // --- Aceita codigo, nome e "COD - Nome" ---
 assert.equal(getDisciplineSector('URB'), 'Arquitetura');
@@ -37,7 +42,7 @@ assert.equal(isDisciplineHidden('Arquitetura'), false);
   assert.ok(!setores.includes('URB - Urbanismo'), 'disciplina agrupada nao aparece solta');
   assert.ok(!setores.some((item) => item.includes('Geofísica')), 'oculta nao entra na lista');
   assert.ok(!setores.some((item) => item.includes(' - ')), 'nenhuma opcao carrega o prefixo do codigo');
-  assert.equal(setores.length, 19, 'lista oficial tem 19 setores');
+  assert.equal(setores.length, 22, 'lista oficial tem 22 setores');
   // Cadastro livre no admin nao pode virar opcao de filtro.
   assert.deepEqual(getSectorOptions(['Disciplina Inventada', 'Urbanismo']), ['Arquitetura']);
   // Os 6 de Arquitetura viram 1 entrada; a lista tem que ser bem menor que 56.

@@ -14,6 +14,16 @@ const collections = [
 assert.match(rules, /^rules_version = '2';/);
 assert.match(rules, /match \/appData\/\{document\}/);
 assert.match(rules, /match \/appData\/\{document\}\/chunks\/\{chunk\}/);
+const eapOsMatches = rules.match(/match \/eapOs\//g) || [];
+assert.equal(eapOsMatches.length, 1, 'EAP por OS deve ter uma unica regra');
+const eapOsBlock = rules.match(/match \/eapOs\/\{document\} \{([\s\S]*?)\n    \}/)?.[1] || '';
+assert.match(eapOsBlock, /allow read: if isSignedIn\(\);/, 'EAP por OS deve ser legivel por usuario autenticado');
+assert.match(eapOsBlock, /allow create: if isEapEditor\(\) && eapPointerIsSafe/, 'criacao EAP deve exigir conta corporativa e payload seguro');
+assert.match(eapOsBlock, /allow update: if isEapEditor\(\) && eapPointerIsSafe/, 'atualizacao EAP deve exigir conta corporativa e payload seguro');
+assert.doesNotMatch(eapOsBlock, /request\.resource\.data\.(?:password|senha|secret)/i, 'EAP por OS nao pode autorizar com segredo enviado pelo cliente');
+assert.match(rules, /match \/eapPreviews\/\{document\} \{\s*allow read: if false;[\s\S]*?allow create: if isEapEditor/, 'metadados da previa devem ser privados e escritos por editor corporativo');
+assert.match(rules, /match \/chunks\/\{chunk\} \{[\s\S]*?data\.status == 'published';[\s\S]*?allow create, update: if isEapEditor/, 'chunks EAP devem ser escritos pelo dono e lidos somente depois da publicacao');
+assert.match(rules, /match \/eapAudit\/\{document\} \{\s*allow read: if false;[\s\S]*?allow create: if isEapEditor/, 'auditoria EAP deve ser privada e imutavel');
 collections.forEach((name) => assert.match(rules, new RegExp(`match /${name}/\\{document\\}`), `sem regra: ${name}`));
 assert.match(rules, /match \/\{document=\*\*\}[\s\S]*allow read, write: if false;/, 'falta bloqueio padrao');
 assert.match(firebaseDb, /authStateReady\(\)[\s\S]*auth\.currentUser \? undefined : signInAnonymously/, 'sessao Google pode ser substituida por login anonimo');

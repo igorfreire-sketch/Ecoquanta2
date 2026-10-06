@@ -103,6 +103,27 @@ service cloud.firestore {
         request.resource.data.updatedAt == request.time;
     }
 
+    function isEapEditor() {
+      return isSignedInWithEmail() &&
+        request.auth.token.email.lower().matches('^[^@]+@quantaconsultoria[.]com$');
+    }
+
+    function eapPointerIsSafe(document) {
+      return request.resource.data.keys().hasOnly([
+          'os', 'osName', 'previewId', 'chunkCount', 'rowCount', 'sha256', 'version', 'updatedAt'
+        ]) &&
+        request.resource.data.os == document &&
+        request.resource.data.os.matches('^[0-9]+[.][0-9]+$') &&
+        request.resource.data.osName is string && request.resource.data.osName.size() > 0 && request.resource.data.osName.size() <= 200 &&
+        request.resource.data.previewId is string && request.resource.data.previewId.size() > 0 &&
+        request.resource.data.chunkCount is int && request.resource.data.chunkCount > 0 && request.resource.data.chunkCount <= 500 &&
+        request.resource.data.rowCount is int && request.resource.data.rowCount > 1 && request.resource.data.rowCount <= 25000 &&
+        request.resource.data.sha256 is string && request.resource.data.sha256.size() == 64 &&
+        request.resource.data.version is int && request.resource.data.updatedAt == request.time &&
+        getAfter(/databases/$(database)/documents/eapPreviews/$(request.resource.data.previewId)).data.status == 'published' &&
+        getAfter(/databases/$(database)/documents/eapPreviews/$(request.resource.data.previewId)).data.uid == request.auth.uid;
+    }
+
     // ponytail: a lista de admins do EcoQuanta ainda vive em appData/auth, que Rules nao
     // consegue consultar por e-mail. Mantenha esta excecao so para Demandas Digitais;
     // migrar para claim/doc por UID quando houver backend de provisionamento.
@@ -149,6 +170,61 @@ service cloud.firestore {
 
     match /appData/{document}/chunks/{chunk} {
       allow read, write, delete: if isSignedIn();
+    }
+
+    // EAP por OS: conversao do MPP e externa; a publicacao usa a sessao Google
+    // corporativa do proprio usuario, sem senha compartilhada ou chave Admin SDK.
+    match /eapOs/{document} {
+      allow read: if isSignedIn();
+      allow create: if isEapEditor() && eapPointerIsSafe(document) && request.resource.data.version == 1;
+      allow update: if isEapEditor() && eapPointerIsSafe(document) && request.resource.data.version == resource.data.version + 1;
+      allow delete: if false;
+    }
+
+    match /eapPreviews/{document} {
+      allow read: if false;
+      allow create: if isEapEditor() &&
+        request.resource.data.keys().hasOnly([
+          'uid', 'email', 'os', 'osName', 'isNew', 'status', 'nextIndex', 'rowCount', 'expiresAt'
+        ]) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.email == request.auth.token.email.lower() &&
+        request.resource.data.os.matches('^[0-9]+[.][0-9]+$') &&
+        request.resource.data.osName is string && request.resource.data.osName.size() > 0 && request.resource.data.osName.size() <= 200 &&
+        request.resource.data.status == 'uploading' &&
+        request.resource.data.nextIndex == 0 && request.resource.data.rowCount == 0 &&
+        request.resource.data.expiresAt is timestamp;
+      allow update: if isEapEditor() && resource.data.uid == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'nextIndex', 'rowCount', 'baseVersion', 'sha256', 'expiresAt'
+        ]) &&
+        request.resource.data.nextIndex is int && request.resource.data.nextIndex >= resource.data.nextIndex && request.resource.data.nextIndex <= 500 &&
+        request.resource.data.rowCount is int && request.resource.data.rowCount >= resource.data.rowCount && request.resource.data.rowCount <= 25000 &&
+        ((resource.data.status == 'uploading' && request.resource.data.status in ['uploading', 'ready']) ||
+          (resource.data.status == 'ready' && request.resource.data.status == 'published'));
+      allow delete: if false;
+      match /chunks/{chunk} {
+        allow read: if isSignedIn() &&
+          get(/databases/$(database)/documents/eapPreviews/$(document)).data.status == 'published';
+        allow create, update: if isEapEditor() &&
+          get(/databases/$(database)/documents/eapPreviews/$(document)).data.uid == request.auth.uid &&
+          get(/databases/$(database)/documents/eapPreviews/$(document)).data.status == 'uploading' &&
+          request.resource.data.keys().hasOnly(['rowsJson']) &&
+          request.resource.data.rowsJson is string && request.resource.data.rowsJson.size() <= 450000;
+        allow delete: if false;
+      }
+    }
+
+    match /eapAudit/{document} {
+      allow read: if false;
+      allow create: if isEapEditor() &&
+        request.resource.data.keys().hasOnly([
+          'os', 'osName', 'version', 'previewId', 'chunkCount', 'sha256', 'byUid', 'byEmail', 'at'
+        ]) &&
+        request.resource.data.byUid == request.auth.uid &&
+        request.resource.data.byEmail == request.auth.token.email.lower() &&
+        request.resource.data.at == request.time;
+      allow update, delete: if false;
     }
 
     match /registroAtividades/{document} {

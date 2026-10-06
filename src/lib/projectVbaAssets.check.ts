@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { PROJECT_EAP_EXPORT_VBA } from './projectVbaAssets';
 
-const header = PROJECT_EAP_EXPORT_VBA.match(/linhas = (.+?) & vbCrLf/)?.[1] || '';
+const header = PROJECT_EAP_EXPORT_VBA.match(/linhas = linhas & (.+?) & vbCrLf/)?.[1] || '';
 assert.equal((header.match(/vbTab/g) || []).length, 18);
 assert.match(header, /N° item/);
 assert.match(header, /Nome da Tarefa/);
@@ -9,4 +9,7 @@ assert.match(PROJECT_EAP_EXPORT_VBA, /If Not tarefa Is Nothing Then[\s\S]+If Len
 assert.doesNotMatch(PROJECT_EAP_EXPORT_VBA, /If Not tarefa Is Nothing And/);
 assert.doesNotMatch(PROJECT_EAP_EXPORT_VBA, /private_key|BEGIN PRIVATE KEY|client_email|AIza[0-9A-Za-z_-]{20,}/i);
 assert.doesNotMatch(PROJECT_EAP_EXPORT_VBA, /firestore\.googleapis\.com|setFirebaseDocument/i);
+assert.match(PROJECT_EAP_EXPORT_VBA, /Celula\(tarefa\.Text3\) & vbTab & Celula\(tarefa\.Text3\) & vbTab & Celula\(tarefa\.Text5\) & vbTab & Celula\(tarefa\.Text2\) & vbTab & Celula\(tarefa\.Text4\)/, 'mapeamento Project deve preservar disciplina, edificacao, prioridade e responsavel');
+assert.match(PROJECT_EAP_EXPORT_VBA, /~~~tsv/);
+assert.match(PROJECT_EAP_EXPORT_VBA, /\.md"/);
 console.log('projectVbaAssets: OK (19 colunas, exportação manual, sem credencial)');

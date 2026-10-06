@@ -2,7 +2,8 @@ import SearchableSelect from '../SearchableSelect';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Send } from 'lucide-react';
 import type { AuthUser } from '../LoginScreen';
-import { disciplineMatchesSector, getSectorOptions, getUserDisciplineList } from '../../lib/disciplineCatalog';
+import { disciplineMatchesSector, getDisciplineSector } from '../../lib/disciplineCatalog';
+import { ceptDisciplines } from '../../lib/ceptDisciplines';
 import { canEditNc2Record, generateId, getRecordItems, saveRecordsBatch, updateRecord, type Nc2Item, type Nc2Record } from './ncStore';
 import type { TerceirizadaRecord } from '../Administracao';
 import { getDisciplines as getTerceirizadaDisciplines } from '../TerceirizadasCadastro';
@@ -143,13 +144,12 @@ export default function Preenchimento({
   readOnly = false,
   onFinishEdit,
 }: PreenchimentoProps) {
-  const currentDisciplines = useMemo(() => getUserDisciplineList(currentUser), [currentUser]);
   const [formData, setFormData] = useState({
     avaliador: currentUser.nome || '',
     contrato: lockedContractCode || currentUser.contrato || '',
     os: '',
     edificacao: '',
-    disciplina: currentDisciplines[0] || currentUser.disciplina || '',
+    disciplina: '',
     terceirizadaNome: '',
     observacoes: '',
   });
@@ -231,9 +231,9 @@ export default function Preenchimento({
       ...prev,
       avaliador: currentUser.nome || '',
       contrato: lockedContractCode || prev.contrato || currentUser.contrato || '',
-      disciplina: prev.disciplina || currentDisciplines[0] || currentUser.disciplina || '',
+      disciplina: prev.disciplina,
     }));
-  }, [currentDisciplines, currentUser.contrato, currentUser.disciplina, currentUser.nome, lockedContractCode]);
+  }, [currentUser.contrato, currentUser.nome, lockedContractCode]);
 
   useEffect(() => {
     const updateClock = () => {
@@ -246,13 +246,9 @@ export default function Preenchimento({
     updateClock();
   }, []);
 
-  // Opcoes de disciplina viram GRUPOS; se o valor gravado for legado (nao esta nos grupos), mantem visivel no topo.
-  const disciplinaGroupOptions = useMemo(() => {
-    const groups = getSectorOptions(disciplinas);
-    return formData.disciplina && !groups.includes(formData.disciplina)
-      ? [formData.disciplina, ...groups]
-      : groups;
-  }, [disciplinas, formData.disciplina]);
+  // Valores antigos ficam disponíveis apenas durante a edição de um registro existente.
+  const legacyDiscipline = editRecord && formData.disciplina &&
+    !ceptDisciplines.some(([code]) => code === formData.disciplina) ? formData.disciplina : '';
 
   // Terceirizadas cujo cadastro atende o setor de disciplina selecionado (padrão.md: uma
   // terceirizada pode atender vários setores, entao ela aparece em cada um dos seus setores).
@@ -263,7 +259,7 @@ export default function Preenchimento({
       const nome = String(item.nome || '').trim();
       if (!nome) return;
       const disciplinasDaTerceirizada = getTerceirizadaDisciplines(item);
-      if (disciplinasDaTerceirizada.some((disciplina) => disciplineMatchesSector(disciplina, formData.disciplina))) {
+      if (disciplinasDaTerceirizada.some((disciplina) => disciplineMatchesSector(disciplina, getDisciplineSector(formData.disciplina)))) {
         nomes.add(nome);
       }
     });
@@ -324,7 +320,7 @@ export default function Preenchimento({
         normalizeText(contractCode) === normalizeText(formData.contrato) &&
         normalizeText(String(activity?.osCodigo || '')) === normalizeText(formData.os) &&
         normalizeText(String(activity?.edificio || '')) === normalizeText(formData.edificacao) &&
-        disciplineMatchesSector(discipline, formData.disciplina)
+        disciplineMatchesSector(discipline, getDisciplineSector(formData.disciplina))
       );
     });
   }, [formData.contrato, formData.disciplina, formData.edificacao, formData.os, sourceActivities]);
@@ -373,7 +369,7 @@ export default function Preenchimento({
       contrato: lockedContractCode || currentUser.contrato || '',
       os: '',
       edificacao: '',
-      disciplina: currentDisciplines[0] || currentUser.disciplina || '',
+      disciplina: '',
       terceirizadaNome: '',
       observacoes: '',
     });
@@ -685,11 +681,8 @@ export default function Preenchimento({
                 style={selectStyle}
               >
                 <option value="">Selecione...</option>
-                {disciplinaGroupOptions.map((disciplina) => (
-                  <option key={disciplina} value={disciplina}>
-                    {disciplina}
-                  </option>
-                ))}
+                {legacyDiscipline && <option value={legacyDiscipline}>{legacyDiscipline} (registro anterior)</option>}
+                {ceptDisciplines.map(([code, name]) => <option key={code} value={code}>{code} — {name}</option>)}
               </SearchableSelect>
             </div>
 

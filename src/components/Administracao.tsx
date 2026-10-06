@@ -35,7 +35,7 @@ export function ProjectVbaConfigCard() {
           MS Project
         </div>
         <h3 className="text-[16px] font-bold text-[#2D2D2D]">Exportar EAP do Project</h3>
-        <p className="text-[13px] text-[#757575] leading-relaxed">Baixa a macro que gera o arquivo de 19 colunas para importação segura nesta tela.</p>
+        <p className="text-[13px] text-[#757575] leading-relaxed">Ferramenta opcional para exportar uma cópia .md da EAP. Em Planejamento &gt; Atualização EAP, o arquivo .mpp pode ser selecionado diretamente.</p>
       </div>
 
       <button

@@ -20,6 +20,7 @@ const DISCIPLINE_SOURCE: Array<[string, string]> = [
   ['TSD', 'Sondagem'],
   ['EST', 'Estrutura Mista'],
   ['SCO', 'Estrutura de Concreto'],
+  ['SMAD', 'Estrutura de Madeira'],
   ['CONT', 'Conten\u00e7\u00e3o'],
   ['SMT', 'Estrutura Met\u00e1lica'],
   ['FUND', 'Funda\u00e7\u00f5es'],
@@ -46,6 +47,7 @@ const DISCIPLINE_SOURCE: Array<[string, string]> = [
   ['IMPE', 'Impermeabiliza\u00e7\u00e3o'],
   ['ALA', 'Alarme'],
   ['PCI', 'PCI'],
+  ['HIDL', 'Hidrol\u00f3gico'],
   ['TERR', 'Terraplanagem'],
   ['TOPO', 'Topografia'],
   ['VPAV', 'Vias e Pavimenta\u00e7\u00e3o'],
@@ -58,8 +60,11 @@ const DISCIPLINE_SOURCE: Array<[string, string]> = [
   ['JUR', 'Jur\u00eddico'],
   ['MULT', 'Multidisciplinar'],
   ['ECON', 'Econ\u00f4mico-Financeiro'],
+  ['GEOM', 'Geom\u00e9trico'],
   ['GEO', 'Geof\u00edsica'],
+  ['HAB', 'Habita\u00e7\u00e3o'],
   ['VIAR', 'Vi\u00e1rio'],
+  ['MOBI', 'Mobilidade'],
   ['DES', 'Desapropria\u00e7\u00e3o'],
   ['CLSH', 'Clash'],
   ['SUP', 'Supervis\u00e3o'],
@@ -170,11 +175,11 @@ const SETOR_POR_CODIGO: Record<string, string> = {
 
   TSD: 'Serviço de Campo', TOPO: 'Serviço de Campo',
 
-  EST: 'Estrutural', SCO: 'Estrutural', CONT: 'Estrutural',
+  EST: 'Estrutural', SCO: 'Estrutural', SMAD: 'Estrutural', CONT: 'Estrutural',
   SMT: 'Estrutural', FUND: 'Estrutural',
 
   HIDS: 'Hidrossanitário', HIDA: 'Hidrossanitário', ESG: 'Hidrossanitário',
-  DREN: 'Hidrossanitário', REUS: 'Hidrossanitário', IMPE: 'Hidrossanitário',
+  DREN: 'Hidrossanitário', REUS: 'Hidrossanitário', IMPE: 'Hidrossanitário', HIDL: 'Hidrossanitário',
 
   GAS: 'PCI/Gás', PCI: 'PCI/Gás',
 
@@ -306,7 +311,7 @@ export function _selfTestDisciplineGroups() {
   console.assert(groups.includes('Engenharia') && groups.includes('BI e Soluções Digitais'), 'deveria conter Engenharia e BISD');
   console.assert(!groups.includes('Desenvolvimento') && !groups.includes('Multidisciplinar'), 'DEV/MULT saíram do catalogo oficial');
   console.assert(!groups.includes('Gerenciamento'), 'Gerenciamento e oculto, nao deveria aparecer');
-  console.assert(groups.length === 19, `esperado 19 grupos oficiais, veio ${groups.length}`);
+  console.assert(groups.length === 22, `esperado 22 grupos oficiais, veio ${groups.length}`);
   console.assert(
     expandEngenhariaNaSelecao(['Engenharia']).includes('Hidrossanitário'),
     'marcar Engenharia deveria trazer as filhas junto'

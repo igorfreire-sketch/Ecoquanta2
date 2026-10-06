@@ -18,6 +18,8 @@ export interface CronogramaRow {
   realEnd?: string;
   baselineIdealProgress?: number;
   sourceLine?: number;
+  eapUpdatedAt?: string;
+  eapVersion?: number;
 }
 
 interface CronogramaProps {
@@ -267,6 +269,8 @@ function normalizeCronogramaRow(row: any): CronogramaRow | null {
     realStart: String(row.realStart || row.dataInicioReal || '').trim(),
     realEnd: String(row.realEnd || row.dataFimReal || '').trim(),
     baselineIdealProgress: Number(row.baselineIdealProgress ?? row.idealProgressBase ?? 0),
+    eapUpdatedAt: String(row.eapUpdatedAt || '').trim(),
+    eapVersion: Number(row.eapVersion || 0) || undefined,
   };
 }
 
@@ -1623,6 +1627,11 @@ export default function Cronograma({
                               {task.milestone ? 'Marco' : `${task.durationDays} dia(s)`}
                               {task.critical ? ' · Critica' : ''}
                             </div>
+                            {task.row.eapUpdatedAt && (
+                              <div className="text-[10px] font-semibold text-slate-500">
+                                EAP atualizada em {formatDateBR(task.row.eapUpdatedAt)}
+                              </div>
+                            )}
                           </div>
                         </div>
                       );

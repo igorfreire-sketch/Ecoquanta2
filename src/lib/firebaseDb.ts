@@ -482,6 +482,10 @@ async function getAppDataDoc<T>(dbRef: Firestore, name: string, fresh = false): 
 
 // Mesmo tamanho de pedaco do publicador VBA/Apps Script (projectVbaAssets.ts, CHUNK_SIZE).
 const APPDATA_CHUNK_SIZE = 750000;
+// Gravacao pelo app: acima disto vira chunked (1 MiB = limite duro do Firestore, com folga pros
+// campos e metadados). Chunk em caracteres: 300k * ate 3 bytes UTF-8 continua abaixo de 1 MiB.
+const APPDATA_INLINE_LIMIT_BYTES = 900_000;
+const APPDATA_SAFE_CHUNK_CHARS = 300_000;
 
 type AppDataFormato = 'data' | 'chunked' | 'dataJson';
 
@@ -1122,6 +1126,20 @@ export async function mutateFirebaseAppData<T>(name: string, mutate: (current: T
     const serialized = JSON.stringify(mutate(current));
     if (serialized === undefined) throw new Error(`A mutacao de appData/${name} produziu um valor invalido.`);
     const next = JSON.parse(serialized) as T;
+    const previousChunkCount = snapshot.exists() && snapshot.data().chunked ? Number(snapshot.data().chunkCount || 0) : 0;
+    // Firestore limita 1 MiB por documento (appData/notes estourou em 2026-10-20). Acima da folga,
+    // grava no formato chunked que getAppDataDoc/esta funcao ja leem, na MESMA transacao (tudo ou nada).
+    if (new Blob([serialized]).size > APPDATA_INLINE_LIMIT_BYTES) {
+      const chunks = fatiarTexto(serialized, APPDATA_SAFE_CHUNK_CHARS);
+      chunks.forEach((value, index) => {
+        transaction.set(doc(dbRef, 'appData', name, 'chunks', String(index).padStart(5, '0')), { index, value, updatedAt: serverTimestamp() });
+      });
+      for (let index = chunks.length; index < previousChunkCount; index++) {
+        transaction.delete(doc(dbRef, 'appData', name, 'chunks', String(index).padStart(5, '0')));
+      }
+      transaction.set(rootRef, { chunked: true, chunkCount: chunks.length, byteLength: serialized.length, source: 'EcoQuanta', updatedAt: serverTimestamp() });
+      return next;
+    }
     transaction.set(rootRef, { data: next, updatedAt: serverTimestamp() });
     return next;
   });

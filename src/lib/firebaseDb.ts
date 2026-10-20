@@ -4,10 +4,16 @@ import {
   collection,
   deleteDoc,
   doc,
+  clearIndexedDbPersistence,
   getDoc,
+  getDocFromCache,
   getDocs,
   getFirestore,
+  initializeFirestore,
   onSnapshot,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  terminate,
   query,
   runTransaction,
   serverTimestamp,
@@ -164,7 +170,15 @@ function getDb() {
   }
 
   if (!app) app = initializeApp(config);
-  if (!db) db = getFirestore(app);
+  if (!db) {
+    // Cache persistente (IndexedDB) em tudo: listeners retomam so com o que mudou e os
+    // chunks de appData sao relidos do disco quando o pai nao mudou (ver getAppDataDoc).
+    try {
+      db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+    } catch {
+      db = getFirestore(app); // ja inicializado por outro modulo (eapService) ou IndexedDB indisponivel
+    }
+  }
   return db;
 }
 
@@ -241,6 +255,19 @@ export async function signOutFirebase(): Promise<void> {
   await signOut(getAuth(app));
   authPromise = null;
   googleCalendarToken = null;
+  // Dado do Ecoquanta nao fica no disco depois do logout (PC compartilhado).
+  chunkedAppDataCache.clear();
+  try { localStorage.removeItem(CHUNK_KEYS_STORAGE); } catch { /* storage bloqueado */ }
+  if (db) {
+    const current = db;
+    db = null;
+    try {
+      await terminate(current);
+      await clearIndexedDbPersistence(current);
+    } catch (error) {
+      console.warn('Nao foi possivel limpar o cache local do Firestore:', error);
+    }
+  }
 }
 
 // Token OAuth do Google (escopo Agenda) em cache - null quando nunca logou ou quando expirou
@@ -406,6 +433,16 @@ function splitActivitiesForUser(activities: any[], user: AuthUserLike, professio
 // O pai e pequeno: se updatedAt/chunkCount nao mudaram, devolve o objeto ja parseado.
 // ponytail: o objeto e compartilhado entre chamadas; quem precisar mutar le com fresh=true.
 const chunkedAppDataCache = new Map<string, { key: string; value: unknown }>();
+// Entre recargas da pagina: guarda a versao (cacheKey) cujos chunks ja estao no IndexedDB do Firestore.
+const CHUNK_KEYS_STORAGE = 'ecoquanta.appDataChunkKeys';
+
+function readChunkKeys(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(CHUNK_KEYS_STORAGE) || '{}') || {}; } catch { return {}; }
+}
+
+function writeChunkKey(name: string, key: string) {
+  try { localStorage.setItem(CHUNK_KEYS_STORAGE, JSON.stringify({ ...readChunkKeys(), [name]: key })); } catch { /* storage bloqueado */ }
+}
 
 async function getAppDataDoc<T>(dbRef: Firestore, name: string, fresh = false): Promise<T | null> {
   const snapshot = await getDoc(doc(dbRef, 'appData', name));
@@ -421,8 +458,18 @@ async function getAppDataDoc<T>(dbRef: Firestore, name: string, fresh = false): 
     const cacheKey = `${typeof updatedAt?.toMillis === 'function' ? updatedAt.toMillis() : String(updatedAt ?? '')}|${payload.chunkCount}|${payload.byteLength ?? ''}`;
     const cached = chunkedAppDataCache.get(name);
     if (!fresh && cached?.key === cacheKey) return cached.value as T;
-    const jsonText = (await readChunkedAppData(dbRef, name, Number(payload.chunkCount || 0))).join('');
-    const value = JSON.parse(jsonText) as T;
+    const chunkCount = Number(payload.chunkCount || 0);
+    let value: T | null = null;
+    if (!fresh && readChunkKeys()[name] === cacheKey) {
+      const fromDisk = await readChunkedAppDataFromCache(dbRef, name, chunkCount);
+      if (fromDisk) {
+        try { value = JSON.parse(fromDisk) as T; } catch { value = null; }
+      }
+    }
+    if (value === null) {
+      value = JSON.parse((await readChunkedAppData(dbRef, name, chunkCount)).join('')) as T;
+      writeChunkKey(name, cacheKey);
+    }
     if (fresh) chunkedAppDataCache.delete(name);
     else chunkedAppDataCache.set(name, { key: cacheKey, value });
     return value;
@@ -524,6 +571,18 @@ export async function fetchFirebaseAppData<T = any>(name: string): Promise<T | n
     return await getAppDataDoc<T>(dbRef, name);
   } catch (error) {
     console.error(`❌ Erro ao fetch appData/${name}:`, error);
+    return null;
+  }
+}
+
+// Le os chunks so do IndexedDB; qualquer chunk ausente => null e o chamador vai ao servidor.
+async function readChunkedAppDataFromCache(dbRef: Firestore, name: string, chunkCount: number): Promise<string | null> {
+  try {
+    const snapshots = await Promise.all(Array.from({ length: chunkCount }, (_, index) =>
+      getDocFromCache(doc(dbRef, 'appData', name, 'chunks', String(index).padStart(5, '0')))));
+    const values = snapshots.map((entry) => String(entry.data()?.value || ''));
+    return values.every((value) => value.length > 0) ? values.join('') : null;
+  } catch {
     return null;
   }
 }

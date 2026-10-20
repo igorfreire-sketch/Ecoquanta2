@@ -402,7 +402,12 @@ function splitActivitiesForUser(activities: any[], user: AuthUserLike, professio
   };
 }
 
-async function getAppDataDoc<T>(dbRef: Firestore, name: string): Promise<T | null> {
+// Documentos chunked (eap ~12 MB, menu ~7 MB) eram baixados e parseados de novo a cada tela/refresh.
+// O pai e pequeno: se updatedAt/chunkCount nao mudaram, devolve o objeto ja parseado.
+// ponytail: o objeto e compartilhado entre chamadas; quem precisar mutar le com fresh=true.
+const chunkedAppDataCache = new Map<string, { key: string; value: unknown }>();
+
+async function getAppDataDoc<T>(dbRef: Firestore, name: string, fresh = false): Promise<T | null> {
   const snapshot = await getDoc(doc(dbRef, 'appData', name));
   if (!snapshot.exists()) return null;
   const payload = snapshot.data();
@@ -412,8 +417,15 @@ async function getAppDataDoc<T>(dbRef: Firestore, name: string): Promise<T | nul
     return payload.data as T;
   }
   if (payload.chunked && Number(payload.chunkCount || 0) > 0) {
+    const updatedAt = payload.updatedAt;
+    const cacheKey = `${typeof updatedAt?.toMillis === 'function' ? updatedAt.toMillis() : String(updatedAt ?? '')}|${payload.chunkCount}|${payload.byteLength ?? ''}`;
+    const cached = chunkedAppDataCache.get(name);
+    if (!fresh && cached?.key === cacheKey) return cached.value as T;
     const jsonText = (await readChunkedAppData(dbRef, name, Number(payload.chunkCount || 0))).join('');
-    return JSON.parse(jsonText) as T;
+    const value = JSON.parse(jsonText) as T;
+    if (fresh) chunkedAppDataCache.delete(name);
+    else chunkedAppDataCache.set(name, { key: cacheKey, value });
+    return value;
   }
   if (typeof payload.dataJson === 'string') {
     return JSON.parse(payload.dataJson) as T;
@@ -465,7 +477,7 @@ export async function mutateAppDataPreservandoFormato<T>(name: string, mutate: (
     throw new Error(`Formato de appData/${name} desconhecido; gravacao cancelada para preservar os dados.`);
   }
 
-  const atual = await getAppDataDoc<T>(dbRef, name);
+  const atual = await getAppDataDoc<T>(dbRef, name, true);
   // JSON round-trip: Firestore rejeita `undefined` em qualquer nivel.
   const proximo = JSON.parse(JSON.stringify(mutate(atual))) as T;
 
@@ -543,7 +555,7 @@ function isNonEmptyObject(value: any) {
   return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
 }
 
-function mergePublishedRegistro(...sources: any[]) {
+export function mergePublishedRegistro(...sources: any[]) {
   const out: any = {};
 
   sources.forEach((source) => {
@@ -563,6 +575,16 @@ function mergePublishedRegistro(...sources: any[]) {
       if (value !== undefined && value !== null && value !== '') out[key] = value;
     });
   });
+
+  // O publicador nao grava mais childrenByParent (2 MB redundantes): deriva de hierarchyNodes,
+  // no mesmo formato do buildChildrenByParentMap_ do Apps Script.
+  if (Array.isArray(out.hierarchyNodes) && out.hierarchyNodes.length > 0 && !isNonEmptyObject(out.childrenByParent)) {
+    const childrenByParent: Record<string, any[]> = {};
+    out.hierarchyNodes.forEach((node: any) => {
+      (childrenByParent[node?.parentCodigo || 'ROOT'] ||= []).push(node);
+    });
+    out.childrenByParent = childrenByParent;
+  }
 
   return out;
 }

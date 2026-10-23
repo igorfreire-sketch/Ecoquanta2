@@ -1011,7 +1011,11 @@ function mergeUserAccessRecords(...sources: any[][]): UserAccessRecord[] {
       if (!raw || !(raw.email || raw.id)) return;
       const user = normalizeUserAccessRecord(raw);
       const email = normalizeUserText(user.email || user.id);
-      if (!email || byEmail.has(email)) return;
+      if (!email) return;
+      // Primeira fonte ganha, exceto quando o registro guardado e vazio (sem cargo nem abas,
+      // ex.: appData/admin reescrito pelo Apps Script) e o seguinte tem acesso de verdade.
+      const kept = byEmail.get(email);
+      if (kept && (kept.adminReviewed || !user.adminReviewed)) return;
       byEmail.set(email, user);
     });
   });

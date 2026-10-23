@@ -162,7 +162,7 @@ export function isFirebaseConfigured() {
   return Boolean(readFirebaseConfig());
 }
 
-function getDb() {
+export function getDb() {
   const config = readFirebaseConfig();
   if (!config) {
     console.warn('⚠️ Firebase nao configurado. Verifique as variaveis de ambiente VITE_FIREBASE_*');
@@ -182,7 +182,7 @@ function getDb() {
   return db;
 }
 
-async function ensureFirebaseAuth() {
+export async function ensureFirebaseAuth() {
   const anonymousEnabled = readEnv('VITE_FIREBASE_ANONYMOUS_AUTH');
   if (isExplicitlyDisabled(anonymousEnabled)) return;
 

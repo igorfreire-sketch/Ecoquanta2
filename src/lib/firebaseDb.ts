@@ -598,20 +598,11 @@ async function readChunkedAppData(dbRef: Firestore, name: string, chunkCount: nu
   );
   const expectedValues = expectedSnapshots.map((entry) => String(entry.exists() ? entry.data()?.value || '' : ''));
 
-  if (expectedValues.every((value) => value.length > 0)) return expectedValues;
-
-  const chunkSnapshot = await getDocs(collection(dbRef, 'appData', name, 'chunks'));
-  const valuesById = new Map(
-    chunkSnapshot.docs.map((entry) => [entry.id, String(entry.data()?.value || '')]),
-  );
-  const mergedValues = expectedIds.map((id, index) => expectedValues[index] || valuesById.get(id) || '');
-
-  if (mergedValues.every((value) => value.length > 0)) return mergedValues;
-
-  return chunkSnapshot.docs
-    .map((entry) => ({ id: entry.id, value: String(entry.data()?.value || '') }))
-    .sort((a, b) => a.id.localeCompare(b.id))
-    .map((entry) => entry.value);
+  // So os chunks declarados pelo pai (chunkCount). Nunca concatenar chunks orfaos da colecao:
+  // sobras de gravacoes antigas corrompiam o JSON. Faltou um => erro (chamador mantem o cache anterior).
+  const missing = expectedIds.filter((_, index) => !expectedValues[index]);
+  if (missing.length) throw new Error(`appData/${name}: chunks ausentes ${missing.join(', ')} de ${chunkCount}.`);
+  return expectedValues;
 }
 
 function isNonEmptyObject(value: any) {

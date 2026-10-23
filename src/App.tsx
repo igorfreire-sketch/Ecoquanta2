@@ -170,8 +170,8 @@ const Cronogramas = React.lazy(() => import('./components/Cronogramas'));
 const Notes = React.lazy(() => import('./components/CoordenacaoEngenharia/Notes'));
 const Contrato = React.lazy(() => import('./components/CoordenacaoEngenharia/Contrato'));
 const CurvaS = React.lazy(() => import('./components/CoordenacaoEngenharia/CurvaS'));
-const CeptDashboard = React.lazy(() => import('./components/Compatibilizacao/AnaliseOS'));
-const CompatibilizacaoPreenchimento = React.lazy(() => import('./components/Compatibilizacao/Preenchimento'));
+const CeptDashboard = React.lazy(() => import('./components/CeptV2/analise'));
+const CompatibilizacaoPreenchimento = React.lazy(() => import('./components/CeptV2/preenchimento'));
 const Administracao = React.lazy(() => import('./components/Administracao'));
 const EAP_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx4hAEe5i_ulWGSl9qfiokoCGzMza3QzUDIlM4cuZV_8eRw-Ml3XltdAbD0K0EFWm9x4Q/exec';
 const APP_VERSION_LABEL = getAppVersionLabel();
@@ -3853,7 +3853,7 @@ export default function App() {
 
     if (activeTab === 'compatibilizacao') {
       return [
-        { key: 'analise-os', label: 'Análise de OS', icon: <ClipboardList size={16} />, active: compatibilizacaoSubTab === 'analise-os', onClick: () => setCompatibilizacaoSubTab('analise-os') },
+        { key: 'analise-os', label: 'Análise das OS', icon: <ClipboardList size={16} />, active: compatibilizacaoSubTab === 'analise-os', onClick: () => setCompatibilizacaoSubTab('analise-os') },
         { key: 'preenchimento', label: 'Preenchimento', icon: <Clipboard size={16} />, active: compatibilizacaoSubTab === 'preenchimento', onClick: () => setCompatibilizacaoSubTab('preenchimento') },
       ];
     }
@@ -4259,8 +4259,8 @@ export default function App() {
               )}
               {activeTab === 'compatibilizacao' && currentUser && userHasTabAccess(currentUser, 'compatibilizacao', roleTabPermissions) && (
                 compatibilizacaoSubTab === 'analise-os'
-                  ? <CeptDashboard currentUser={currentUser} osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []} />
-                  : <CompatibilizacaoPreenchimento osOptions={Array.isArray(effectiveGlobalData?.registro?.osOptions) ? effectiveGlobalData.registro.osOptions : []} currentUser={currentUser} />
+                  ? <CeptDashboard currentUser={currentUser} />
+                  : <CompatibilizacaoPreenchimento currentUser={currentUser} />
               )}
               {activeTab === 'demandas' && currentUser && (
                 <DemandasDigitais reports={feedbackReports} noteDemands={noteDemands} canAccess={userHasTabAccess(currentUser, 'demandas', roleTabPermissions)} loading={feedbackLoading} error={feedbackLoadError} onStatusChange={currentUser.isAdmin ? moveFeedback : undefined} onArchive={currentUser.isAdmin ? (id) => moveFeedback(id, 'archived') : undefined} onEdit={currentUser.isAdmin ? editFeedback : undefined} />

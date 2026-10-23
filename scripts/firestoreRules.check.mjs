@@ -52,4 +52,18 @@ for (const name of ['appData', 'nc2Records', 'contractPriorities', 'contractInte
   assert.doesNotMatch(block, /siteUsers|ownsNc|ownsContractData/, `${name} ainda depende de perfil por uid inexistente`);
 }
 
+// CEPT v2 (T8): append-only, versao +1, allowlist de campos, validador pela lista do banco
+const cept2 = (name) => rules.match(new RegExp(`match /${name}/\\{document\\} \\{([\\s\\S]*?)\\n    \\}`))?.[1] || '';
+for (const name of ['cept2Componentes', 'cept2Planejamento', 'cept2Edificacoes', 'cept2Medicoes']) {
+  assert.match(cept2(name), /allow create, update: if isCeptEditor\(\) && cept\w+Ok\(document\);/, `${name} sem editor/payload validado`);
+  assert.match(cept2(name), /allow delete: if false;/, `${name} permite delete`);
+}
+for (const name of ['cept2Validacoes', 'cept2Alteracoes']) assert.match(cept2(name), /allow update, delete: if false;/, `${name} nao e append-only`);
+assert.match(cept2('cept2Validacoes'), /allow create: if isCeptValidator\(\)/, 'validacao CEPT sem allowlist');
+assert.match(cept2('cept2Validacoes'), /usuarioEmail == request\.auth\.token\.email\.lower\(\)/, 'validacao CEPT aceita autor forjado');
+assert.match(cept2('cept2Validacoes'), /keys\(\)\.hasOnly\(/, 'validacao CEPT sem allowlist de campos');
+assert.match(rules, /function isCeptValidator\(\)[\s\S]*?in get\(\/databases\/\$\(database\)\/documents\/ceptConfig\/validadores\)\.data\.emails;/, 'validadores CEPT fora do banco');
+assert.match(rules, /function ceptVersionedWriteOk[\s\S]*?hasOnly\(allowed\.concat\(meta\)\)[\s\S]*?resource == null && d\.version == 1[\s\S]*?d\.version == resource\.data\.get\('version', 0\) \+ 1[\s\S]*?affectedKeys\(\)\.hasAny\(identity/, 'CEPT v2 sem allowlist/versao/identidade imutavel');
+assert.match(rules, /match \/ceptConfig\/\{document\} \{[\s\S]*?allow create, update: if isFeedbackAdmin\(\) && document == 'validadores'/, 'ceptConfig editavel por nao-admin');
+
 console.log('firestoreRules: OK');

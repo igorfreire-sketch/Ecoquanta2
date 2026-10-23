@@ -252,6 +252,197 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ===== CEPT v2 (reconstrucao OS061, src/lib/cept/data.ts) =====
+    // Convive com o bloco CEPT antigo abaixo ate o corte (F6/F7). Nada aqui confia no cliente:
+    // autor = token, hora = servidor, versao +1, identidade imutavel, campos por allowlist.
+    function isCeptEditor() {
+      return isEapEditor() || isAdmin();
+    }
+
+    // Validadores vivem em ceptConfig/validadores (seed = 5 e-mails de CEPT:47-53). Doc ausente = nega.
+    function isCeptValidator() {
+      return isSignedInWithEmail() &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.email.lower() in get(/databases/$(database)/documents/ceptConfig/validadores).data.emails;
+    }
+
+    function ceptVersionedWriteOk(document, allowed, identity) {
+      let d = request.resource.data;
+      let meta = ['osCode', 'version', 'updatedAt', 'updatedBy'];
+      return d.keys().hasOnly(allowed.concat(meta)) &&
+        d.keys().hasAll(identity.concat(meta)) &&
+        d.osCode is string && d.osCode.matches('^[0-9]{3}$') &&
+        document.matches(d.osCode + '__.+') &&
+        d.updatedBy == request.auth.token.email.lower() &&
+        d.updatedAt == request.time &&
+        ((resource == null && d.version == 1) ||
+         (resource != null && d.version == resource.data.get('version', 0) + 1 &&
+          !d.diff(resource.data).affectedKeys().hasAny(identity.concat(['osCode']))));
+    }
+
+    function ceptStr(d, k, max) {
+      return !(k in d) || (d[k] is string && d[k].size() <= max);
+    }
+
+    function ceptIntOrNull(m, k) {
+      return !(k in m) || m[k] == null || (m[k] is int && m[k] >= 0 && m[k] <= 1000);
+    }
+
+    function ceptEtapaOk(e, k) {
+      return !(k in e) || (e[k] is map && e[k].keys().hasOnly(['tec', 'con']) &&
+        e[k].get('tec', false) is bool && e[k].get('con', false) is bool);
+    }
+
+    function ceptComponenteOk(document) {
+      let d = request.resource.data;
+      return ceptVersionedWriteOk(document,
+          ['projectCode', 'disciplineCode', 'sourceLabel', 'sourceType', 'sourceRow', 'status', 'dateRaw'],
+          ['projectCode', 'disciplineCode', 'sourceType', 'sourceRow']) &&
+        d.projectCode is string && d.projectCode.matches('^[0-9]{3}$') &&
+        d.disciplineCode is string && d.disciplineCode.matches('^[A-Z]{2,6}$') &&
+        document.matches(d.osCode + '__' + d.projectCode + '__' + d.disciplineCode + '__.+') &&
+        (!(d.disciplineCode in ['TOPO', 'TSD']) || d.projectCode == '001') &&
+        d.sourceType is string && d.sourceType.size() > 0 && d.sourceType.size() <= 120 &&
+        ceptStr(d, 'sourceLabel', 200) &&
+        d.sourceRow is int && d.sourceRow > 0 &&
+        d.get('status', '') in ['delivered', 'pending', 'na', 'unknown'] &&
+        ceptStr(d, 'dateRaw', 20);
+    }
+
+    function ceptPlanejamentoOk(document) {
+      let d = request.resource.data;
+      let lod = d.get('lod', {});
+      let extra = d.get('extra', {});
+      let excl = d.get('lodExcluiDoTotal', null);
+      return ceptVersionedWriteOk(document,
+          ['projectCode', 'sourceRow', 'edificacao', 'disciplinaTexto', 'nota', 'modo', 'fechado',
+           'terceirizado', 'lod', 'finalNota', 'lodExcluiDoTotal', 'extra'],
+          ['projectCode', 'sourceRow']) &&
+        d.projectCode is string && d.projectCode.matches('^[0-9]{3}$') &&
+        document == d.osCode + '__' + d.projectCode + '__' + string(d.sourceRow) &&
+        d.sourceRow is int && d.sourceRow > 0 &&
+        ceptStr(d, 'edificacao', 200) && ceptStr(d, 'disciplinaTexto', 200) &&
+        ceptStr(d, 'terceirizado', 200) && ceptStr(d, 'finalNota', 300) &&
+        (d.get('nota', null) == null || d.get('nota', null) in [1, 2, 3, 4, 5, 6]) &&
+        (d.get('modo', null) == null || d.get('modo', null) in ['Quanta', 'Terceirizado', 'Indefinido']) &&
+        d.get('fechado', false) is bool &&
+        lod is map && lod.keys().hasOnly(['100', '200', '300', '350', '400', 'final']) &&
+        ceptIntOrNull(lod, '100') && ceptIntOrNull(lod, '200') && ceptIntOrNull(lod, '300') &&
+        ceptIntOrNull(lod, '350') && ceptIntOrNull(lod, '400') && ceptIntOrNull(lod, 'final') &&
+        (excl == null || (excl is list && excl.hasOnly(['100', '200', '300', '350', '400', 'final']))) &&
+        extra is map && extra.keys().hasOnly(['p', 'comentarios']) &&
+        ceptStr(extra, 'p', 200) && (!('comentarios' in extra) || (extra.comentarios is list && extra.comentarios.size() <= 50));
+    }
+
+    function ceptEdificacaoOk(document) {
+      let d = request.resource.data;
+      return ceptVersionedWriteOk(document, ['projectCode', 'nome', 'bimCompatibilidade'], ['projectCode']) &&
+        d.projectCode is string && d.projectCode.matches('^[0-9]{3}$') &&
+        document == d.osCode + '__' + d.projectCode &&
+        ceptStr(d, 'nome', 200) && ceptStr(d, 'bimCompatibilidade', 300);
+    }
+
+    function ceptMedicaoOk(document) {
+      let d = request.resource.data;
+      let e = d.get('etapas', {});
+      return ceptVersionedWriteOk(document,
+          ['projectCode', 'sourceRow', 'edificacao', 'disciplinaTexto', 'terceirizado', 'responsavelInterno', 'etapas'],
+          ['projectCode', 'sourceRow']) &&
+        d.projectCode is string && d.projectCode.matches('^[0-9]{3}$') &&
+        document == d.osCode + '__' + d.projectCode + '__' + string(d.sourceRow) &&
+        d.sourceRow is int && d.sourceRow > 0 &&
+        ceptStr(d, 'edificacao', 200) && ceptStr(d, 'disciplinaTexto', 200) &&
+        ceptStr(d, 'terceirizado', 200) && ceptStr(d, 'responsavelInterno', 200) &&
+        e is map && e.keys().hasOnly(['1', '2', '3', '4', '5', '6']) &&
+        ceptEtapaOk(e, '1') && ceptEtapaOk(e, '2') && ceptEtapaOk(e, '3') &&
+        ceptEtapaOk(e, '4') && ceptEtapaOk(e, '5') && ceptEtapaOk(e, '6');
+    }
+
+    match /cept2Componentes/{document} {
+      allow read: if isSignedIn();
+      allow create, update: if isCeptEditor() && ceptComponenteOk(document);
+      allow delete: if false;
+    }
+
+    match /cept2Planejamento/{document} {
+      allow read: if isSignedIn();
+      allow create, update: if isCeptEditor() && ceptPlanejamentoOk(document);
+      allow delete: if false;
+    }
+
+    match /cept2Edificacoes/{document} {
+      allow read: if isSignedIn();
+      allow create, update: if isCeptEditor() && ceptEdificacaoOk(document);
+      allow delete: if false;
+    }
+
+    match /cept2Medicoes/{document} {
+      allow read: if isSignedIn();
+      allow create, update: if isCeptEditor() && ceptMedicaoOk(document);
+      allow delete: if false;
+    }
+
+    // Log append-only de validacoes (aba Validacoes, B §B2). Assinatura e conferida no cliente
+    // dentro de transacao (rules nao recalculam SHA-256); aqui: quem, quando, formato.
+    match /cept2Validacoes/{document} {
+      allow read: if isSignedIn();
+      allow create: if isCeptValidator() &&
+        request.resource.data.keys().hasOnly([
+          'osCode', 'at', 'usuarioEmail', 'action', 'projectCode', 'disciplineCode', 'family', 'sourceType',
+          'format', 'nature', 'signature', 'severity', 'reasons', 'fileDate', 'counterpartDates',
+          'observation', 'appVersion', 'batchId', 'recordKey'
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'osCode', 'at', 'usuarioEmail', 'action', 'projectCode', 'disciplineCode', 'family', 'sourceType',
+          'signature', 'severity', 'recordKey', 'batchId'
+        ]) &&
+        request.resource.data.osCode is string && request.resource.data.osCode.matches('^[0-9]{3}$') &&
+        request.resource.data.at == request.time &&
+        request.resource.data.usuarioEmail == request.auth.token.email.lower() &&
+        request.resource.data.action in ['RESOLVED', 'CONFIRMED_OUTDATED', 'REOPENED'] &&
+        request.resource.data.projectCode is string && request.resource.data.projectCode.matches('^[0-9]{3}$') &&
+        request.resource.data.disciplineCode is string && request.resource.data.disciplineCode.size() <= 10 &&
+        request.resource.data.family is string && request.resource.data.family.size() <= 40 &&
+        request.resource.data.sourceType is string && request.resource.data.sourceType.size() <= 120 &&
+        request.resource.data.recordKey == request.resource.data.projectCode + '|' + request.resource.data.disciplineCode + '|' + request.resource.data.family + '|' + request.resource.data.sourceType &&
+        request.resource.data.signature is string && request.resource.data.signature.matches('^[0-9a-f]{64}$') &&
+        request.resource.data.severity in ['red', 'yellow'] &&
+        ceptStr(request.resource.data, 'format', 40) && ceptStr(request.resource.data, 'nature', 20) &&
+        ceptStr(request.resource.data, 'reasons', 1000) && ceptStr(request.resource.data, 'fileDate', 20) &&
+        ceptStr(request.resource.data, 'counterpartDates', 200) && ceptStr(request.resource.data, 'observation', 2000) &&
+        ceptStr(request.resource.data, 'appVersion', 40) &&
+        request.resource.data.batchId is string && request.resource.data.batchId.size() <= 80;
+      allow update, delete: if false;
+    }
+
+    // Historico de edicao (substitui o historico de versoes do Sheets). Append-only.
+    match /cept2Alteracoes/{document} {
+      allow read: if isSignedIn();
+      allow create: if isCeptEditor() &&
+        request.resource.data.keys().hasOnly(['osCode', 'colecao', 'docId', 'campo', 'antes', 'depois', 'userEmail', 'at', 'batchId']) &&
+        request.resource.data.keys().hasAll(['osCode', 'colecao', 'docId', 'campo', 'userEmail', 'at', 'batchId']) &&
+        request.resource.data.osCode is string && request.resource.data.osCode.matches('^[0-9]{3}$') &&
+        request.resource.data.colecao in ['cept2Componentes', 'cept2Planejamento', 'cept2Edificacoes', 'cept2Medicoes'] &&
+        request.resource.data.docId is string && request.resource.data.docId.size() <= 300 &&
+        request.resource.data.campo is string && request.resource.data.campo.size() <= 60 &&
+        request.resource.data.userEmail == request.auth.token.email.lower() &&
+        request.resource.data.at == request.time &&
+        request.resource.data.batchId is string && request.resource.data.batchId.size() <= 80;
+      allow update, delete: if false;
+    }
+
+    // ponytail: admin do EcoQuanta vive em appData/auth (rules nao consultam); reusa a mesma
+    // excecao de Demandas Digitais (isFeedbackAdmin) ate existir claim/doc por UID.
+    match /ceptConfig/{document} {
+      allow read: if isSignedIn();
+      allow create, update: if isFeedbackAdmin() && document == 'validadores' &&
+        request.resource.data.keys().hasOnly(['emails', 'updatedAt', 'updatedBy']) &&
+        request.resource.data.emails is list && request.resource.data.emails.size() <= 50 &&
+        request.resource.data.updatedAt == request.time &&
+        request.resource.data.updatedBy == request.auth.token.email.lower();
+      allow delete: if false;
+    }
+
     // CEPT | Acompanhamento de Entregas (docs/decisoes/0001-cept-acompanhamento-entregas-firestore.md §4)
     match /ceptComponentes/{document} {
       allow read: if isSignedIn();

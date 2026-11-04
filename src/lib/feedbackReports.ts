@@ -16,6 +16,10 @@ import type {
 
 export const FEEDBACK_REPORTS_COLLECTION = 'feedbackReports';
 
+export function isQuantaDashReport(report: Pick<FeedbackReport, 'route'>): boolean {
+  return report.route.trim().toLowerCase().startsWith('quanta-dash');
+}
+
 const MAX_ROUTE_LENGTH = 500;
 const MAX_TARGET_TOKEN_LENGTH = 200;
 const MAX_TITLE_LENGTH = 200;

@@ -3894,7 +3894,10 @@ export default function App() {
   })();
 
   // Sub-abas vivem na barra da esquerda, com Project aninhado sob Notas.
-  const feedbackBreadcrumb = buildFeedbackBreadcrumb('Ecoquanta2', AREA_LABELS[activeTab], headerTabs.find((tab) => tab.active)?.label);
+  const feedbackBreadcrumb = buildFeedbackBreadcrumb('Ecoquanta2', AREA_LABELS[activeTab],
+    activeTab === 'principal' && principalSubTab === 'project' ? 'Project'
+      : activeTab === 'cronograma' && cronogramaSubTab === 'disciplinas' ? 'Notas'
+      : headerTabs.find((tab) => tab.active)?.label);
   const abasVisiveis = headerTabs.filter((tab) => tab.key !== 'alocacoes');
   subAbasNavRef.current = abasVisiveis;
   const subNav = abasVisiveis.length > 0 ? (

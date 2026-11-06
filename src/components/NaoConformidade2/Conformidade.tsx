@@ -56,6 +56,12 @@ const filterLabels: Record<keyof AccFilters, string> = {
 const sum = (rows: AccCount[]) =>
   rows.reduce((total, row) => total + issueWeight(row), 0);
 
+// App usa "Todos" como contrato ativo; aqui isso significa sem filtro.
+const qualityContract = (locked?: string, active?: string) => {
+  const value = String(locked || active || "").trim();
+  return value.toLowerCase() === "todos" ? "" : value;
+};
+
 export default function Conformidade({
   activeTab,
   onTabChange,
@@ -70,7 +76,7 @@ export default function Conformidade({
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const [filters, setFilters] = useState<AccFilters>({
-    contrato: lockedContractCode || activeContractCode || "",
+    contrato: qualityContract(lockedContractCode, activeContractCode),
   });
   const [pdfBusy, setPdfBusy] = useState(false);
   const [metricRows, setMetricRows] = useState<AccCount[]>();
@@ -108,7 +114,7 @@ export default function Conformidade({
   useEffect(() => {
     setFilters((current) => ({
       ...current,
-      contrato: lockedContractCode || activeContractCode || "",
+      contrato: qualityContract(lockedContractCode, activeContractCode),
       os: "",
     }));
   }, [lockedContractCode, activeContractCode]);

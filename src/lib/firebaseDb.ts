@@ -1182,6 +1182,29 @@ export async function fetchFirebaseCollection<T = Record<string, unknown>>(
   return snapshot.docs.map((entry) => normalizeFirestoreRecord(entry) as T);
 }
 
+export async function fetchFirebaseDocument<T = Record<string, unknown>>(
+  collectionName: string,
+  id: string,
+): Promise<T | null> {
+  await ensureFirebaseAuth();
+  const snapshot = await getDoc(doc(getDb(), collectionName, id));
+  return snapshot.exists() ? normalizeFirestoreRecord(snapshot) as T : null;
+}
+
+export async function fetchFirebaseDocumentChunks(
+  collectionName: string,
+  id: string,
+  chunkCount: number,
+): Promise<string[]> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const snapshots = await Promise.all(Array.from({ length: chunkCount }, (_, index) =>
+    getDoc(doc(dbRef, collectionName, id, 'chunks', String(index).padStart(5, '0')))));
+  const values = snapshots.map((entry) => String(entry.data()?.value || entry.data()?.json || ''));
+  if (values.some((value) => !value)) throw new Error(`${collectionName}/${id}: chunk ausente.`);
+  return values;
+}
+
 export async function setFirebaseDocument(collectionName: string, id: string, data: object) {
   await ensureFirebaseAuth();
   const dbRef = getDb();

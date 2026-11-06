@@ -1,83 +1,12 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { buildActivitiesFromEap } from './Atividades';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Globe, Indent, Link2, Lock, Outdent, Trash2, X } from 'lucide-react';
-import { isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
-import { addDias, criarLinhaVazia, diffDias, proximoSeq, type CronoRow } from '../lib/cronoRow';
-import SearchableSelect from './SearchableSelect';
-import CampoDialog from './CampoDialog';
-import Anotacoes, { extrairLinkDaCelula, novaNotaBase, REGEX_LINK_MARKDOWN, type AnnotationSheet } from './CoordenacaoEngenharia/Anotacoes';
-import { buildActivitiesFromEap, type EngineeringActivity } from './Atividades';
-
-export const CRONOGRAMAS_COLLECTION = 'cronogramas';
-const DISCIPLINA_ALVO = 'bi - solucoes digitais';
-
-// Paleta fixa p/ pintar linha (mesmo espirito do CORES_FUNDO da Anotacoes, sem acoplar aos dois arquivos).
-const PALETA_CELULA: Array<[string, string]> = [
-  ['Sem cor', ''],
-  ['Azul', '#DBEAFE'],
-  ['Vermelho', '#FEE2E2'],
-  ['Verde', '#DCFCE7'],
-  ['Amarelo', '#FEF9C3'],
-  ['Laranja', '#FFE7D9'],
-  ['Cinza', '#F3F4F6'],
-];
-
-const NOVA_NOTA_VALOR = '__nova__';
-
-// A forma da linha mora em lib/cronoRow.ts (compartilhada com o bloco Project da nota);
-// reexportada aqui pra nao mexer em quem ja importa `CronoRow` deste arquivo.
-export type { CronoRow } from '../lib/cronoRow';
-
-export interface ColunaCustom {
-  id: string;
-  nome: string;
-}
-
-// Um cronograma = um doc do Firestore (colecao `cronogramas`). Antes cada linha era um doc solto
-// na colecao `solucoesDigitaisCronograma`; ver Cronogramas.tsx pra migracao unica dessa colecao antiga.
-export interface CronogramaDoc {
-  id: string;
-  titulo: string;
-  autorEmail: string;
-  autorNome: string;
-  publica: boolean;
-  colunasCustom: ColunaCustom[];
-  rows: CronoRow[];
-  createdAt: string;
-  updatedAt: string;
-  // Largura das colunas, chaveada por uma CHAVE ESTAVEL (nao por indice, como o banco da nota
-  // faz) — aqui as colunas fixas convivem com colunas customizadas que o usuario pode adicionar
-  // ou remover a qualquer momento; um array por indice deslocaria (silenciosamente) a largura de
-  // toda coluna a direita da que mudou. Chave = COLUNAS_FIXAS[].key pras fixas, ColunaCustom.id
-  // pras customizadas.
-  colWidths?: Record<string, number>;
-  // Ordem visual das colunas. Ausente em documentos antigos = ordem padrao abaixo.
-  colOrder?: string[];
-  // Preenchido quando o Project nasceu DENTRO de uma nota (bloco "+ Project"): o doc continua
-  // sendo um `cronogramas` normal, mas aqui na tela solta ele fica somente leitura — quem edita
-  // e a nota de origem (a coluna Nota vira o atalho pra abrir essa nota).
-  origemNotaId?: string;
-}
-
-// Colunas fixas na ordem de renderizacao, com a largura padrao aproximada de como cada uma
-// renderiza hoje (ID estreito, Atividade larga, Duracao/% estreitos etc.) — nao forca tudo pro
-// mesmo tamanho como o BANCO_COL_WIDTH da nota faz.
-const COLUNAS_FIXAS: Array<{ key: string; nome: string; largura: number }> = [
-  { key: 'id', nome: 'ID', largura: 60 },
-  { key: 'nome', nome: 'Atividade', largura: 260 },
-  { key: 'predecessora', nome: 'Predecessora', largura: 200 },
-  { key: 'inicio', nome: 'Início', largura: 130 },
-  { key: 'duracao', nome: 'Duração (dias)', largura: 100 },
-  { key: 'fim', nome: 'Fim', largura: 130 },
-  { key: 'responsavel', nome: 'Responsável', largura: 160 },
-  { key: 'percentual', nome: '% Concluído', largura: 90 },
-  { key: 'nota', nome: 'Nota', largura: 150 },
-  { key: 'atividade', nome: 'Atividade agenda', largura: 190 },
-];
-const LARGURA_COLUNA_CUSTOM_PADRAO = 160;
-// "Detalhe" (a descricao longa que o seed do cronograma real usa) e tipicamente texto corrido -
-// mesmo raciocinio de largura padrao das fixas, so por nome pq colunas customizadas nao tem chave fixa.
-const LARGURA_COLUNA_DETALHE_PADRAO = 260;
+import { Lock, X } from 'lucide-react';
+import { isFirebaseConfigured, saveCronogramaChecked } from '../lib/firebaseDb';
+import CronogramaGrid, { type CronogramaDoc } from './CronogramaGrid';
+import Anotacoes, { novaNotaBase, type AnnotationSheet } from './CoordenacaoEngenharia/Anotacoes';
+export { CRONOGRAMAS_COLLECTION, ordemArvore, calcularCodigos, ordemColunasCronograma } from './CronogramaGrid';
+export type { CronogramaDoc, ColunaCustom, CronoRow } from './CronogramaGrid';
 
 interface SolucoesDigitaisProps {
   cronograma: CronogramaDoc;
@@ -88,112 +17,7 @@ interface SolucoesDigitaisProps {
   onSaveNote?: (sheet: AnnotationSheet) => Promise<void>;
   onDeleteNote?: (id: string) => Promise<void>;
   preloadedData?: any;
-}
-
-export function ordemColunasCronograma(doc: CronogramaDoc): string[] {
-  const todas = [...COLUNAS_FIXAS.map((col) => col.key), ...doc.colunasCustom.map((col) => col.id)];
-  const restantes = new Set(todas);
-  return [...(doc.colOrder || []).filter((key) => restantes.delete(key)), ...todas.filter((key) => restantes.has(key))];
-}
-
-// Ordem em arvore: agrupa por parentId preservando a ordem de insercao dentro de cada pai.
-// ignorarColapso=true devolve a arvore inteira (usado p/ achar "linha anterior" na indentacao).
-export function ordemArvore(rows: CronoRow[], ignorarColapso = false): CronoRow[] {
-  const porPai = new Map<string, CronoRow[]>();
-  rows.forEach((r) => {
-    const chave = r.parentId || '';
-    if (!porPai.has(chave)) porPai.set(chave, []);
-    porPai.get(chave)!.push(r);
-  });
-  const resultado: CronoRow[] = [];
-  function visitar(paiId: string) {
-    for (const r of porPai.get(paiId) || []) {
-      resultado.push(r);
-      if (ignorarColapso || !r.colapsada) visitar(r.id);
-    }
-  }
-  visitar('');
-  return resultado;
-}
-
-// Irmao imediatamente anterior a `row` no MESMO nivel/pai atual (nao o irmao anterior mais fundo
-// da arvore inteira) — e quem vira o novo pai ao indentar, pra 1.1/1.2/1.3 ficarem irmaos em vez
-// de aninhar cada indentacao um nivel mais fundo que a anterior. Sem limite de profundidade: so ha
-// um guard anti-ciclo de 30 saltos (nivelDe/subtreeUltimoId), nao um teto de niveis.
-function irmaoAnterior(rows: CronoRow[], row: CronoRow): CronoRow | null {
-  const irmaos = ordemArvore(rows, true).filter((r) => (r.parentId || '') === (row.parentId || ''));
-  const idx = irmaos.findIndex((r) => r.id === row.id);
-  return idx > 0 ? irmaos[idx - 1] : null;
-}
-
-// Ultimo id (em ordem de arvore) dentro da subarvore cuja raiz e raizId — usado pra saber onde
-// reinserir uma linha no array apos reparenta-la, sem ela "sumir" longe da posicao esperada.
-function subtreeUltimoId(flat: CronoRow[], raizId: string): string {
-  const idx = flat.findIndex((r) => r.id === raizId);
-  if (idx === -1) return raizId;
-  const mapa = new Map(flat.map((r) => [r.id, r]));
-  function eDescendente(r: CronoRow): boolean {
-    let atual: CronoRow | undefined = r;
-    let guard = 0;
-    while (atual?.parentId && guard++ < 30) {
-      if (atual.parentId === raizId) return true;
-      atual = mapa.get(atual.parentId);
-    }
-    return false;
-  }
-  let fim = idx;
-  for (let i = idx + 1; i < flat.length; i++) {
-    if (eDescendente(flat[i])) fim = i; else break;
-  }
-  return flat[fim].id;
-}
-
-function reposicionarApos(rowsArr: CronoRow[], id: string, ancoraId: string): CronoRow[] {
-  const item = rowsArr.find((r) => r.id === id);
-  if (!item) return rowsArr;
-  const semItem = rowsArr.filter((r) => r.id !== id);
-  const idxAncora = semItem.findIndex((r) => r.id === ancoraId);
-  const pos = idxAncora === -1 ? semItem.length : idxAncora + 1;
-  return [...semItem.slice(0, pos), item, ...semItem.slice(pos)];
-}
-
-function nivelDe(row: CronoRow, mapa: Map<string, CronoRow>): number {
-  let nivel = 0;
-  let atual = row;
-  let guard = 0;
-  while (atual.parentId && guard++ < 30) {
-    const pai = mapa.get(atual.parentId);
-    if (!pai) break;
-    nivel += 1;
-    atual = pai;
-  }
-  return nivel;
-}
-
-// Codigo hierarquico estavel: cada segmento usa seq, que nunca muda ao inserir/reordenar irmaos.
-// Reparentear pode mudar o prefixo porque a linha passa a pertencer a outra hierarquia.
-export function calcularCodigos(rows: CronoRow[]): Map<string, string> {
-  const porPai = new Map<string, CronoRow[]>();
-  rows.forEach((r) => {
-    const chave = r.parentId || '';
-    if (!porPai.has(chave)) porPai.set(chave, []);
-    porPai.get(chave)!.push(r);
-  });
-  const codigos = new Map<string, string>();
-  function visitar(paiId: string, prefixo: string) {
-    (porPai.get(paiId) || []).forEach((r) => {
-      const segmento = String(r.seq);
-      const codigo = prefixo ? `${prefixo}.${segmento}` : segmento;
-      codigos.set(r.id, codigo);
-      visitar(r.id, codigo);
-    });
-  }
-  visitar('', '');
-  return codigos;
-}
-
-function normalizar(valor: string) {
-  return valor.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+  onSaveProject?: (doc: CronogramaDoc) => Promise<CronogramaDoc>;
 }
 
 function formatDateBRLocal(value?: string) {
@@ -202,45 +26,6 @@ function formatDateBRLocal(value?: string) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('pt-BR');
 }
 
-// Menu de contexto (botao direito/clique) generico: posicionado no cursor, via portal pro <body> —
-// escapa do transform do framer-motion que envolve a pagina e quebraria position:fixed se ficasse
-// aninhado na tabela. Usado tanto pra pintar linha quanto pra renomear/remover coluna custom.
-function MenuFlutuante({ x, y, onFechar, children }: { x: number; y: number; onFechar: () => void; children: ReactNode }) {
-  return createPortal(
-    <>
-      <div
-        className="fixed inset-0 z-[210]"
-        onClick={onFechar}
-        onContextMenu={(e) => { e.preventDefault(); onFechar(); }}
-      />
-      <div
-        className="fixed z-[211] rounded-lg border border-[#E5E7EB] bg-white p-1.5 shadow-lg"
-        style={{ top: Math.max(8, Math.min(y, window.innerHeight - 300)), left: Math.max(8, Math.min(x, window.innerWidth - 180)) }}
-      >
-        {children}
-      </div>
-    </>,
-    document.body,
-  );
-}
-
-// Alca de redimensionar coluna: mesma classe/comportamento da alca de coluna do banco da nota
-// (Anotacoes.tsx ~1609-1620) — preventDefault+stopPropagation pra nao disparar o menu de
-// contexto (cor da linha / renomear coluna) nem selecao, que tambem vivem nesse `<th>`.
-function AlcaColuna({ onMouseDown }: { onMouseDown: (event: ReactMouseEvent) => void }) {
-  return (
-    <div
-      draggable={false}
-      onMouseDown={onMouseDown}
-      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-[#F05D28]"
-    />
-  );
-}
-
-// Editor fullscreen (portal pro <body>), mesmo shell do editor de nota em Anotacoes.tsx
-// (~linhas 1221-1350): header com titulo/pill/Fechar, corpo com titulo editavel + Publico +
-// Salvar, e a tabela emoldurada como um "banco" (caixa arredondada, barra de ferramentas com
-// + Coluna acima, rodape com + Linha abaixo — nada de dropdown de Configuração).
 export default function SolucoesDigitais({
   cronograma,
   onVoltar,
@@ -250,134 +35,27 @@ export default function SolucoesDigitais({
   onSaveNote,
   onDeleteNote,
   preloadedData,
+  onSaveProject = saveCronogramaChecked,
 }: SolucoesDigitaisProps) {
   const [doc, setDoc] = useState<CronogramaDoc>(cronograma);
   const [sujo, setSujo] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erroSalvar, setErroSalvar] = useState<string | null>(null);
-  // Filtro por usuário: so lista quem de fato tem linha no cronograma (evita opcao que sempre da zero).
-  const [filtroResponsavel, setFiltroResponsavel] = useState('');
-  // Nota nova pendente de vinculo: abre o editor controlado da Anotacoes e, ao salvar, liga o noteId na linha.
+  const bloqueado = Boolean(doc.origemNotaId);
   const [sheetAberta, setSheetAberta] = useState<AnnotationSheet | null>(null);
   const [linhaDaNotaEmCriacao, setLinhaDaNotaEmCriacao] = useState<string | null>(null);
-  // comHiperlink: so true quando o botao direito foi na celula Atividade (menu ganha o item
-  // Hiperlink ali em cima); nas outras celulas da linha, botao direito so mostra as cores.
-  const [menuCor, setMenuCor] = useState<{ id: string; x: number; y: number; comHiperlink: boolean } | null>(null);
-  const [menuColuna, setMenuColuna] = useState<{ id: string; x: number; y: number } | null>(null);
-  // Dialogo de nome de coluna (adicionar/renomear) — substitui window.prompt. id=null -> criar nova.
-  const [dialogoColuna, setDialogoColuna] = useState<{ id: string | null; nomeAtual: string } | null>(null);
-  // Dialogo de hiperlink no nome da atividade — mesma convencao markdown [label](url) da nota.
-  const [dialogoLink, setDialogoLink] = useState<{ rowId: string } | null>(null);
-  // Nome de atividade com foco: enquanto nao focado, se tiver link markdown mostra so o rotulo
-  // (igual celula da nota); focado, mostra o texto bruto pra poder editar.
-  const [linhaNomeFocada, setLinhaNomeFocada] = useState<string | null>(null);
-  const [linhaArrastada, setLinhaArrastada] = useState<string | null>(null);
-  const [alvoArrastoLinha, setAlvoArrastoLinha] = useState<{ id: string; depois: boolean } | null>(null);
-  const alvoArrastoLinhaRef = useRef<{ id: string; depois: boolean } | null>(null);
-  const [colunaArrastada, setColunaArrastada] = useState<string | null>(null);
-  // Arrasto de redimensionar coluna em andamento — mesma logica do banco da nota (Anotacoes.tsx
-  // ~386-388/505-534), so pra coluna (aqui nao existe redimensionar linha).
-  const redimensionarRef = useRef<{ key: string; inicioPx: number; tamanhoInicial: number } | null>(null);
-
-  const rows = doc.rows;
-  // Project que nasceu numa nota: aqui e so leitura (o dono da edicao e a nota de origem).
-  const bloqueado = Boolean(doc.origemNotaId);
-  const notaOrigem = doc.origemNotaId ? notes.find((n) => n.id === doc.origemNotaId) : undefined;
-
-  // Cronograma novo (ou esvaziado) abre com 1 linha ja pronta pra digitar — sem precisar clicar
-  // em "+ Linha" primeiro. So roda uma vez, na abertura.
-  useEffect(() => {
-    if (doc.rows.length === 0 && !bloqueado) {
-      setDoc((prev) => ({ ...prev, rows: [criarLinhaVazia(1)] }));
-      setSujo(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Fim do arrasto acontece fora do <th> (o mouse sai da tabela antes de soltar) - listener na
-  // janela, igual Anotacoes.tsx. Sem array de deps de proposito: precisa fechar sobre o `doc`
-  // mais recente a cada render (mesmo padrao da fonte).
-  useEffect(() => {
-    const onMove = (event: globalThis.MouseEvent) => {
-      const alvo = redimensionarRef.current;
-      if (!alvo) return;
-      const delta = event.clientX - alvo.inicioPx;
-      const tamanho = Math.max(60, alvo.tamanhoInicial + delta);
-      atualizarDoc({ colWidths: { ...doc.colWidths, [alvo.key]: tamanho } });
-    };
-    const onUp = () => { redimensionarRef.current = null; };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-  });
-
-  function larguraColuna(key: string, padrao: number): number {
-    return doc.colWidths?.[key] ?? padrao;
-  }
-
-  function iniciarRedimensionar(key: string, larguraAtual: number) {
-    return (event: ReactMouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      redimensionarRef.current = { key, inicioPx: event.clientX, tamanhoInicial: larguraAtual };
-    };
-  }
-
-  const activities: EngineeringActivity[] = buildActivitiesFromEap(preloadedData, currentUser);
-
-  const responsaveis = usuarios.filter((u) =>
-    (u.disciplinas || []).some((d) => {
-      const n = normalizar(d);
-      return n === DISCIPLINA_ALVO || n.includes('solucoes digitais');
-    }),
-  );
-
-  const emailsComLinha: string[] = Array.from(new Set(rows.map((r) => r.responsavelEmail).filter(Boolean)));
-  const opcoesFiltroResponsavel = emailsComLinha
-    .map((email) => ({ email, nome: usuarios.find((u) => u.email === email)?.nome || email }))
-    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
-
-  // ponytail: com filtro de responsavel a lista vira plana (indentacao/colapso de arvore ficam
-  // fora de escopo aqui, pois o filtro quebra a hierarquia pai/filho).
-  const modoArvore = !filtroResponsavel;
-  const linhasFiltradas = modoArvore ? ordemArvore(rows) : rows.filter((r) => r.responsavelEmail === filtroResponsavel);
-  const mapaPorId = new Map<string, CronoRow>(rows.map((r) => [r.id, r]));
-  const codigos = calcularCodigos(rows);
-  const colunasVisiveis = ordemColunasCronograma(doc).map((key) => {
-    const fixa = COLUNAS_FIXAS.find((col) => col.key === key);
-    if (fixa) return fixa;
-    const custom = doc.colunasCustom.find((col) => col.id === key)!;
-    return {
-      key,
-      nome: custom.nome,
-      largura: normalizar(custom.nome) === 'detalhe' ? LARGURA_COLUNA_DETALHE_PADRAO : LARGURA_COLUNA_CUSTOM_PADRAO,
-      custom: true,
-    };
-  });
-
-  // Salvar e explicito (botao), nao autosave: toda edicao so muda o estado local (`atualizarDoc`)
-  // e marca `sujo`; so "Salvar" grava no Firestore e limpa o `sujo`.
   function atualizarDoc(patch: Partial<CronogramaDoc>) {
-    // Trava unica: TODA edicao (celula, coluna, cor, ordem, hierarquia) passa por aqui, entao o
-    // Project vindo de nota fica imutavel nesta tela sem precisar de guarda em cada handler.
     if (bloqueado) return;
-    setDoc((prev) => ({ ...prev, ...patch, updatedAt: new Date().toISOString() }));
+    setDoc((prev) => ({ ...prev, ...patch }));
     setSujo(true);
-    setErroSalvar(null); // edicao nova: o erro do save anterior nao se aplica mais
+    setErroSalvar(null);
   }
-
-  function atualizarLinha(id: string, patch: Partial<CronoRow>) {
-    atualizarDoc({ rows: rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
-  }
-
   async function handleSalvar() {
-    if (!isFirebaseConfigured()) return;
+    if (!isFirebaseConfigured() && onSaveProject === saveCronogramaChecked) return;
     setSalvando(true);
     try {
-      await setFirebaseDocument(CRONOGRAMAS_COLLECTION, doc.id, doc);
+      const saved = await onSaveProject(doc);
+      setDoc(saved);
       setSujo(false);
       setErroSalvar(null);
     } catch (err) {
@@ -402,391 +80,11 @@ export default function SolucoesDigitais({
     onVoltar();
   }
 
-  function adicionarLinha() {
-    atualizarDoc({ rows: [...rows, { ...criarLinhaVazia(proximoSeq(rows)), ordem: rows.length }] });
-  }
-
-  function inserirLinhaPerto(id: string, posicao: 'above' | 'below') {
-    const indice = rows.findIndex((row) => row.id === id);
-    if (indice === -1) return;
-    const nova = { ...criarLinhaVazia(proximoSeq(rows)), parentId: rows[indice].parentId || '' };
-    const destino = indice + (posicao === 'below' ? 1 : 0);
-    atualizarDoc({ rows: [...rows.slice(0, destino), nova, ...rows.slice(destino)] });
-    setMenuCor(null);
-  }
-
-  function pintarLinha(id: string, cor: string) {
-    atualizarLinha(id, { corLinha: cor || '' });
-    setMenuCor(null);
-  }
-
-  function alternarColapso(id: string) {
-    const row = rows.find((r) => r.id === id);
-    if (!row) return;
-    atualizarLinha(id, { colapsada: !row.colapsada });
-  }
-
-  function reordenar(novo: CronoRow[]) {
-    atualizarDoc({ rows: novo });
-  }
-
-  function soltarLinha(alvoId: string, depois: boolean) {
-    const origem = rows.find((row) => row.id === linhaArrastada);
-    const alvo = rows.find((row) => row.id === alvoId);
-    if (!origem || !alvo || origem.id === alvo.id || (origem.parentId || '') !== (alvo.parentId || '')) return;
-    const semOrigem = rows.filter((row) => row.id !== origem.id);
-    const indiceAlvo = semOrigem.findIndex((row) => row.id === alvo.id);
-    const destino = indiceAlvo + (depois ? 1 : 0);
-    reordenar([...semOrigem.slice(0, destino), origem, ...semOrigem.slice(destino)]);
-  }
-
-  function podeSoltarLinha(alvoId: string) {
-    const origem = rows.find((row) => row.id === linhaArrastada);
-    const alvo = rows.find((row) => row.id === alvoId);
-    return Boolean(origem && alvo && origem.id !== alvo.id && (origem.parentId || '') === (alvo.parentId || ''));
-  }
-
-  function marcarAlvoArrastoLinha(alvoId: string, event: ReactMouseEvent<HTMLTableRowElement>) {
-    if (!podeSoltarLinha(alvoId)) return;
-    event.preventDefault();
-    const rect = event.currentTarget.getBoundingClientRect();
-    const proximo = { id: alvoId, depois: event.clientY > rect.top + rect.height / 2 };
-    if (alvoArrastoLinhaRef.current?.id === proximo.id && alvoArrastoLinhaRef.current.depois === proximo.depois) return;
-    alvoArrastoLinhaRef.current = proximo;
-    setAlvoArrastoLinha(proximo);
-  }
-
-  function abrirMenuLinha(id: string, event: ReactMouseEvent, comHiperlink: boolean) {
-    event.preventDefault();
-    event.stopPropagation();
-    setMenuCor({ id, x: event.clientX, y: event.clientY, comHiperlink });
-  }
-
-  function soltarColuna(alvo: string, depois: boolean) {
-    if (!colunaArrastada || colunaArrastada === alvo) return;
-    const semOrigem = ordemColunasCronograma(doc).filter((key) => key !== colunaArrastada);
-    const indiceAlvo = semOrigem.indexOf(alvo);
-    const destino = indiceAlvo + (depois ? 1 : 0);
-    atualizarDoc({ colOrder: [...semOrigem.slice(0, destino), colunaArrastada, ...semOrigem.slice(destino)] });
-  }
-
-  // Direita: vira filha do irmao imediatamente anterior NO MESMO NIVEL atual — assim varias
-  // indentacoes seguidas viram irmas (1.1, 1.2, 1.3...) em vez de aninhar cada uma um nivel mais
-  // fundo que a anterior. So aninha mais fundo se vc indentar de novo um item que ja e filho.
-  function moverDireita(id: string) {
-    const row = rows.find((r) => r.id === id);
-    if (!row) return;
-    const anterior = irmaoAnterior(rows, row);
-    if (!anterior) return; // primeiro do seu nivel, nao ha quem virar pai
-    const ancoraId = subtreeUltimoId(ordemArvore(rows, true), anterior.id);
-    const patched = rows.map((r) => (r.id === id ? { ...r, parentId: anterior.id } : r));
-    reordenar(ancoraId === id ? patched : reposicionarApos(patched, id, ancoraId));
-  }
-
-  // Esquerda: promove pra irma do proprio pai atual (sobe um nivel), reaparecendo logo apos toda
-  // a subarvore do ex-pai (nao deixa a linha "sumir" longe de onde estava).
-  function moverEsquerda(id: string) {
-    const row = rows.find((r) => r.id === id);
-    if (!row || !row.parentId) return;
-    const pai = rows.find((r) => r.id === row.parentId);
-    const ancoraId = subtreeUltimoId(ordemArvore(rows, true), row.parentId);
-    const patched = rows.map((r) => (r.id === id ? { ...r, parentId: pai?.parentId || '' } : r));
-    reordenar(ancoraId === id ? patched : reposicionarApos(patched, id, ancoraId));
-  }
-
-  function onEscolherNota(rowId: string, valor: string) {
-    if (valor === NOVA_NOTA_VALOR) {
-      if (!onSaveNote) return; // sem callback de salvar, nao ha como criar nota daqui
-      setLinhaDaNotaEmCriacao(rowId);
-      setSheetAberta(novaNotaBase(currentUser));
-      return;
-    }
-    atualizarLinha(rowId, { noteId: valor });
-  }
-
-  // A NOTA vinculada e uma entidade a parte (colecao `notes`) — continua salvando na hora, como
-  // sempre fez; so o CRONOGRAMA em si (este doc) passou a exigir o botao Salvar.
   async function salvarNotaCriada(sheet: AnnotationSheet) {
     await onSaveNote?.(sheet);
     if (linhaDaNotaEmCriacao) {
-      atualizarLinha(linhaDaNotaEmCriacao, { noteId: sheet.id });
+      atualizarDoc({ rows: doc.rows.map((row) => row.id === linhaDaNotaEmCriacao ? { ...row, noteId: sheet.id } : row) });
       setLinhaDaNotaEmCriacao(null);
-    }
-  }
-
-  function removerLinha(id: string) {
-    atualizarDoc({ rows: rows.filter((r) => r.id !== id) });
-  }
-
-  function onEditarInicio(id: string, valor: string) {
-    const row = rows.find((r) => r.id === id);
-    if (!row) return;
-    if (row.duracaoDias != null) {
-      atualizarLinha(id, { dataInicio: valor, dataFim: valor ? addDias(valor, row.duracaoDias) : '' });
-    } else if (row.dataFim) {
-      atualizarLinha(id, { dataInicio: valor, duracaoDias: diffDias(valor, row.dataFim) });
-    } else {
-      atualizarLinha(id, { dataInicio: valor });
-    }
-  }
-
-  function onEditarDuracao(id: string, valorTexto: string) {
-    const row = rows.find((r) => r.id === id);
-    if (!row) return;
-    const duracao = valorTexto === '' ? null : Number(valorTexto);
-    const duracaoValida = duracao !== null && Number.isFinite(duracao) ? duracao : null;
-    if (row.dataInicio && duracaoValida != null) {
-      atualizarLinha(id, { duracaoDias: duracaoValida, dataFim: addDias(row.dataInicio, duracaoValida) });
-    } else {
-      atualizarLinha(id, { duracaoDias: duracaoValida });
-    }
-  }
-
-  function onEditarFim(id: string, valor: string) {
-    const row = rows.find((r) => r.id === id);
-    if (!row) return;
-    if (row.dataInicio) {
-      atualizarLinha(id, { dataFim: valor, duracaoDias: valor ? diffDias(row.dataInicio, valor) : null });
-    } else {
-      atualizarLinha(id, { dataFim: valor });
-    }
-  }
-
-  function onEditarPredecessora(id: string, predecessoraId: string) {
-    const row = rows.find((r) => r.id === id);
-    if (!row) return;
-    // ponytail: validacao de ciclo de 1 nivel apenas (A->B e B->A); ciclos maiores nao sao detectados
-    if (predecessoraId) {
-      const predecessora = rows.find((r) => r.id === predecessoraId);
-      if (predecessoraId === id) return;
-      if (predecessora && predecessora.predecessoraId === id) return;
-    }
-    const predecessora = rows.find((r) => r.id === predecessoraId);
-    const sugerirInicio = predecessora?.dataFim && !row.dataInicio ? predecessora.dataFim : row.dataInicio;
-    atualizarLinha(id, { predecessoraId, dataInicio: sugerirInicio });
-  }
-
-  function adicionarColuna() {
-    setDialogoColuna({ id: null, nomeAtual: '' });
-  }
-
-  function renomearColuna(id: string) {
-    const atual = doc.colunasCustom.find((c) => c.id === id);
-    setMenuColuna(null);
-    setDialogoColuna({ id, nomeAtual: atual?.nome || '' });
-  }
-
-  function confirmarDialogoColuna(values: Record<string, string>) {
-    if (!dialogoColuna) return;
-    const nome = (values.nome || '').trim();
-    if (nome) {
-      if (dialogoColuna.id === null) {
-        const coluna: ColunaCustom = { id: crypto.randomUUID(), nome };
-        atualizarDoc({ colunasCustom: [...doc.colunasCustom, coluna] });
-      } else {
-        atualizarDoc({ colunasCustom: doc.colunasCustom.map((c) => (c.id === dialogoColuna.id ? { ...c, nome } : c)) });
-      }
-    }
-    setDialogoColuna(null);
-  }
-
-  // Link no nome da atividade: mesma convencao markdown [label](url) da nota (extrairLinkDaCelula
-  // etc., reexportados de Anotacoes.tsx). Sem textarea/selecao pra capturar aqui — o campo e um
-  // <input> de uma linha só, entao o link so pode ser inserido no FIM do texto atual (nunca
-  // sobrescreve o que ja tinha, mesma cautela da celula de nota).
-  function confirmarDialogoLink(values: Record<string, string>) {
-    if (!dialogoLink) return;
-    const url = (values.url || '').trim();
-    if (url) {
-      const row = rows.find((r) => r.id === dialogoLink.rowId);
-      if (row) {
-        const label = (values.label || '').trim() || url;
-        const markdown = `[${label}](${url})`;
-        const separador = row.nome && !row.nome.endsWith(' ') ? ' ' : '';
-        atualizarLinha(row.id, { nome: `${row.nome}${separador}${markdown}` });
-      }
-    }
-    setDialogoLink(null);
-  }
-
-  function removerColuna(id: string) {
-    setMenuColuna(null);
-    atualizarDoc({
-      colunasCustom: doc.colunasCustom.filter((c) => c.id !== id),
-      colOrder: doc.colOrder?.filter((key) => key !== id),
-      rows: rows.map((r) => {
-        if (!r.custom || !(id in r.custom)) return r;
-        const custom = { ...r.custom };
-        delete custom[id];
-        return { ...r, custom };
-      }),
-    });
-  }
-
-  function editarCelulaCustom(rowId: string, colId: string, valor: string) {
-    const row = rows.find((r) => r.id === rowId);
-    if (!row) return;
-    atualizarLinha(rowId, { custom: { ...(row.custom || {}), [colId]: valor } });
-  }
-
-  function renderCelula(row: CronoRow, key: string, nivel: number, temFilhos: boolean) {
-    switch (key) {
-      case 'id':
-        return <td key={key} draggable onDragStart={(e) => { if (e.buttons && e.buttons !== 1) { e.preventDefault(); return; } setLinhaArrastada(row.id); e.dataTransfer.setData('text/plain', row.id); e.dataTransfer.effectAllowed = 'move'; }} className={`${linhaArrastada === row.id ? 'cursor-grabbing' : 'cursor-default'} px-3 py-1 text-gray-500`} title="Clique e arraste para reordenar entre linhas do mesmo nível">#{codigos.get(row.id)}</td>;
-      case 'nome': {
-        const match = linhaNomeFocada !== row.id ? REGEX_LINK_MARKDOWN.exec(row.nome) : null;
-        return (
-          <td
-            key={key}
-            className="px-3 py-1"
-            onContextMenu={(e) => abrirMenuLinha(row.id, e, true)}
-            title="Botão direito para editar a linha ou hiperlink"
-          >
-            <div className="flex items-center gap-1" style={{ paddingLeft: nivel * 20 }}>
-              {modoArvore && (
-                <button
-                  type="button"
-                  onClick={() => alternarColapso(row.id)}
-                  className={`shrink-0 text-gray-400 hover:text-[#F05D28] ${temFilhos ? '' : 'invisible'}`}
-                  title={row.colapsada ? 'Expandir' : 'Retrair'}
-                >
-                  {row.colapsada ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                </button>
-              )}
-              {match ? (
-                <div
-                  onClick={() => setLinhaNomeFocada(row.id)}
-                  className="w-full flex-1 cursor-text truncate rounded border border-[#E5E7EB] px-2 py-1"
-                >
-                  {row.nome.slice(0, match.index)}
-                  <span className="text-[#2563EB] underline">{match[1]}</span>
-                  {row.nome.slice(match.index + match[0].length)}
-                </div>
-              ) : (
-                <input
-                  type="text"
-                  value={row.nome}
-                  onChange={(e) => atualizarLinha(row.id, { nome: e.target.value })}
-                  onFocus={() => setLinhaNomeFocada(row.id)}
-                  onBlur={() => setLinhaNomeFocada((prev) => (prev === row.id ? null : prev))}
-                  className="w-full flex-1 border border-[#E5E7EB] rounded px-2 py-1"
-                  placeholder="Nome da atividade"
-                />
-              )}
-              {extrairLinkDaCelula(row.nome) && (
-                <button
-                  type="button"
-                  title="Abrir link"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => window.open(extrairLinkDaCelula(row.nome)!, '_blank', 'noopener')}
-                  className="shrink-0 rounded p-0.5 text-[#2563EB] hover:bg-[#DBEAFE]"
-                >
-                  <Link2 size={12} />
-                </button>
-              )}
-              {modoArvore && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => moverEsquerda(row.id)}
-                    disabled={!row.parentId}
-                    className="shrink-0 text-gray-400 hover:text-[#F05D28] disabled:opacity-30"
-                    title="Promover (shift+tab)"
-                  >
-                    <Outdent size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moverDireita(row.id)}
-                    disabled={!irmaoAnterior(rows, row)}
-                    className="shrink-0 text-gray-400 hover:text-[#F05D28] disabled:opacity-30"
-                    title="Indentar (tab)"
-                  >
-                    <Indent size={14} />
-                  </button>
-                </>
-              )}
-            </div>
-          </td>
-        );
-      }
-      case 'predecessora':
-        return (
-          <td key={key} className="px-3 py-1">
-            <select
-              value={row.predecessoraId}
-              onChange={(e) => onEditarPredecessora(row.id, e.target.value)}
-              className="w-full border border-[#E5E7EB] rounded px-2 py-1"
-            >
-              <option value="">Nenhuma</option>
-              {rows.filter((r) => r.id !== row.id).map((r) => (
-                <option key={r.id} value={r.id}>#{codigos.get(r.id)} - {r.nome || '(sem nome)'}</option>
-              ))}
-            </select>
-          </td>
-        );
-      case 'inicio':
-        return <td key={key} className="px-3 py-1"><input type="date" value={row.dataInicio} onChange={(e) => onEditarInicio(row.id, e.target.value)} className="w-full border border-[#E5E7EB] rounded px-2 py-1" /></td>;
-      case 'duracao':
-        return <td key={key} className="px-3 py-1"><input type="number" value={row.duracaoDias ?? ''} onChange={(e) => onEditarDuracao(row.id, e.target.value)} className="w-24 border border-[#E5E7EB] rounded px-2 py-1" /></td>;
-      case 'fim':
-        return <td key={key} className="px-3 py-1"><input type="date" value={row.dataFim} onChange={(e) => onEditarFim(row.id, e.target.value)} className="w-full border border-[#E5E7EB] rounded px-2 py-1" /></td>;
-      case 'responsavel':
-        return (
-          <td key={key} className="px-3 py-1">
-            <select value={row.responsavelEmail} onChange={(e) => atualizarLinha(row.id, { responsavelEmail: e.target.value })} className="w-full border border-[#E5E7EB] rounded px-2 py-1">
-              <option value="">Sem responsável</option>
-              {responsaveis.map((u) => <option key={u.email} value={u.email}>{u.nome}</option>)}
-            </select>
-          </td>
-        );
-      case 'percentual':
-        return <td key={key} className="px-3 py-1"><input type="number" min={0} max={100} value={row.percentualConcluido ?? ''} onChange={(e) => atualizarLinha(row.id, { percentualConcluido: e.target.value === '' ? null : Number(e.target.value) })} className="w-20 border border-[#E5E7EB] rounded px-2 py-1" placeholder="%" /></td>;
-      case 'nota':
-        // Project vindo de nota: a coluna Nota deixa de ser seletor e vira o atalho pra ABRIR a
-        // nota de origem (mesmo mecanismo de `sheetAberta` usado pelo "+ Criar nova nota").
-        if (bloqueado) {
-          return (
-            <td key={key} className="px-3 py-1">
-              {/* role=button em vez de <button>: a tabela inteira fica dentro de um <fieldset
-                  disabled>, que desabilitaria um botao de verdade junto com os campos. */}
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={() => notaOrigem && setSheetAberta(notaOrigem)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && notaOrigem) setSheetAberta(notaOrigem); }}
-                title={notaOrigem ? 'Abrir a nota que criou este Project' : 'Nota de origem indisponível'}
-                className={`block w-full truncate rounded border border-[#E5E7EB] px-2 py-1 text-left ${notaOrigem ? 'cursor-pointer text-[#F05D28] hover:bg-[#FFF3EC]' : 'text-[#94A3B8]'}`}
-              >
-                {notaOrigem?.titulo || 'Nota de origem'}
-              </span>
-            </td>
-          );
-        }
-        return (
-          <td key={key} className="px-3 py-1">
-            <SearchableSelect value={row.noteId} onChange={(e) => onEscolherNota(row.id, e.target.value)} className="w-full border border-[#E5E7EB] rounded px-2 py-1 bg-white" searchPlaceholder="Sem nota">
-              <option value="">Sem nota</option>
-              {onSaveNote && <option value={NOVA_NOTA_VALOR}>+ Criar nova nota</option>}
-              {notes.map((n) => <option key={n.id} value={n.id}>{n.titulo || '(sem título)'}</option>)}
-            </SearchableSelect>
-          </td>
-        );
-      case 'atividade':
-        return (
-          <td key={key} className="px-3 py-1">
-            <SearchableSelect value={row.atividadeId || ''} onChange={(e) => atualizarLinha(row.id, { atividadeId: e.target.value })} className="w-full border border-[#E5E7EB] rounded px-2 py-1 bg-white" searchPlaceholder="Sem vínculo">
-              <option value="">Sem vínculo</option>
-              {activities.map((a) => <option key={a.id} value={a.id}>{a.osCodigo} - {a.atividade || a.itemNome || '(sem nome)'}</option>)}
-            </SearchableSelect>
-          </td>
-        );
-      default:
-        return (
-          <td key={key} className="px-3 py-1">
-            <input type="text" value={row.custom?.[key] || ''} onChange={(e) => editarCelulaCustom(row.id, key, e.target.value)} className="w-full border border-[#E5E7EB] rounded px-2 py-1" />
-          </td>
-        );
     }
   }
 
@@ -836,14 +134,14 @@ export default function SolucoesDigitais({
               value={doc.titulo}
               onChange={(e) => atualizarDoc({ titulo: e.target.value })}
               placeholder="Nome do cronograma"
-              readOnly={bloqueado}
+              readOnly={bloqueado || salvando}
               className="h-11 min-w-[220px] flex-1 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[14px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]"
             />
             <label className="flex h-11 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] cursor-pointer">
               <input
                 type="checkbox"
                 checked={doc.publica !== false}
-                disabled={bloqueado}
+                disabled={bloqueado || salvando}
                 onChange={(e) => atualizarDoc({ publica: e.target.checked })}
                 className="h-4 w-4 accent-[#F05D28] cursor-pointer"
               />
@@ -866,208 +164,11 @@ export default function SolucoesDigitais({
             )}
           </div>
 
-          <div className="mt-3 overflow-hidden rounded-xl border border-[#E5E7EB]">
-            <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
-              <select
-                value={filtroResponsavel}
-                onChange={(e) => setFiltroResponsavel(e.target.value)}
-                className="h-7 rounded-md border border-[#E5E7EB] bg-white px-2 text-[12px] text-[#2D2D2D]"
-              >
-                <option value="">Todos os usuários</option>
-                {opcoesFiltroResponsavel.map((o) => (
-                  <option key={o.email} value={o.email}>{o.nome}</option>
-                ))}
-              </select>
-              {!bloqueado && (
-                <button
-                  type="button"
-                  onClick={adicionarColuna}
-                  className="text-[12px] font-bold text-[#F05D28] hover:underline"
-                >
-                  + Coluna
-                </button>
-              )}
-            </div>
-
-            <div className="overflow-auto">
-              {/* fieldset disabled = trava nativa de todos os campos da tabela quando o Project
-                  veio de uma nota (nao ha handler pra esquecer). */}
-              <fieldset disabled={bloqueado} className="m-0 min-w-full border-0 p-0">
-              {/* table-fixed + colgroup: sem isso o navegador ignora as larguras arrastadas (mesmo aviso do banco da nota). */}
-              <table className="min-w-full table-fixed text-sm text-[#2D2D2D]">
-                <colgroup>
-                  {colunasVisiveis.map((col) => <col key={col.key} style={{ width: `${larguraColuna(col.key, col.largura)}px` }} />)}
-                  <col style={{ width: '40px' }} />
-                </colgroup>
-                <thead className="bg-gray-50 border-b border-[#E5E7EB]">
-                  <tr>
-                    {colunasVisiveis.map((col) => (
-                      <th
-                        key={col.key}
-                        draggable
-                        onDragStart={(e) => { setColunaArrastada(col.key); e.dataTransfer.setData('text/plain', col.key); e.dataTransfer.effectAllowed = 'move'; }}
-                        onDragOver={(e) => { if (colunaArrastada) e.preventDefault(); }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          soltarColuna(col.key, e.clientX > rect.left + rect.width / 2);
-                          setColunaArrastada(null);
-                        }}
-                        onDragEnd={() => setColunaArrastada(null)}
-                        className="relative cursor-move px-3 py-2 text-left font-medium"
-                        onContextMenu={'custom' in col ? (e) => { e.preventDefault(); setMenuColuna({ id: col.key, x: e.clientX, y: e.clientY }); } : undefined}
-                        title={'custom' in col ? 'Arraste para reordenar; botão direito para renomear/remover' : 'Arraste para reordenar'}
-                      >
-                        {col.nome}
-                        <AlcaColuna onMouseDown={iniciarRedimensionar(col.key, larguraColuna(col.key, col.largura))} />
-                      </th>
-                    ))}
-                    <th className="px-3 py-2 text-left font-medium"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {linhasFiltradas.map((row) => {
-                    const nivel = modoArvore ? nivelDe(row, mapaPorId) : 0;
-                    const temFilhos = rows.some((r) => r.parentId === row.id);
-                    return (
-                    <tr
-                      key={row.id}
-                      onMouseDownCapture={(e) => { if (e.button === 2) { e.preventDefault(); e.stopPropagation(); } }}
-                      onDragOver={(e) => marcarAlvoArrastoLinha(row.id, e)}
-                      onDrop={(e) => {
-                        if (!podeSoltarLinha(row.id)) return;
-                        e.preventDefault();
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        soltarLinha(row.id, e.clientY > rect.top + rect.height / 2);
-                        setLinhaArrastada(null);
-                        alvoArrastoLinhaRef.current = null;
-                        setAlvoArrastoLinha(null);
-                      }}
-                      onDragEnd={() => { setLinhaArrastada(null); alvoArrastoLinhaRef.current = null; setAlvoArrastoLinha(null); }}
-                      className={`border-b border-[#E5E7EB] last:border-b-0 ${linhaArrastada === row.id ? 'opacity-50' : ''} ${linhaArrastada && !podeSoltarLinha(row.id) ? 'cursor-not-allowed' : ''}`}
-                      style={{ backgroundColor: row.corLinha, boxShadow: alvoArrastoLinha?.id === row.id ? `inset 0 ${alvoArrastoLinha.depois ? '-4px' : '4px'} #F05D28` : undefined }}
-                      onContextMenuCapture={(e) => { e.preventDefault(); setMenuCor({ id: row.id, x: e.clientX, y: e.clientY, comHiperlink: false }); }}
-                      title="Arraste para reordenar; botão direito para editar a linha"
-                    >
-                      {colunasVisiveis.map((col) => renderCelula(row, col.key, nivel, temFilhos))}
-                      <td className="px-3 py-1 text-center">
-                        {!bloqueado && (
-                          <button
-                            onClick={() => removerLinha(row.id)}
-                            className="text-gray-400 hover:text-[#F05D28]"
-                            title="Excluir"
-                          >
-                            🗑
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                    );
-                  })}
-                  {linhasFiltradas.length === 0 && (
-                    <tr>
-                      <td colSpan={11 + doc.colunasCustom.length} className="px-3 py-4 text-center text-gray-400">
-                        Nenhuma atividade para esse usuário.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-              </fieldset>
-            </div>
-
-            {!bloqueado && (
-              <div className="border-t border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
-                <button
-                  type="button"
-                  onClick={adicionarLinha}
-                  className="text-[12px] font-bold text-[#F05D28] hover:underline"
-                >
-                  + Linha
-                </button>
-              </div>
-            )}
-          </div>
+          <CronogramaGrid doc={doc} onChange={atualizarDoc} currentUser={currentUser} usuarios={usuarios} notes={notes} activities={buildActivitiesFromEap(preloadedData, currentUser)} readOnly={bloqueado || salvando}
+            onCreateNote={onSaveNote ? (rowId) => { setLinhaDaNotaEmCriacao(rowId); setSheetAberta(novaNotaBase(currentUser)); } : undefined}
+            onOpenNote={(id) => setSheetAberta(notes.find((note) => note.id === id) || null)} />
         </div>
       </div>
-
-      {menuCor && (
-        <MenuFlutuante x={menuCor.x} y={menuCor.y} onFechar={() => setMenuCor(null)}>
-          <div className="flex w-40 flex-col">
-            <button
-              type="button"
-              onClick={() => inserirLinhaPerto(menuCor.id, 'above')}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
-            >
-              <ArrowUp size={14} />
-              Inserir linha acima
-            </button>
-            <button
-              type="button"
-              onClick={() => inserirLinhaPerto(menuCor.id, 'below')}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
-            >
-              <ArrowDown size={14} />
-              Inserir linha abaixo
-            </button>
-            <button
-              type="button"
-              onClick={() => { removerLinha(menuCor.id); setMenuCor(null); }}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#DC2626] hover:bg-[#FEF2F2]"
-            >
-              <Trash2 size={14} />
-              Excluir linha
-            </button>
-            {menuCor.comHiperlink && (
-              <button
-                type="button"
-                onClick={() => { setDialogoLink({ rowId: menuCor.id }); setMenuCor(null); }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
-              >
-                <Link2 size={14} />
-                Hiperlink
-              </button>
-            )}
-            <div className="border-t border-[#F1F5F9] px-3 py-2">
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">Cor da linha</p>
-              <div className="flex flex-wrap gap-1">
-                {PALETA_CELULA.map(([label, valor]) => (
-                  <button
-                    key={label}
-                    type="button"
-                    title={label}
-                    onClick={() => pintarLinha(menuCor.id, valor)}
-                    className={`h-6 w-6 rounded-md border border-[#E5E7EB] hover:ring-2 hover:ring-[#F05D28] ${rows.find((row) => row.id === menuCor.id)?.corLinha === valor ? 'ring-2 ring-[#F05D28]' : ''}`}
-                    style={{ backgroundColor: valor || '#FFFFFF' }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        </MenuFlutuante>
-      )}
-
-      {menuColuna && (
-        <MenuFlutuante x={menuColuna.x} y={menuColuna.y} onFechar={() => setMenuColuna(null)}>
-          <div className="flex w-40 flex-col">
-            <button
-              type="button"
-              onClick={() => renomearColuna(menuColuna.id)}
-              className="rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#374151] hover:bg-[#F3F4F6]"
-            >
-              Renomear coluna
-            </button>
-            <button
-              type="button"
-              onClick={() => removerColuna(menuColuna.id)}
-              className="rounded-lg px-3 py-2 text-left text-[12px] font-medium text-[#DC2626] hover:bg-[#FEE2E2]"
-            >
-              Remover coluna
-            </button>
-          </div>
-        </MenuFlutuante>
-      )}
-
       {sheetAberta && (
         <Anotacoes
           filter={{ type: 'all' }}
@@ -1078,30 +179,11 @@ export default function SolucoesDigitais({
           onSave={salvarNotaCriada}
           onDelete={async (id) => { await onDeleteNote?.(id); }}
           controlledSheet={sheetAberta}
+          onControlledOpenRejected={setSheetAberta}
           onCloseControlled={() => { setSheetAberta(null); setLinhaDaNotaEmCriacao(null); }}
         />
       )}
 
-      {dialogoColuna && (
-        <CampoDialog
-          title={dialogoColuna.id === null ? 'Nova coluna' : 'Renomear coluna'}
-          fields={[{ id: 'nome', label: 'Nome da coluna', valorInicial: dialogoColuna.nomeAtual }]}
-          onConfirm={confirmarDialogoColuna}
-          onCancel={() => setDialogoColuna(null)}
-        />
-      )}
-
-      {dialogoLink && (
-        <CampoDialog
-          title="Inserir link"
-          fields={[
-            { id: 'url', label: 'Endereço do link (URL)', placeholder: 'https://...' },
-            { id: 'label', label: 'Texto do link' },
-          ]}
-          onConfirm={confirmarDialogoLink}
-          onCancel={() => setDialogoLink(null)}
-        />
-      )}
     </div>,
     document.body,
   );

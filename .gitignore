@@ -11,3 +11,6 @@ __pycache__/
 nãocommit/
 /relatorio
 *.rules
+
+# Local R4 fixture builds and browser evidence
+/.r4/

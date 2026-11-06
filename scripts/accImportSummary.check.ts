@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import JSZip from 'jszip';
@@ -18,7 +18,7 @@ const rows = [
   { id: '#1', titulo: 'Synthetic one', status: 'Open', posicionamento: 'OS061_P01_ARQ_model.rvt', criadoEm: '2026-11-06T12:00:00-03:00', empresa: 'Synthetic company' },
   { id: '#2', titulo: 'Synthetic two', status: 'Closed', posicionamento: 'OS061_P01_ELET_model.pdf', criadoEm: '2026-11-07T12:00:00-03:00', empresa: '' },
   { id: '#3', titulo: 'Synthetic three', status: 'Pending', posicionamento: 'OS068_P01_UNKNOWN_model.rvt', criadoEm: '2026-10-06T12:00:00-03:00', empresa: '' },
-].map(row => ({ ...row, atribuido: '', seguidores: '', criadoPor: '', atualizadoEm: '', vencimento: '', fechadoPor: '', fechadoEm: '', descricao: '', comentarios: '' }));
+].map(row => ({ tipo: 'Desenho', ...row, atribuido: '', seguidores: '', criadoPor: '', atualizadoEm: '', vencimento: '', fechadoPor: '', fechadoEm: '', descricao: '', comentarios: '' }));
 const normalized = core.accNormalize_({ rows }, '', {});
 assert.equal(normalized.errors.length, 0);
 check(normalized.issues, 'synthetic XLSX-free real normalize -> summary -> screen');

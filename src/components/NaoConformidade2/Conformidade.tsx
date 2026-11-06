@@ -13,7 +13,7 @@ import {
 } from "../../lib/accData";
 import {
   qualityMetricRows,
-  loadQuality,
+  loadQualityView,
   type QualityData,
 } from "../../lib/qualityStore";
 import Preenchimento, { qualityInputClass } from "./Preenchimento";
@@ -89,10 +89,11 @@ export default function Conformidade({
     };
   }, [data, activeTab]);
   const refresh = () => setRevision((value) => value + 1);
+  const editScope = activeTab === "dashboard" ? filters.os || undefined : activeTab === "revisoes" && filters.os ? filters.os : null;
   useEffect(() => {
     let active = true;
     setError("");
-    loadQuality()
+    loadQualityView(editScope)
       .then((value) => {
         if (active) setData(value);
       })
@@ -102,7 +103,7 @@ export default function Conformidade({
     return () => {
       active = false;
     };
-  }, [revision]);
+  }, [revision, editScope]);
   useEffect(() => {
     setFilters((current) => ({
       ...current,

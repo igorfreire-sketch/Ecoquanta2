@@ -54,7 +54,19 @@ const filter = async (label, value, expected) => {
 const stats = () => page.evaluate(() => window.accFixtureStats());
 const matrix = [];
 try {
-  await page.goto(base);
+  await page.goto(`${base}&tab=principal`);
+  await page.getByText('OS 061', { exact: true }).waitFor();
+  assert.deepEqual((await stats()).queries, { accResumo: 1 }, 'Principal must only read accResumo');
+  await page.evaluate(() => sessionStorage.setItem('acc-fixture-edits', JSON.stringify([{id:'068-#1',status:'Fechado',editadoPor:'fixture',editadoEm:'2026-11-06'}])));
+  await tab('revisoes');
+  await page.getByLabel('OS para revisar').waitFor();
+  assert(!Object.keys((await stats()).queries).some(key => key.startsWith('accEdicoes')));
+  await page.getByLabel('OS para revisar').selectOption('061');
+  await page.getByRole('heading', { name: 'Folha sem carimbo', exact: true }).waitFor();
+  assert.equal((await stats()).queries['accEdicoes:061'], 1);
+  assert.equal((await stats()).documents['accEdicoes:061'], 0);
+  assert.equal((await stats()).queries['accEdicoes:*'], undefined);
+  matrix.push({ reads: 'Principal summary only; Revisoes overlays scoped to chosen OS', passed: true });
   await page.evaluate(async () => {
     sessionStorage.clear();
     await new Promise((resolve, reject) => {
@@ -63,7 +75,7 @@ try {
       request.onerror = reject;
     });
   });
-  await page.reload();
+  await page.goto(base);
   await metric("Issues", 5);
   await metric("Abertas", 3);
   await metric("Terceirizadas", 3);
@@ -421,7 +433,7 @@ try {
   await page.getByRole('heading', { name: 'Audit issue 1', exact: true }).waitFor();
   assert.equal(await page.locator('article').count(), 50);
   await page.getByLabel('Buscar issues', { exact: true }).fill('#1298');
-  await page.locator('article').getByText('Setor nao informado', { exact: false }).waitFor();
+  await page.locator('article p').filter({ hasText: 'Setor nao informado' }).waitFor();
   matrix.push({ audit1298: '50/page, search and inline ACC edit without contract', passed: true });
   assert.deepEqual(errors, []);
   assert.deepEqual(firebaseRequests, []);

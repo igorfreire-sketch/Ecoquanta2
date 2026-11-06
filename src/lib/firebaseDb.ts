@@ -2,6 +2,10 @@ import { nextCronogramaTimestamp, normalizeCronogramaRevision } from './cronoRev
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import {
+  documentId,
+  orderBy,
+  startAt,
+  endAt,
   collection,
   deleteDoc,
   doc,
@@ -1187,6 +1191,13 @@ export async function fetchFirebaseCollection<T = Record<string, unknown>>(
       ? { ...record, updatedAt: normalizeCronogramaRevision(record.updatedAt) }
       : record) as T;
   });
+}
+
+// Prefix on the document ID also finds older overlays that have no os field.
+export async function fetchFirebaseCollectionPrefix<T>(collectionName: string, prefix: string): Promise<T[]> {
+  await ensureFirebaseAuth();
+  const snapshot = await getDocs(query(collection(getDb(), collectionName), orderBy(documentId()), startAt(prefix), endAt(prefix + '\uf8ff')));
+  return snapshot.docs.map(entry => normalizeFirestoreRecord(entry) as T);
 }
 
 export async function fetchFirebaseDocument<T = Record<string, unknown>>(

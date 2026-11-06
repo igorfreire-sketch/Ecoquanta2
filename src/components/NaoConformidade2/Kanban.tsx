@@ -1,22 +1,14 @@
 import React, { useEffect, useState } from "react";
 import NotesKanban, { type KanbanProps } from "./NotesKanban";
-import { countBy, filterAccIssues, isAccDone } from "../../lib/accData";
-import {
-  qualityMetricRows,
-  loadQuality,
-  type QualityData,
-} from "../../lib/qualityStore";
+import { countBy, filterAccIssues, isAccDone, resumoRows, type AccResumo } from "../../lib/accData";
+import { loadQualityResumo } from "../../lib/qualityStore";
 
 export default function Kanban(props: KanbanProps) {
-  const [data, setData] = useState<QualityData>();
+  const [data, setData] = useState<AccResumo>();
   const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
-    loadQuality()
-      .then(async (value) => ({
-        ...value,
-        rows: await qualityMetricRows(value),
-      }))
+    loadQualityResumo()
       .then((value) => {
         if (active) setData(value);
       })
@@ -41,7 +33,7 @@ export default function Kanban(props: KanbanProps) {
     }
   )?.registro;
   const rows = data
-    ? [...data.rows, ...data.manual, ...data.legacy].map((row) => {
+    ? resumoRows(data).map((row) => {
         const os = registro?.osOptions?.find(
           (option) =>
             String(option.code || option.codigo || option.id) === row.os,
@@ -70,7 +62,7 @@ export default function Kanban(props: KanbanProps) {
   return (
     <div className="space-y-5">
       <section className="mx-auto max-w-[1180px] rounded-2xl bg-white/80 p-5">
-        <h2 className="mb-4 font-bold text-slate-800">Qualidade por OS</h2>
+        <h2 className="mb-4 font-bold text-slate-800">Qualidade por OS</h2><p className="mb-3 text-xs text-slate-500">Resumo ACC da ultima importacao</p>
         {error && (
           <p role="alert" className="text-red-700">
             Nao foi possivel carregar Qualidade: {error}

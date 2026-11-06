@@ -1,4 +1,4 @@
-import { fetchFirebaseCollection, setFirebaseDocument } from "./firebaseDb";
+import { fetchFirebaseCollectionPrefix, fetchFirebaseCollection, setFirebaseDocument } from "./firebaseDb";
 import {
   ACC_EDITABLE_FIELDS,
   browserAccCache,
@@ -38,7 +38,47 @@ let dataPromise: Promise<QualityData> | undefined;
 export const fixtureMode = () =>
   (import.meta as ImportMeta & { env: { DEV: boolean } }).env.DEV &&
   new URLSearchParams(location.search).has("accFixture");
-const fixtureStats = { osFetches: {} as Record<string, number>, cacheHits: 0 };
+const fixtureStats = { osFetches: {} as Record<string, number>, cacheHits: 0, queries: {} as Record<string, number>, documents: {} as Record<string, number> };
+function fixtureRead(name: string, count: number) {
+  fixtureStats.queries[name] = (fixtureStats.queries[name] || 0) + 1;
+  fixtureStats.documents[name] = (fixtureStats.documents[name] || 0) + count;
+}
+let summaryPromise: Promise<AccResumo> | undefined;
+export function loadQualityResumo(): Promise<AccResumo> {
+  if (!summaryPromise) summaryPromise = (async () => {
+    if (!fixtureMode()) return loadAccResumo();
+    let resumo: AccResumo = structuredClone((await import('../../scripts/fixtures/accResumo')).default);
+    const params = new URLSearchParams(location.search);
+    if (params.has('large')) resumo = structuredClone((await import('../../scripts/fixtures/accLarge')).largeResumo);
+    if (params.has('empty')) resumo = { osVersions: {}, empresas: [] };
+    if (params.has('changed')) resumo.osVersions['061'] = 'hash-061-v2';
+    fixtureRead('accResumo', 1);
+    return resumo;
+  })().catch(error => { summaryPromise = undefined; throw error; });
+  return summaryPromise;
+}
+const editPromises = new Map<string, Promise<AccEdit[]>>();
+export function loadQualityEdits(os?: string): Promise<AccEdit[]> {
+  if (os && editPromises.has('*')) return editPromises.get('*')!.then(rows => rows.filter(row => row.id.startsWith(`${os}-`)));
+  const key = os || '*';
+  if (!editPromises.has(key)) editPromises.set(key, (async () => {
+    if (fixtureMode()) {
+      const all: AccEdit[] = JSON.parse(sessionStorage.getItem('acc-fixture-edits') || '[]');
+      const rows = os ? all.filter(row => row.id.startsWith(`${os}-`)) : all;
+      fixtureRead(`accEdicoes:${key}`, rows.length);
+      return rows;
+    }
+    return os ? fetchFirebaseCollectionPrefix<AccEdit>('accEdicoes', `${os}-`) : fetchFirebaseCollection<AccEdit>('accEdicoes');
+  })().catch(error => { editPromises.delete(key); throw error; }));
+  return editPromises.get(key)!;
+}
+const viewPromises = new Map<string, Promise<QualityData>>();
+// null skips overlays (form, cadastro, or Revisoes with no OS); undefined needs global totals.
+export function loadQualityView(scope: string | null | undefined): Promise<QualityData> {
+  const key = scope === null ? 'none' : scope || '*';
+  if (!viewPromises.has(key)) viewPromises.set(key, Promise.all([loadQuality(), scope === null ? Promise.resolve([]) : loadQualityEdits(scope)]).then(([base, edits]) => ({ ...base, edits })).catch(error => { viewPromises.delete(key); throw error; }));
+  return viewPromises.get(key)!;
+}
 // Development fixture harness observes the actual IndexedDB cache path without Firebase.
 export const getFixtureStats = () => fixtureStats;
 
@@ -124,20 +164,14 @@ export function loadQuality(): Promise<QualityData> {
         edits: AccEdit[],
         companies: QualityCompany[];
       if (fixtureMode()) {
-        resumo = structuredClone(
-          (await import("../../scripts/fixtures/accResumo")).default,
-        );
-        const params = new URLSearchParams(location.search);
-        if (params.has("large")) resumo = structuredClone((await import("../../scripts/fixtures/accLarge")).largeResumo);
-        if (params.has("empty")) resumo = { osVersions: {}, empresas: [] };
-        if (params.has("changed")) resumo.osVersions["061"] = "hash-061-v2";
+        resumo = await loadQualityResumo();
         manual = JSON.parse(
           sessionStorage.getItem("acc-fixture-manual") || "[]",
         );
         legacyRecords = JSON.parse(
           sessionStorage.getItem("acc-fixture-legacy") || "[]",
         );
-        edits = JSON.parse(sessionStorage.getItem("acc-fixture-edits") || "[]");
+        edits = [];
         companies =
           JSON.parse(
             sessionStorage.getItem("acc-fixture-companies") || "null",
@@ -147,12 +181,15 @@ export function loadQuality(): Promise<QualityData> {
             nome,
             terceirizada: nome !== "Quanta Consultoria",
           }));
+        fixtureRead('qualidadeManual', manual.length);
+        fixtureRead('nc2Records', legacyRecords.length);
+        fixtureRead('accTerceirizadas', companies.length);
       } else {
         [resumo, manual, legacyRecords, edits, companies] = await Promise.all([
-          loadAccResumo(),
+          loadQualityResumo(),
           loadManualQuality(),
           fetchFirebaseCollection<Nc2Record>("nc2Records"),
-          fetchFirebaseCollection<AccEdit>("accEdicoes"),
+          Promise.resolve([] as AccEdit[]),
           loadAccTerceirizadas(),
         ]);
       }
@@ -175,6 +212,8 @@ export function loadQuality(): Promise<QualityData> {
 
 export function invalidateQuality() {
   dataPromise = undefined;
+  editPromises.clear();
+  viewPromises.clear();
 }
 
 export async function saveQualityManual(issue: AccIssue) {

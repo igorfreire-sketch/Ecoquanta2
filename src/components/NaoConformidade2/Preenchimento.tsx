@@ -57,7 +57,7 @@ export function IssueFields({
         >
           <span>
             {label}
-            {required && " *"}
+            {required && !(issue.origem === "acc" && key === "contratoCodigo") && " *"}
           </span>
           {key === "status" ? (
             <select
@@ -94,7 +94,7 @@ export function IssueFields({
               <input
                 className={qualityInputClass}
                 aria-label={label}
-                required={required}
+                required={required && !(issue.origem === "acc" && key === "contratoCodigo")}
                 disabled={original?.origem === "acc" && key === "os"}
                 list={`quality-${key}`}
                 value={fieldValue(issue[key])}
@@ -130,7 +130,7 @@ export function IssueFields({
 }
 
 export function validateIssue(issue: AccIssue) {
-  for (const field of QUALITY_FIELDS.filter((field) => field.required))
+  for (const field of QUALITY_FIELDS.filter((field) => field.required && !(issue.origem === "acc" && field.key === "contratoCodigo")))
     if (!String(issue[field.key] || "").trim())
       throw new Error(`Preencha ${field.label}.`);
   for (const key of [

@@ -1,0 +1,6 @@
+﻿import assert from 'node:assert/strict';
+import { validateIssue } from '../src/components/NaoConformidade2/Preenchimento';
+const issue = { id: '#1', os: '061', titulo: 'Synthetic issue', status: 'Aberto', tipo: 'Desenho', setor: 'ARQ', criadoEm: '2026-11-06T12:00:00Z', origem: 'acc' as const };
+assert.doesNotThrow(() => validateIssue(issue), 'ACC does not supply contratoCodigo');
+assert.throws(() => validateIssue({ ...issue, origem: 'manual' }), /Contrato/);
+console.log('qualityAudit: ACC edit without contract OK');

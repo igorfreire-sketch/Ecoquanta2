@@ -15,6 +15,17 @@ import {
   validateIssue,
 } from "./Preenchimento";
 
+type OsIssuesProps = {
+  data: QualityData;
+  os: string;
+  manualRows: AccIssue[];
+  filterIssue: (issue: AccIssue) => boolean;
+  user: string;
+  options: Partial<Record<keyof AccIssue, string[]>>;
+  onSaved: () => void;
+  contract?: string;
+};
+
 function OsIssues({
   data,
   os,
@@ -24,16 +35,7 @@ function OsIssues({
   options,
   onSaved,
   contract,
-}: {
-  data: QualityData;
-  os: string;
-  manualRows: AccIssue[];
-  filterIssue: (issue: AccIssue) => boolean;
-  user: string;
-  options: Partial<Record<keyof AccIssue, string[]>>;
-  onSaved: () => void;
-  contract?: string;
-}) {
+}: OsIssuesProps) {
   const [imported, setImported] = useState<AccIssue[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -252,7 +254,7 @@ function OsGroup({
   count,
   startOpen,
   ...props
-}: Omit<React.ComponentProps<typeof OsIssues>, "os"> & {
+}: Omit<OsIssuesProps, "os"> & {
   os: string;
   label: string;
   count: number;
@@ -269,7 +271,7 @@ function OsGroup({
         <span>{label}</span>
         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs">{count} itens</span>
       </summary>
-      {open && <OsIssues {...(props as Omit<React.ComponentProps<typeof OsIssues>, "os">)} os={os} />}
+      {open && <OsIssues {...props} os={os} />}
     </details>
   );
 }
@@ -279,7 +281,7 @@ export default function Revisoes({
   openOs,
   filterBar,
   ...props
-}: Omit<React.ComponentProps<typeof OsIssues>, "os" | "manualRows"> & {
+}: Omit<OsIssuesProps, "os" | "manualRows"> & {
   groups: Array<{ os: string; label: string; count: number; manualRows: AccIssue[] }>;
   openOs: string;
   filterBar: React.ReactNode;
@@ -291,7 +293,7 @@ export default function Revisoes({
         Abra uma OS para ver e editar os itens. Edicoes do ACC preservam o valor importado.
       </p>
       {groups.map((group) => (
-        <OsGroup key={group.os} {...props} {...group} startOpen={group.os === openOs} />
+        <React.Fragment key={group.os}><OsGroup {...props} {...group} startOpen={group.os === openOs} /></React.Fragment>
       ))}
       {!groups.length && <p className="rounded-xl bg-white p-5">Nenhum item neste recorte.</p>}
     </section>

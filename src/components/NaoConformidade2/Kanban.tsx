@@ -272,9 +272,6 @@ export default function Kanban({
   }
 
   // Sem nada pra mostrar: some do Principal, sem texto de vazio.
-  if (cards.length === 0 && notas.length === 0) {
-    return <p className="rounded-2xl bg-white/80 p-5 text-[13px] font-medium text-[#757575]">Nenhuma nota aberta citando você ou seu setor.</p>;
-  }
 
   return (
     <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-4 pb-10 animate-in fade-in duration-500">

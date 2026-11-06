@@ -51,7 +51,7 @@ import {
   type AnnotationSheet,
 } from './components/CoordenacaoEngenharia/Anotacoes';
 import type { CronogramaDoc } from './components/SolucoesDigitais';
-import { isNc2Leader, type Nc2Record } from './components/NaoConformidade2/ncStore';
+import { isNc2Leader } from './components/NaoConformidade2/ncStore';
 // ponytail: string literal em vez de importar CRONOGRAMAS_COLLECTION (runtime, nao so tipo) de
 // SolucoesDigitais.tsx — esse import puxaria o modulo inteiro (Atividades.tsx, CampoDialog etc.)
 // pro bundle principal em vez de ficar so no chunk lazy de <Cronogramas/>. O `import type` acima
@@ -1693,7 +1693,7 @@ export default function App() {
   const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
   const [compatibilizacaoSubTab, setCompatibilizacaoSubTab] = React.useState<CompatibilizacaoSubTab>('analise-os');
   // Registro clicado no Kanban da Principal: fica aqui ate a Conformidade montar e consumir.
-  const [pendingNc2EditRecord, setPendingNc2EditRecord] = React.useState<Nc2Record | null>(null);
+  const [pendingQualityOs, setPendingQualityOs] = React.useState('');
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('atividades');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
   const [cronogramaSubTab, setCronogramaSubTab] = React.useState<'cronograma' | 'disciplinas'>('cronograma');
@@ -4198,9 +4198,9 @@ export default function App() {
                     onAbrirNota={abrirNotaNotificada}
                     currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin, disciplina: currentUser.disciplina, disciplinas: currentUser.disciplinas }}
                     onSalvarNota={saveAnnotationSheet}
-                    onEdit={(record) => {
-                      setPendingNc2EditRecord(record);
-                      setNc2SubTab('preenchimento');
+                    onOpenOs={(os) => {
+                      setPendingQualityOs(os);
+                      setNc2SubTab('revisoes');
                       setActiveTab('nc2');
                     }}
                   />
@@ -4274,8 +4274,8 @@ export default function App() {
                 <NaoConformidades
                   activeTab={nc2SubTab}
                   onTabChange={setNc2SubTab}
-                  pendingEditRecord={pendingNc2EditRecord}
-                  onPendingEditConsumed={() => setPendingNc2EditRecord(null)}
+                  pendingOs={pendingQualityOs}
+                  onPendingEditConsumed={() => setPendingQualityOs('')}
                   currentUser={currentUser}
                   activeContractCode={lockedContractCode || filtrosAtivos.contrato}
                   preloadedData={effectiveGlobalData}

@@ -50,13 +50,22 @@ const filterLabels: Record<keyof AccFilters, string> = {
   mes: "Mes",
   setor: "Setor",
   tipo: "Tipo de erro",
-  terceirizada: "Terceirizada",
+  terceirizada: "Terceirizado ou interno",
   status: "Status",
 };
 const sum = (rows: AccCount[]) =>
   rows.reduce((total, row) => total + issueWeight(row), 0);
 
 // App usa "Todos" como contrato ativo; aqui isso significa sem filtro.
+// ponytail: EAP has no contract names yet; add a registry field if a third contract appears.
+const CONTRACT_NAMES: Record<string, string> = { "1": "Macaé", "2": "Maricá" };
+const contractName = (code: string) => CONTRACT_NAMES[code] || code;
+// ACC identifies an OS by number ("061"); the EAP names it ("OS 061 - CEPT LOD 400", code 2.23).
+const osNumberFromName = (name: string) => {
+  const number = name.match(/OS\s*0*(\d+)/i)?.[1];
+  return number ? number.padStart(3, "0") : "";
+};
+
 const qualityContract = (locked?: string, active?: string) => {
   const value = String(locked || active || "").trim();
   return value.toLowerCase() === "todos" ? "" : value;
@@ -124,25 +133,34 @@ export default function Conformidade({
       onPendingEditConsumed?.();
     }
   }, [pendingOs]);
+  const osCatalog = useMemo(
+    () =>
+      (preloadedData?.registro?.osOptions || []).flatMap((option) => {
+        const code = String(option.code || option.codigo || option.id || "");
+        const name = String(option.name || option.nome || code);
+        if (code.split(".").length !== 2) return [];
+        return [{ code, name, contract: code.split(".")[0], value: osNumberFromName(name) || code }];
+      }),
+    [preloadedData],
+  );
+  const findOs = (value: string) =>
+    osCatalog.find((item) => item.value === value || item.code === value);
+  const osLabel = (value: string) => findOs(value)?.name || value;
   const rows: AccCount[] = useMemo(
     () =>
       data
         ? [...(metricRows || data.rows), ...data.manual, ...data.legacy].map(
             (row) => {
-              if (row.contratoCodigo) return row;
-              const option = preloadedData?.registro?.osOptions?.find(
-                (option) =>
-                  String(option.code || option.codigo || option.id) === row.os,
-              );
+              const os = findOs(String(row.os || ""));
               return {
                 ...row,
-                contratoCodigo:
-                  option?.contractCode || option?.contratoCodigo || "",
+                os: os?.value || row.os,
+                contratoCodigo: row.contratoCodigo || os?.contract || "",
               };
             },
           )
         : [],
-    [data, metricRows, preloadedData],
+    [data, metricRows, osCatalog],
   );
   const checked = new Set<string>(
     data?.companies
@@ -165,11 +183,7 @@ export default function Conformidade({
     ...new Set<string>([
       ...Object.keys(data?.resumo.osVersions || {}),
       ...unique("os"),
-      ...(preloadedData?.registro?.osOptions || [])
-        .map((option) =>
-          String(option.code || option.codigo || option.id || ""),
-        )
-        .filter(Boolean),
+      ...osCatalog.map((item) => item.value),
     ]),
   ].sort();
   const fieldOptions: Partial<Record<keyof AccIssue, string[]>> = {
@@ -209,8 +223,8 @@ export default function Conformidade({
       const generatedAt = new Date();
       const pdf = buildConformidadePdf({
         generatedAt,
-        contractLabel: filters.contrato || "Todos",
-        osLabel: filters.os || "Todas",
+        contractLabel: filters.contrato ? contractName(filters.contrato) : "Todos",
+        osLabel: filters.os ? osLabel(filters.os) : "Todas",
         filterLabel: Object.entries(filterLabels)
           .map(
             ([key, label]) =>
@@ -264,6 +278,7 @@ export default function Conformidade({
           data={data}
           os={filters.os || ""}
           osValues={osValues}
+          osLabel={osLabel}
           onOsChange={(os) => setFilters((current) => ({ ...current, os }))}
           user={currentUser.email}
           options={fieldOptions}
@@ -279,7 +294,7 @@ export default function Conformidade({
                 field === "contrato"
                   ? fieldOptions.contratoCodigo || []
                   : field === "os"
-                    ? osValues
+                    ? osValues.filter((value) => !filters.contrato || !findOs(value) || findOs(value)?.contract === filters.contrato)
                     : field === "mes"
                       ? [
                           ...new Set<string>(
@@ -313,11 +328,15 @@ export default function Conformidade({
                       ...new Set([...options, filters[field]].filter(Boolean)),
                     ].map((value) => (
                       <option key={value} value={value}>
-                        {value === "sim"
-                          ? "Sim"
-                          : value === "nao"
-                            ? "Nao (interno)"
-                            : value}
+                        {field === "contrato"
+                          ? contractName(String(value))
+                          : field === "os"
+                            ? osLabel(String(value))
+                            : value === "sim"
+                              ? "Terceirizado"
+                              : value === "nao"
+                                ? "Interno"
+                                : value}
                       </option>
                     ))}
                   </select>
@@ -381,7 +400,10 @@ export default function Conformidade({
               title="Terceirizadas"
               subtitle="Conforme cadastro de empresas"
               data={[
-                { name: "Terceirizada", value: outsourced },
+                ...countBy(
+                  filtered.filter((row) => isOutsourced(row.empresa, checked)),
+                  "empresa",
+                ),
                 { name: "Interno", value: total - outsourced },
               ].filter((slice) => slice.value > 0)}
               remainderLabel="Outros"

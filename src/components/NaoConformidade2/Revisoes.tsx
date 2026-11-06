@@ -19,6 +19,7 @@ export default function Revisoes({
   data,
   os,
   osValues,
+  osLabel,
   onOsChange,
   user,
   options,
@@ -28,6 +29,7 @@ export default function Revisoes({
   data: QualityData;
   os: string;
   osValues: string[];
+  osLabel?: (value: string) => string;
   onOsChange: (os: string) => void;
   user: string;
   options: Partial<Record<keyof AccIssue, string[]>>;
@@ -172,7 +174,7 @@ export default function Revisoes({
         >
           <option value="">Selecione uma OS</option>
           {osValues.map((value) => (
-            <option key={value}>{value}</option>
+            <option key={value} value={value}>{osLabel ? osLabel(value) : value}</option>
           ))}
         </select>
       </label>

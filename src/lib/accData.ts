@@ -185,13 +185,19 @@ export function parseAccJson(json: string): AccIssue[] {
   return parsed as AccIssue[];
 }
 
+export function accMonth(iso?: string) {
+  if (/^\d{4}-\d{2}$/.test(String(iso))) return String(iso); // already a summary month
+  const d = new Date(String(iso || ""));
+  return isNaN(+d) ? "" : d.toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }).slice(0, 7);
+}
+
 export function filterAccIssues<T extends AccIssue>(
   issues: T[],
   filters: AccFilters,
   terceirizadas: Set<string>,
 ) {
   return issues.filter((issue) => {
-    const month = String(issue.criadoEm || "").slice(0, 7);
+    const month = accMonth(issue.criadoEm);
     const outsourced = isOutsourced(issue.empresa, terceirizadas)
       ? "sim"
       : "nao";

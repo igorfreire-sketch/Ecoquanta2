@@ -119,11 +119,12 @@ function accChunk_(text) {
   return chunks;
 }
 function accHash_(text, digest) { return digest(text); }
+function accMonth_(iso) { var d = new Date(iso); return isNaN(d) ? '' : new Date(+d - 10800000).toISOString().slice(0,7); } // America/Sao_Paulo is fixed UTC-3 (no DST since 2019)
 function accSummary_(issues) {
   var totals = {}, companies = {};
   issues.forEach(function(r) {
     if (r.empresa) companies[r.empresa] = true;
-    var dims = [r.os,r.setor,r.tipo,r.empresa,r.status,r.criadoEm.slice(0,7)], key = JSON.stringify(dims);
+    var dims = [r.os,r.setor,r.tipo,r.empresa,r.status,accMonth_(r.criadoEm)], key = JSON.stringify(dims);
     totals[key] = (totals[key] || 0) + 1;
   }); return { empresas: Object.keys(companies).sort(), totais: totals };
 }

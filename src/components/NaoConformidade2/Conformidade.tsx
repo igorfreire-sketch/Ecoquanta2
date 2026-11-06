@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   qualitySectorLabel,
   countBy,
+  accMonth,
   filterAccIssues,
   isAccDone,
   isOutsourced,
@@ -277,7 +278,7 @@ export default function Conformidade({
                       ? [
                           ...new Set<string>(
                             rows
-                              .map((row) => row.criadoEm?.slice(0, 7))
+                              .map((row) => accMonth(row.criadoEm))
                               .filter(Boolean),
                           ),
                         ].sort()

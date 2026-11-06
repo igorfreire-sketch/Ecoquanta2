@@ -247,6 +247,36 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Contract R5: signed-in access to new quality collections, no publishing here.
+    match /accOs/{document} {
+      allow read: if isSignedIn();
+      allow write: if false;
+      match /chunks/{chunk} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
+    }
+    match /accResumo/{document} {
+      allow read: if isSignedIn();
+      allow write: if false;
+      match /chunks/{chunk} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
+    }
+    match /accEdicoes/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if false;
+    }
+    match /accTerceirizadas/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if false;
+    }
+    match /qualidadeManual/{document} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if false;
+    }
+
     match /nc2Records/{document} {
       allow read, create, update: if isSignedIn();
       allow delete: if false;

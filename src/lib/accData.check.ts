@@ -45,10 +45,8 @@ assert.equal(
 );
 assert.equal(total(resumoRows(resumo)), 5);
 assert.deepEqual(resumoRows({ osVersions: {}, empresas: [] }), []);
-assert.throws(
-  () => resumoRows({ osVersions: { "061": "hash" }, empresas: [], totais: {} }),
-  /cruzamentos/,
-);
+assert.deepEqual(resumoRows({ osVersions: { '061': 'hash' }, empresas: [], totais: {} }), []);
+assert.throws(() => resumoRows({ osVersions: {}, empresas: [], totais: { invalid: 1 } }));
 const edit: AccEdit = {
   id: "061-#1",
   status: "Fechado",

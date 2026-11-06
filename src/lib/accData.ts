@@ -34,7 +34,7 @@ export interface AccResumo {
   updatedAt?: unknown;
   osVersions: Record<string, string>;
   empresas: string[];
-  totais?: { cruzamentos?: AccCountInput[] } | AccCountInput[];
+  totais?: Record<string, number>;
   ultimaImportacao?: {
     lidos?: number;
     novos?: number;
@@ -321,24 +321,12 @@ export function resumoRows(resumo: AccResumo): AccCount[] {
       throw new Error("accResumo sem totais cruzados.");
     return [];
   }
-  const rows = Array.isArray(totals) ? totals : totals.cruzamentos;
-  if (!rows) {
-    if (!Object.keys(resumo.osVersions || {}).length) return [];
-    throw new Error(
-      "accResumo: esperado totais.cruzamentos (ver docs/acc-screen.md).",
-    );
-  }
-  return rows.map((row) => {
-    const count = Number(row.count);
-    if (!Number.isFinite(count) || count < 0)
-      throw new Error("accResumo: count invalido.");
-    return {
-      id: "",
-      titulo: "",
-      ...row,
-      criadoEm: row.criadoEm || row.mes || "",
-      count,
-    };
+  return Object.entries(totals).map(([key, count]) => {
+    const dims = JSON.parse(key);
+    if (!Array.isArray(dims) || dims.length !== 6 || dims.some(value => typeof value !== 'string') || !Number.isInteger(count) || count < 0)
+      throw new Error('accResumo: dimensoes ou contagem invalidas.');
+    const [os, setor, tipo, empresa, status, mes] = dims;
+    return { id: '', titulo: '', os, setor, tipo, empresa, status, criadoEm: mes, count };
   });
 }
 

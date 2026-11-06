@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "check:quality": "tsx src/lib/accData.check.ts && tsx src/components/NaoConformidade2/Conformidade.metrics.check.ts && node scripts/firestoreRules.check.mjs",
+    "check:quality": "tsx scripts/accImportSummary.check.ts && node scripts/importAcc.check.mjs && tsx src/lib/accData.check.ts && tsx src/components/NaoConformidade2/Conformidade.metrics.check.ts && node scripts/firestoreRules.check.mjs",
     "check:quality-ui": "node scripts/qualityUi.check.mjs"
   },
   "dependencies": {

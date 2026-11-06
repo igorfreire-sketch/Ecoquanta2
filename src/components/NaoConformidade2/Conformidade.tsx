@@ -51,6 +51,7 @@ const filterLabels: Record<keyof AccFilters, string> = {
   setor: "Setor",
   tipo: "Tipo de erro",
   terceirizada: "Terceirizado ou interno",
+  empresa: "Terceirizada",
   status: "Status",
 };
 const sum = (rows: AccCount[]) =>
@@ -305,6 +306,8 @@ export default function Conformidade({
                         ].sort()
                       : field === "terceirizada"
                         ? ["sim", "nao"]
+                        : field === "empresa"
+                          ? (data?.companies || []).filter((company) => company.terceirizada).map((company) => company.nome).sort()
                         : unique(field as keyof AccIssue);
               return (
                 <label key={key} className="space-y-1 text-xs font-bold">
@@ -344,7 +347,7 @@ export default function Conformidade({
               );
             })}
             <button
-              className="self-end rounded-xl border border-slate-300 px-3 py-2 font-bold"
+              className="self-end justify-self-start rounded-lg bg-[#F05D28] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#D94E1F] disabled:opacity-60"
               disabled={pdfBusy}
               onClick={exportPdf}
             >

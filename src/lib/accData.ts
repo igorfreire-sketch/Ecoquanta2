@@ -97,6 +97,7 @@ export interface AccFilters {
   setor?: string;
   tipo?: string;
   terceirizada?: string;
+  empresa?: string;
   status?: string;
 }
 
@@ -213,6 +214,8 @@ export function filterAccIssues<T extends AccIssue>(
       (!filters.tipo ||
         normalizeAccValue(issue.tipo) === normalizeAccValue(filters.tipo)) &&
       (!filters.terceirizada || outsourced === filters.terceirizada) &&
+      (!filters.empresa ||
+        normalizeAccValue(issue.empresa) === normalizeAccValue(filters.empresa)) &&
       (!filters.status ||
         normalizeAccValue(issue.status) === normalizeAccValue(filters.status))
     );

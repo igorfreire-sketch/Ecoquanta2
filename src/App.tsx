@@ -151,6 +151,7 @@ import {
   isFirebaseConfigured,
   hashPasswordLikeAppsScript,
   mutateFirebaseAppData,
+  mergeAdminSnapshotForWrite,
   subscribeFirebaseAppData,
   replaceFirebaseAppData,
   canDeleteNote,
@@ -1792,6 +1793,7 @@ export default function App() {
   const adminDraftVersionRef = React.useRef(0);
   const adminDraftRef = React.useRef<AdminSnapshotState | null>(null);
   const adminUserBaselineRef = React.useRef<UserAccessRecord[]>([]);
+  const adminDatabaseLinksBaselineRef = React.useRef<DatabaseLinkRecord[]>([]);
   const deletedUserEmailsRef = React.useRef<Set<string>>(new Set());
   const databaseLinksComSeed = React.useMemo(() => withSeedDatabaseLinks(databaseLinks), [databaseLinks]);
 
@@ -2091,9 +2093,14 @@ export default function App() {
     };
   }, [buildAdminFirebaseSnapshot, currentUser, requestAdminConfirmation]);
 
-  const writeAdminSnapshotToFirebase = useCallback(async (snapshot: Record<string, any>) => {
-    if (!isFirebaseConfigured()) return;
-    await replaceFirebaseAppData('admin', snapshot);
+  const writeAdminSnapshotToFirebase = useCallback(async (
+    snapshot: Record<string, any>,
+    editedFields?: readonly AdminEditableField[],
+    baseDatabaseLinks: readonly DatabaseLinkRecord[] = [],
+  ) => {
+    if (!isFirebaseConfigured()) return snapshot;
+    return mutateFirebaseAppData<Record<string, any>>('admin', (current) =>
+      mergeAdminSnapshotForWrite(current, snapshot, editedFields, baseDatabaseLinks));
   }, []);
 
   const syncAdminSnapshotToFirebase = useCallback(async (overrides?: Parameters<typeof buildAdminFirebaseSnapshot>[0]) => {
@@ -2102,8 +2109,11 @@ export default function App() {
       ...(overrides || {}),
     };
     const { snapshot } = await prepareAdminSnapshotForSave(draftState);
-    await writeAdminSnapshotToFirebase(snapshot);
-    return snapshot;
+    return writeAdminSnapshotToFirebase(
+      snapshot,
+      draftState.editedFields,
+      adminDatabaseLinksBaselineRef.current,
+    );
   }, [getAdminSnapshotState, prepareAdminSnapshotForSave, writeAdminSnapshotToFirebase]);
 
   const syncAuthSnapshotToFirebase = useCallback(async (overrideUsers?: UserAccessRecord[], existingAuthOverride?: any, deletedUserEmails: readonly string[] = []) => {
@@ -2153,6 +2163,7 @@ export default function App() {
         preRegistrations: adminState.preRegistrations,
       };
       adminUserBaselineRef.current = adminState.usuarios;
+      adminDatabaseLinksBaselineRef.current = adminState.databaseLinks;
       setCurrentUser((prev) => prev ? applyAdminUserContext(prev, normalizedData.admin) : prev);
     }
     setDirtyUserIds([]);
@@ -2408,6 +2419,7 @@ export default function App() {
           setDirtyUserIds([]);
           dirtyUserIdsRef.current = new Set();
           adminUserBaselineRef.current = [];
+          adminDatabaseLinksBaselineRef.current = [];
           deletedUserEmailsRef.current = new Set();
           setPendingTerceirizadas([]);
           setAdminHasPendingChanges(false);
@@ -2545,6 +2557,7 @@ export default function App() {
     try {
       await ensureGoogleFirebaseAuth(currentUser.email);
       const draftState = adminDraftRef.current || getAdminSnapshotState();
+      const baseDatabaseLinksForSave = adminDatabaseLinksBaselineRef.current;
       const {
         snapshot: adminSnapshot,
         state: safeDraftState,
@@ -2552,14 +2565,18 @@ export default function App() {
         deletedUserEmails,
       } = await prepareAdminSnapshotForSave(draftState);
       if (adminDraftVersionRef.current !== versionToSave) return false;
-      await Promise.all([
-        writeAdminSnapshotToFirebase(adminSnapshot),
+      const [savedAdminSnapshot] = await Promise.all([
+        writeAdminSnapshotToFirebase(
+          adminSnapshot,
+          draftState.editedFields,
+          baseDatabaseLinksForSave,
+        ),
         syncAuthSnapshotToFirebase(safeDraftState.usuarios, existingAuth, deletedUserEmails),
       ]);
-      syncAdminSnapshotToAppsScriptInBackground(adminSnapshot);
+      syncAdminSnapshotToAppsScriptInBackground(savedAdminSnapshot);
 
       if (adminDraftVersionRef.current === versionToSave) {
-        const savedAdminState = getAdminState({ admin: adminSnapshot });
+        const savedAdminState = getAdminState({ admin: savedAdminSnapshot });
         setUsuarios(savedAdminState.usuarios);
         setDisciplineSettings(savedAdminState.disciplineSettings);
         setDisciplinas(savedAdminState.disciplinas);
@@ -2581,8 +2598,9 @@ export default function App() {
           preRegistrations: savedAdminState.preRegistrations,
         };
         adminUserBaselineRef.current = savedAdminState.usuarios;
-        setGlobalData((prev) => mergeGlobalData(prev, { admin: adminSnapshot }));
-        setCurrentUser((prev) => prev ? applyAdminUserContext(prev, adminSnapshot) : prev);
+        adminDatabaseLinksBaselineRef.current = savedAdminState.databaseLinks;
+        setGlobalData((prev) => mergeGlobalData(prev, { admin: savedAdminSnapshot }));
+        setCurrentUser((prev) => prev ? applyAdminUserContext(prev, savedAdminSnapshot) : prev);
         setDirtyUserIds([]);
         dirtyUserIdsRef.current = new Set();
         setAdminHasPendingChanges(false);
@@ -2670,7 +2688,10 @@ export default function App() {
     if (cargos.length === 0 && adminState.cargos.length > 0) setCargos(adminState.cargos);
     if (alocacoes.length === 0 && adminState.alocacoes.length > 0) setAlocacoes(adminState.alocacoes);
     if (terceirizadas.length === 0 && adminState.terceirizadas.length > 0) setTerceirizadas(adminState.terceirizadas);
-    if (databaseLinks.length === 0 && adminState.databaseLinks.length > 0) setDatabaseLinks(adminState.databaseLinks);
+    if (databaseLinks.length === 0 && adminState.databaseLinks.length > 0) {
+      setDatabaseLinks(adminState.databaseLinks);
+      adminDatabaseLinksBaselineRef.current = adminState.databaseLinks;
+    }
     if (Object.keys(roleTabPermissions).length === 0 && Object.keys(adminState.roleTabPermissions).length > 0) {
       setRoleTabPermissions(adminState.roleTabPermissions);
     }
@@ -3300,6 +3321,7 @@ export default function App() {
     setDirtyUserIds([]);
     dirtyUserIdsRef.current = new Set();
     adminUserBaselineRef.current = [];
+    adminDatabaseLinksBaselineRef.current = [];
     deletedUserEmailsRef.current = new Set();
     setPendingTerceirizadas([]);
     setAdminHasPendingChanges(false);

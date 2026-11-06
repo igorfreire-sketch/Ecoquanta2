@@ -1099,6 +1099,51 @@ export async function replaceFirebaseAppData(name: string, data: any) {
   });
 }
 
+const ADMIN_SNAPSHOT_KEYS: Record<string, string> = {
+  usuarios: 'users', disciplineSettings: 'disciplinas', cargos: 'cargos', alocacoes: 'alocacoes',
+  terceirizadas: 'terceirizadas', roleTabPermissions: 'roleTabPermissions',
+  databaseLinks: 'databaseLinks', preRegistrations: 'preRegistrations',
+};
+
+function mergeChangedDatabaseLinks(
+  remote: readonly Record<string, any>[],
+  base: readonly Record<string, any>[],
+  draft: readonly Record<string, any>[],
+) {
+  const baseById = new Map(base.map((item) => [String(item.id), item]));
+  const draftById = new Map(draft.map((item) => [String(item.id), item]));
+  const changedIds = new Set([...baseById.keys(), ...draftById.keys()].filter((id) =>
+    JSON.stringify(baseById.get(id)) !== JSON.stringify(draftById.get(id))));
+  const remoteIds = new Set(remote.map((item) => String(item.id)));
+  const merged = remote.flatMap((item) => {
+    const id = String(item.id);
+    if (!changedIds.has(id)) return [item];
+    return draftById.has(id) ? [draftById.get(id)!] : [];
+  });
+  for (const [id, item] of draftById) {
+    if (changedIds.has(id) && !remoteIds.has(id)) merged.push(item);
+  }
+  return merged;
+}
+
+export function mergeAdminSnapshotForWrite(
+  current: Record<string, any> | null,
+  draft: Record<string, any>,
+  editedFields?: readonly string[],
+  baseDatabaseLinks: readonly Record<string, any>[] = [],
+) {
+  if (!current || !editedFields) return draft;
+  const next = { ...current };
+  for (const field of editedFields) {
+    const key = ADMIN_SNAPSHOT_KEYS[field];
+    if (!key) continue;
+    next[key] = key === 'databaseLinks'
+      ? mergeChangedDatabaseLinks(current.databaseLinks || [], baseDatabaseLinks, draft.databaseLinks || [])
+      : draft[key];
+  }
+  return next;
+}
+
 export async function mutateFirebaseAppData<T>(name: string, mutate: (current: T | null) => T): Promise<T> {
   await ensureFirebaseAuth();
   const dbRef = getDb();

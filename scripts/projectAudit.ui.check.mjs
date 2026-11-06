@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 const context = await chromium.launchPersistentContext('.r4/audit-browser', { executablePath: process.env.R4_BROWSER || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless:true, viewport:{width:1600,height:1000} });
 await context.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
 const page = await context.newPage();
+const fixtureUrl = process.env.R4_FIXTURE_URL || 'http://127.0.0.1:2514/scripts/fixtures/project.html';
 const errors=[];page.on('pageerror', e=>errors.push(e.message));
 let accept=false;let confirmations=0;
 page.on('dialog', async d=>{confirmations++; await (accept?d.accept():d.dismiss());});
 const grid=()=>page.locator('[data-cronograma-grid]');
 const name=()=>grid().getByPlaceholder('Nome da atividade',{exact:true}).first();
-async function reset() { accept=true; await page.goto('http://127.0.0.1:2514/scripts/fixtures/project.html');await page.evaluate(()=>localStorage.clear());await page.reload(); confirmations=0;accept=false; }
+async function reset() { accept=true; await page.goto(fixtureUrl);await page.evaluate(()=>localStorage.clear());await page.reload(); confirmations=0;accept=false; }
 async function open() {await page.getByRole('button',{name:'Abrir nota fixture',exact:true}).click();await name().waitFor();}
 const which=process.env.R4_AUDIT_CASE;
 try {
@@ -54,7 +55,7 @@ try {
   assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('r4-project')||'null')?.rows[0].nome),'Salvar tudo D2','D2: note Save must persist the Project');
   assert.equal(await page.getByText('Project com alterações não salvas.',{exact:true}).count(),0);
   await name().fill('Conflito D2');
-  const other=await context.newPage();await other.goto('http://127.0.0.1:2514/scripts/fixtures/project.html');await other.getByRole('button',{name:/Simular/}).click();await other.close();
+  const other=await context.newPage();await other.goto(fixtureUrl);await other.getByRole('button',{name:/Simular/}).click();await other.close();
   const before=await page.evaluate(()=>localStorage.getItem('r4-notes'));
   await page.getByRole('button',{name:'Salvar',exact:true}).click();
   await page.getByRole('alert').filter({hasText:/rascunho foi preservado/}).first().waitFor();
@@ -65,7 +66,7 @@ try {
  if(!which || which==='D4') {
   await reset();
   // An external save while the App cache remains deliberately stale.
-  const other=await context.newPage();await other.goto('http://127.0.0.1:2514/scripts/fixtures/project.html');
+  const other=await context.newPage();await other.goto(fixtureUrl);
   await other.getByRole('button',{name:'Abrir cronograma fixture',exact:true}).click();
   await other.locator('[data-cronograma-grid]').getByPlaceholder('Nome da atividade',{exact:true}).first().fill('Salvo pelo Cronograma');
   await other.getByRole('button',{name:'Salvar',exact:true}).click();await other.close();

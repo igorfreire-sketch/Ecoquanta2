@@ -1,5 +1,6 @@
 import { REGEX_LINK_MARKDOWN, extrairLinkDaCelula } from '../../lib/cellLink';
 import React from 'react';
+import { BEFORE_APP_NAVIGATION } from '../../lib/useNavigationState';
 import { createPortal } from 'react-dom';
 import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, CalendarClock, Check, ChevronLeft, ChevronRight, Clock, Copy, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, History, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
 import SearchableSelect from '../SearchableSelect';
@@ -227,6 +228,7 @@ interface AnotacoesProps {
   onDelete: (id: string) => Promise<void>;
   // Usados quando a nota e aberta de fora do fluxo normal (ex: clique num no do Mapa Mental).
   controlledSheet?: AnnotationSheet | null;
+  onControlledOpenRejected?: (currentSheet: AnnotationSheet | null) => void;
   onCloseControlled?: () => void;
   // noteId de toda linha de todo cronograma (App.tsx) - so pro icone de relogio no card da lista.
   noteIdsComCronograma?: Set<string>;
@@ -786,7 +788,7 @@ export function encontrarRascunhoOrfao(email: string, sheets: AnnotationSheet[],
 }
 
 export default function Anotacoes({
-  filter, sheets, osOptions, disciplinaOptions, contractOptions = [], currentUser, activities = [], usuarios = [], onSave, onDelete, controlledSheet, onCloseControlled, noteIdsComCronograma, readOnly = false,
+  filter, sheets, osOptions, disciplinaOptions, contractOptions = [], currentUser, activities = [], usuarios = [], onSave, onDelete, controlledSheet, onControlledOpenRejected, onCloseControlled, noteIdsComCronograma, readOnly = false,
 }: AnotacoesProps) {
   const noteProjects = React.useContext(NoteProjectsContext);
   const normalizeForEditing = (sheet: AnnotationSheet): AnnotationSheet => {
@@ -885,6 +887,14 @@ export default function Anotacoes({
     setProjectDraft(project);
     setProjectError('');
   };
+
+  React.useEffect(() => {
+    const beforeNavigation = (event: Event) => {
+      if (!confirmProjectDiscard()) event.preventDefault();
+    };
+    window.addEventListener(BEFORE_APP_NAVIGATION, beforeNavigation);
+    return () => window.removeEventListener(BEFORE_APP_NAVIGATION, beforeNavigation);
+  }, [saving, creatingProject]);
 
   React.useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -1016,7 +1026,9 @@ export default function Anotacoes({
   }, [openCardMenuId]);
 
   React.useEffect(() => {
-    if (controlledSheet && controlledSheet.id !== editing?.id) openNote(controlledSheet);
+    if (controlledSheet && controlledSheet.id !== editing?.id && !openNote(controlledSheet)) {
+      onControlledOpenRejected?.(editing);
+    }
   }, [controlledSheet]);
 
   // Autosave anti-F5: grava `editing` no localStorage com debounce a cada mudanca, enquanto
@@ -1118,9 +1130,10 @@ export default function Anotacoes({
     setSaveNotice('');
   };
   const openNote = (sheet: AnnotationSheet) => {
-    if (!confirmProjectDiscard()) return;
+    if (!confirmProjectDiscard()) return false;
     resetEditorFields();
     setEditing(normalizeForEditing(sheet));
+    return true;
   };
 
   // ---- Operacoes de banco (escopo do componente: os listeners de janela abaixo precisam delas) ----

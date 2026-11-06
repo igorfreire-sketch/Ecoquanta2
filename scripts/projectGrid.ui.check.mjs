@@ -6,7 +6,7 @@ const page = await browser.newPage();
 const pageErrors=[];
 page.on('pageerror',e=>pageErrors.push(e.message));
 page.on('dialog',d=>d.accept());
-const url='http://127.0.0.1:2514/scripts/fixtures/project.html';
+const url=process.env.R4_FIXTURE_URL || 'http://127.0.0.1:2514/scripts/fixtures/project.html';
 const grid=()=>page.locator('[data-cronograma-grid]');
 const row=n=>grid().locator('tbody tr').nth(n);
 async function dialog(name,value) { await page.getByLabel(name,{exact:true}).fill(value);await page.getByRole('button',{name:'Confirmar',exact:true}).click(); }

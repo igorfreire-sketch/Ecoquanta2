@@ -1,5 +1,6 @@
 import { saveCronogramaChecked, fetchCronogramaDocument, subscribeFirebaseCollection } from './lib/firebaseDb';
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigationState } from './lib/useNavigationState';
 import SearchableSelect from './components/SearchableSelect';
 import {
   ClipboardList,
@@ -1686,18 +1687,18 @@ export default function App() {
   const [feedbackLoadError, setFeedbackLoadError] = useState('');
   const [feedbackLoading, setFeedbackLoading] = useState(false);
 
-  const [activeTab, setActiveTab] = React.useState<AppTab>('principal');
-  const [principalSubTab, setPrincipalSubTab] = React.useState<'inicio' | 'project'>('inicio');
-  const [areaTecnicaSubTab, setAreaTecnicaSubTab] = React.useState<AreaTecnicaSubTab>('atividades');
-  const [subTab, setSubTab] = React.useState<ControleSubTab>('planejamento');
-  const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('atividades');
-  const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
-  const [compatibilizacaoSubTab, setCompatibilizacaoSubTab] = React.useState<CompatibilizacaoSubTab>('analise-os');
+  const [activeTab, setActiveTab] = useNavigationState<AppTab>('principal');
+  const [principalSubTab, setPrincipalSubTab] = useNavigationState<'inicio' | 'project'>('inicio');
+  const [areaTecnicaSubTab, setAreaTecnicaSubTab] = useNavigationState<AreaTecnicaSubTab>('atividades');
+  const [subTab, setSubTab] = useNavigationState<ControleSubTab>('planejamento');
+  const [planejamentoSubTab, setPlanejamentoSubTab] = useNavigationState<PlanejamentoSubTab>('atividades');
+  const [nc2SubTab, setNc2SubTab] = useNavigationState<Nc2SubTab>('dashboard');
+  const [compatibilizacaoSubTab, setCompatibilizacaoSubTab] = useNavigationState<CompatibilizacaoSubTab>('analise-os');
   // Registro clicado no Kanban da Principal: fica aqui ate a Conformidade montar e consumir.
   const [pendingNc2EditRecord, setPendingNc2EditRecord] = React.useState<Nc2Record | null>(null);
-  const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('atividades');
-  const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
-  const [cronogramaSubTab, setCronogramaSubTab] = React.useState<'cronograma' | 'disciplinas'>('cronograma');
+  const [contratoSubTab, setContratoSubTab] = useNavigationState<ContratoSubTab>('atividades');
+  const [adminSubTab, setAdminSubTab] = useNavigationState<AdminSubTab>('usuarios');
+  const [cronogramaSubTab, setCronogramaSubTab] = useNavigationState<'cronograma' | 'disciplinas'>('cronograma');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [globalData, setGlobalData] = useState<GlobalData>({});
 

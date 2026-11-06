@@ -179,6 +179,7 @@ export default function SolucoesDigitais({
           onSave={salvarNotaCriada}
           onDelete={async (id) => { await onDeleteNote?.(id); }}
           controlledSheet={sheetAberta}
+          onControlledOpenRejected={setSheetAberta}
           onCloseControlled={() => { setSheetAberta(null); setLinhaDaNotaEmCriacao(null); }}
         />
       )}

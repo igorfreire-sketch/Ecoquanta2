@@ -189,6 +189,9 @@ service cloud.firestore {
         request.resource.data.nome.size() <= 300 &&
         request.resource.data.terceirizada is bool && request.resource.data.manual is bool;
     }
+    match /accEdicoes/{document} {
+      allow read, write: if isSignedIn();
+    }
     match /qualidadeManual/{document} {
       allow read, delete: if isSignedIn();
       allow create, update: if isSignedIn() && request.resource.data.origem == 'manual';

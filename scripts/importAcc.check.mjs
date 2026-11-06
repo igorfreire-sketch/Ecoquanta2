@@ -3,12 +3,18 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import JSZip from 'jszip';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const source = readFileSync(new URL('../appsscript/ImportAcc.gs', import.meta.url), 'utf8');
 const core = vm.createContext({ console });
 vm.runInContext(source, core);
 const digest = text => createHash('sha256').update(text).digest('hex');
 const paths = process.argv.slice(2);
+if (process.env.REQUIRE_SAMPLES === '1') {
+  assert.equal(paths.length, 2, 'REQUIRE_SAMPLES=1 requires both real sample paths');
+  for (const path of paths) assert(existsSync(path), `Required sample absent: ${path}`);
+}
 if (!paths.length) console.log('SKIP real samples: pass OS061.xlsx OS068.xlsx paths (files are never copied into the repository).');
 const all = [];
 for (const [index, path] of paths.entries()) {
@@ -24,6 +30,7 @@ for (const [index, path] of paths.entries()) {
   assert.equal(parsed.rows.length, index === 0 ? 1298 : 125);
   assert.equal(normalized.errors.length, 0, JSON.stringify(normalized.errors.slice(0, 5)));
   assert.equal(normalized.issues.length, parsed.rows.length);
+  assert.equal(parsed.avisos.length, 0, 'verified categories must not generate warnings');
   if (index === 0) {
     assert(normalized.issues.some(r => r.empresa === 'BLR Engenharia'));
     // This assignment belongs to non-Quality rows, deliberately filtered early.
@@ -67,18 +74,21 @@ assert.equal(core.accHash_('same', digest), digest('same'));
 const summary = core.accSummary_(all);
 assert.equal(Object.values(summary.totais).reduce((a, b) => a + b, 0), all.length);
 const versions = Object.fromEntries([...new Set(all.map(r => r.os))].map(os => [os, digest(JSON.stringify(all.filter(r => r.os === os)))]));
-console.log(`accResumo bytes=${Buffer.byteLength(JSON.stringify({ updatedAt: '2026-11-06T00:00:00.000Z', ...summary, osVersions: versions, ultimaImportacao: { lidos: all.length, novos: 2, alterados: 0, erros: [] } }))}`);
+console.log(`accResumo bytes=${Buffer.byteLength(JSON.stringify({ updatedAt: '2026-11-06T00:00:00.000Z', ...summary, osVersions: versions, ultimaImportacao: { lidos: all.length, novos: 2, alterados: 0, erros: [], avisos: [] } }))}`);
 console.log('importAcc pure checks: OK');
+assert(!/LockService/.test(source), 'ACC must never acquire the email grouper script lock');
+assert(!/accEdicoes/i.test(source), 'importer must not read or write user overlays');
 
 // Service-boundary tests: no network, mailbox, credentials, or production access.
 function harness({ dry = false, fail = false, previous = null, queue = null } = {}) {
   const values = new Map(dry ? [] : [['DRY_RUN', 'false']]);
-  const calls = { propertyWrites: 0, triggers: 0, commits: 0, downloads: 0, auth: 0 };
+  const calls = { propertyWrites: 0, propertyBatches: 0, triggers: 0, commits: 0, downloads: 0, auth: 0, plans: [] };
   const props = { getProperty: k => values.get(k) ?? null,
     setProperty(k, v) { calls.propertyWrites++; values.set(k, v); return props; },
+    setProperties(updates) { calls.propertyBatches++; calls.propertyWrites++; for (const [k,v] of Object.entries(updates)) values.set(k,v); return props; },
     deleteProperty(k) { calls.propertyWrites++; values.delete(k); return props; } };
   const c = vm.createContext({ console: { log() {} }, PropertiesService: { getScriptProperties: () => props },
-    LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
+    LockService: { getScriptLock: () => { throw Error('Never take the shared email grouper lock'); } },
     ScriptApp: { getProjectTriggers: () => [], newTrigger: () => ({ timeBased: () => ({ after: () => ({ create() { calls.triggers++; } }) }) }) },
     UrlFetchApp: { fetch: () => ({ getResponseCode: () => 200, getContentText: () => '{}' }) } });
   vm.runInContext(source, c);
@@ -91,7 +101,10 @@ function harness({ dry = false, fail = false, previous = null, queue = null } = 
   c.accParse_ = () => ({ rows: [{ id: '#1', linha: 2, status: 'Open', posicionamento: 'OS001_P01_ARQ.pdf', empresa: '', atribuido: '', criadoPor: '', fechadoPor: '' }] });
   c.accDigest_ = digest;
   c.accRead_ = (_, path) => path === 'accOs/001' ? previous : null;
-  c.accCommit_ = (_, plans, budget) => { calls.commits++; budget.remaining -= plans.length; };
+  c.accCommit_ = (_, plans, budget) => {
+    assert(plans.every(p => /^(accOs|accResumo)\//.test(p.path)), 'no writes to other collections');
+    calls.commits++; calls.plans.push(...plans); budget.remaining -= plans.length;
+  };
   if (queue) c.accQueueSave_(props, queue);
   return { c, props, calls, item };
 }
@@ -144,3 +157,126 @@ function harness({ dry = false, fail = false, previous = null, queue = null } = 
   assert.equal(missingOS.errors.length, 1);
 }
 console.log('importAcc service boundary checks: OK (dry-run, deduplication, unchanged hash, latest wins, retries, queue, chunks, write cap)');
+
+// Audit regressions: fixtures cross the same Apps Script boundaries as production.
+{
+  const h = harness();
+  h.c.accQueueSave_(h.props, [h.item]);
+  const owner = JSON.stringify({ timestamp: Date.now(), token: 'another-ACC-run' });
+  h.props.setProperty('ACC_RUNNING', owner);
+  const result = h.c.accContinuar_();
+  assert.equal(result.busy, true); assert.equal(h.calls.auth, 0);
+  assert.equal(h.calls.triggers, 1, 'busy one-shot continuation must reschedule');
+  assert.equal(h.props.getProperty('ACC_RUNNING'), owner, 'busy invocation cannot release the other owner');
+  h.props.setProperty('ACC_RUNNING', JSON.stringify({ timestamp: Date.now() - 600001, token: 'expired' }));
+  h.c.accContinuar_();
+  assert.equal(h.calls.commits, 1, 'expired lease must allow recovery');
+  assert.equal(h.props.getProperty('ACC_RUNNING'), null);
+}
+for (const boundary of ['auth', 'summary', 'registry', 'status']) {
+  const h = harness();
+  h.c.accQueueSave_(h.props, [h.item]);
+  if (boundary === 'auth') h.c.accAuth_ = () => { throw Error('injected auth failure'); };
+  if (boundary === 'summary') h.c.accRead_ = () => { throw Error('injected summary failure'); };
+  if (boundary === 'registry') h.c.UrlFetchApp.fetch = () => ({ getResponseCode: () => 503 });
+  if (boundary === 'status') {
+    const setProperty = h.props.setProperty;
+    h.props.setProperty = (k, v) => { if (k === 'ACC_LAST') throw Error('injected status failure'); return setProperty(k, v); };
+    h.c.buscarDownloadAutodesk_ = () => { throw Error('injected download failure'); };
+  }
+  assert.throws(() => h.c.accContinuar_(), /failure|503/);
+  assert(h.c.accQueueRead_(h.props).length, `${boundary}: queue must survive`);
+  assert.equal(h.calls.triggers, 1, `${boundary}: finally must restore continuation`);
+  assert.equal(h.props.getProperty('ACC_RUNNING'), null);
+}
+{
+  const h = harness({ dry: true });
+  h.props.setProperty('ACC_RUNNING', JSON.stringify({ timestamp: Date.now() }));
+  const before = h.calls.propertyWrites;
+  h.c.accTesteSimulacao();
+  assert.equal(h.calls.propertyWrites, before); assert.equal(h.calls.triggers, 0);
+}
+{
+  const h = harness();
+  h.props.setProperty('original-email-grouper', 'preserve');
+  const before = h.calls.propertyBatches;
+  h.c.accQueueSave_(h.props, Array.from({length: 20}, (_, i) => ({...h.item, id: String(i), link: 'x'.repeat(3000)})));
+  assert.equal(h.calls.propertyBatches - before, 1, 'queue parts use one setProperties call');
+  assert.equal(h.props.getProperty('original-email-grouper'), 'preserve');
+  assert.equal(h.c.accQueueRead_(h.props).length, 20);
+}
+{
+  const props = { getProperty: () => null };
+  let query;
+  core.PropertiesService = { getScriptProperties: () => props };
+  core.GmailApp = { search: q => { query = q; return []; } };
+  core.accDiscover_('daily', null, Date.now() + 1000);
+  assert.match(query, /subject:MRK/); assert.match(query, /was shared with you/); assert.match(query, /newer_than:2d/);
+}
+const headers = ['ID','Title','Status','Category','Type','Description','Assigned to','Company','Watchers','Created by','Created on','Due date','Placement','Updated on','Closed by','Closed at','Comments'];
+const escapeXml = text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;');
+function xmlRow(line, values) {
+  return `<row r="${line}">${values.map((v,i) => `<c r="${String.fromCharCode(65+i)}${line}" t="inlineStr"><is><t>${escapeXml(v)}</t></is></c>`).join('')}</row>`;
+}
+const sheet = rows => ({ 'xl/worksheets/sheet1.xml': `<sheetData>${xmlRow(1, headers)}${rows}</sheetData>` });
+function sampleRow(id = '#1', category = 'Quality', status = 'Open') {
+  return [id, 'Synthetic title', status, category, 'Drawing', '', 'Architect', '', '', 'Person (Removed)\nCompany', '', '', 'OS001_P01_ARQ.pdf', '', '', '', ''];
+}
+{
+  const parsed = core.accParse_(sheet('<row r="2"/>' + xmlRow(3, sampleRow())));
+  assert.equal(parsed.rows.length, 1); assert.equal(parsed.rows[0].linha, 3, 'self-closing row cannot consume the next row');
+  const normalized = core.accNormalize_(parsed, '', {});
+  assert.equal(normalized.issues[0].criadoPor, 'Person');
+  const missingHeader = sheet(xmlRow(2, sampleRow()));
+  missingHeader['xl/worksheets/sheet1.xml'] = missingHeader['xl/worksheets/sheet1.xml'].replace('<t>Status</t>', '<t>Missing status</t>');
+  assert.throws(() => core.accParse_(missingHeader), /Coluna ausente: status/);
+}
+for (const category of ['Design', 'Unexpected category', '__proto__']) {
+  const parsed = core.accParse_(sheet(xmlRow(2, sampleRow('#1', category))));
+  assert.equal(parsed.rows.length, 0);
+  assert(parsed.avisos.some(w => /sem linhas Quality/.test(w.aviso)));
+  if (category !== 'Design') assert(parsed.avisos.some(w => /Categoria desconhecida/.test(w.aviso)));
+  const h = harness(); h.c.accParse_ = () => parsed;
+  const report = h.c.accImportarDiario();
+  assert(report.avisos.length);
+  assert(h.calls.plans.every(p => p.path.startsWith('accResumo/')), 'zero Quality must preserve existing OS');
+  assert(h.calls.plans.find(p => p.path === 'accResumo/atual').data.ultimaImportacao.avisos.length);
+}
+{
+  const parsed = core.accParse_(sheet(xmlRow(2, sampleRow('#1')) + xmlRow(3, sampleRow('#2', 'Quality', 'unexpected'))));
+  const h = harness(); h.c.accParse_ = () => parsed;
+  const report = h.c.accImportarDiario();
+  assert(report.erros.some(e => e.linha === 3));
+  const data = h.calls.plans.find(p => p.path === 'accOs/001').data;
+  assert.equal(JSON.parse(data.json).length, 1); assert.equal(JSON.parse(data.json)[0].key, '001-#1');
+  assert(h.calls.plans.find(p => p.path === 'accResumo/atual').data.ultimaImportacao.erros.some(e => e.linha === 3));
+}
+{
+  const h = harness(); h.c.accParse_ = () => { throw Error('Coluna ausente: status'); };
+  const report = h.c.accImportarDiario();
+  assert(report.erros.some(e => /Coluna ausente/.test(e.erro)));
+  assert.equal(h.calls.commits, 0, 'required header failure rejects the file');
+  assert.equal(h.calls.triggers, 1);
+}
+{
+  let contentType = '', unzipCalls = 0;
+  const entry = (name, value = '') => ({ getName: () => name, getDataAsString: () => value });
+  core.Utilities = { unzip: blob => { unzipCalls++; assert.equal(contentType, 'application/zip'); return [
+    entry('[Content_Types].xml','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'),
+    entry('xl/workbook.xml'), entry('xl/worksheets/sheet1.xml', '<sheetData/>') ]; } };
+  const blob = { getBytes: () => [80,75,3,4], setContentType(value) { contentType = value; return this; } };
+  assert(core.accUnzip_(blob)['xl/worksheets/sheet1.xml']); assert.equal(unzipCalls, 1);
+  assert.throws(() => core.accUnzip_({ getBytes: () => [60,104,116,109,108] }), /link Autodesk pode ter expirado/);
+  core.Utilities.unzip = () => { throw Error('bad archive'); };
+  assert.throws(() => core.accUnzip_(blob), /link Autodesk pode ter expirado/);
+  core.Utilities.unzip = () => [entry('word/document.xml')];
+  assert.throws(() => core.accUnzip_(blob), /link Autodesk pode ter expirado/);
+}
+if (!process.env.ACC_CHECK_CHILD) {
+  for (const args of [[], ['missing-sample-one.xlsx', 'missing-sample-two.xlsx']]) {
+    const result = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...args], { env: { ...process.env, REQUIRE_SAMPLES: '1', ACC_CHECK_CHILD: '1' }, encoding: 'utf8' });
+    assert.notEqual(result.status, 0, 'REQUIRE_SAMPLES must fail for omitted or absent samples');
+    assert.match(result.stderr, /requires both real sample paths|Required sample absent/);
+  }
+}
+console.log('importAcc audit checks: OK (ACC lease, busy recovery, finally recovery, categories, partial rows, headers, ZIP, removed authors, required samples, batched properties)');

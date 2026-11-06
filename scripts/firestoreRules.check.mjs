@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
 const firebaseDb = readFileSync(new URL('../src/lib/firebaseDb.ts', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const importer = readFileSync(new URL('../appsscript/ImportAcc.gs', import.meta.url), 'utf8');
 const collections = [
   'registroAtividades', 'registroAtividadesHistorico', 'nc2Records', 'planningTodos',
   'contractPriorities', 'contractInterferences', 'resolvedAlerts', 'osSettings',
@@ -62,3 +63,7 @@ for (const name of ['accOs', 'accResumo']) {
 assert.match(rules, /match \/accTerceirizadas\/\{document\}[\s\S]*?terceirizada is bool/);
 assert.match(rules, /match \/qualidadeManual\/\{document\}[\s\S]*?origem == 'manual'/);
 console.log('firestoreRules ACC: OK');
+const editsBlock = rules.match(/match \/accEdicoes\/\{document\} \{([\s\S]*?)\n    \}/)?.[1] || '';
+assert.match(editsBlock, /allow read, write: if isSignedIn\(\);/, 'ACC overlays require authenticated read and write');
+assert.doesNotMatch(importer, /accEdicoes/i, 'daily importer must never access user overlays');
+console.log('firestoreRules ACC overlays: OK; importer has no overlay access');

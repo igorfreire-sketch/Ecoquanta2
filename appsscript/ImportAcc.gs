@@ -44,9 +44,10 @@ function accParse_(files) {
   var shared = Array.from((files['xl/sharedStrings.xml'] || '').matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g), function(m) { return accTexts_(m[1]); });
   var sheetName = Object.keys(files).filter(function(n) { return /^xl\/worksheets\/sheet\d+\.xml$/.test(n); }).sort()[0];
   if (!sheetName) throw new Error('XLSX sem planilha');
-  var headers, mapping = {}, rows = [], total = 0;
-  for (var match of files[sheetName].matchAll(/<row\b([^>]*)>([\s\S]*?)<\/row>/g)) {
-    var cells = accCells_(match[2], shared);
+  var headers, mapping = {}, rows = [], total = 0, categories = Object.create(null), warnings = [];
+  for (var match of files[sheetName].matchAll(/<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g)) {
+    var cells = accCells_(match[2] || '', shared);
+    if (!Object.keys(cells).length) continue;
     if (!headers) {
       headers = cells;
       Object.keys(ACC_HEADERS).forEach(function(key) {
@@ -55,11 +56,18 @@ function accParse_(files) {
       }); continue;
     }
     total++;
-    if (accNorm_(cells[mapping.categoria]) !== 'quality') continue;
+    var category = accNorm_(cells[mapping.categoria]);
+    categories[category] = (categories[category] || 0) + 1;
+    if (category !== 'quality') continue;
     var row = { linha: +(/\br="(\d+)"/.exec(match[1]) || [0,total+1])[1] };
     Object.keys(mapping).forEach(function(key) { row[key] = cells[mapping[key]] || ''; }); rows.push(row);
   }
-  return { rows: rows, total: total, headers: headers };
+  if (!headers) throw new Error('XLSX sem cabecalho');
+  Object.keys(categories).forEach(function(category) {
+    if (['quality','coordination','design'].indexOf(category) < 0) warnings.push({ aviso:'Categoria desconhecida', categoria:category || '(vazia)', linhas:categories[category] });
+  });
+  if (!rows.length) warnings.push({ aviso:'Arquivo sem linhas Quality', linhas:total });
+  return { rows: rows, total: total, headers: headers, avisos:warnings };
 }
 function accSplit_(value,company) {
   var lines = String(value || '').split(/\r?\n/).map(function(s) { return s.trim(); }).filter(Boolean);
@@ -95,7 +103,7 @@ function accNormalize_(parsed, fallback, cadastro) {
       issues.push({ key: key, os: os, id: r.id, titulo: r.titulo, status: status[1], concluido: ['Concluido','Fechado'].indexOf(status[1]) >= 0,
         categoria: 'Quality', tipo: r.tipo, descricao: r.descricao, pessoa: assigned.pessoa, cargo: assigned.cargo,
         empresa: company, terceirizada: !!company && accNorm_(company) !== 'quanta consultoria' && !!cadastro[accNorm_(company)],
-        seguidores: r.seguidores, criadoPor: accSplit_(r.criadoPor).pessoa, criadoEm: accDate_(r.criadoEm,false),
+        seguidores: r.seguidores, criadoPor: accSplit_(r.criadoPor).pessoa.replace(/\s*\(Removed\)\s*$/i,''), criadoEm: accDate_(r.criadoEm,false),
         vencimento: accDate_(r.vencimento,false), posicionamento: r.posicionamento, setor: code, setorNome: ACC_SETORES[code] || code,
         atualizadoEm: accDate_(r.atualizadoEm,false), fechadoPor: accSplit_(r.fechadoPor).pessoa, fechadoEm: accDate_(r.fechadoEm,true),
         comentarios: r.comentarios, origem: 'acc' });
@@ -127,11 +135,28 @@ function accContinuar_() { return accRun_('continue',false); }
 function accStatus() {
   var p = PropertiesService.getScriptProperties();
   var state = { dryRun: p.getProperty('DRY_RUN') !== 'false', queue: accQueueRead_(p).length,
+    running: JSON.parse(p.getProperty('ACC_RUNNING') || 'null'),
     discovery: JSON.parse(p.getProperty('ACC_DISCOVERY') || 'null'),
     last: JSON.parse(p.getProperty('ACC_LAST') || 'null') }; console.log(JSON.stringify(state)); return state;
 }
 function accDigest_(text) { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,text,Utilities.Charset.UTF_8).map(function(b) { return ('0'+(b&255).toString(16)).slice(-2); }).join(''); }
-function accUnzip_(blob) { var files = {}; Utilities.unzip(blob).forEach(function(b) { if (/^xl\/(sharedStrings\.xml|worksheets\/sheet\d+\.xml)$/.test(b.getName())) files[b.getName()] = b.getDataAsString('UTF-8'); }); return files; }
+function accUnzip_(blob) {
+  var invalid = 'Download nao e XLSX: o link Autodesk pode ter expirado. Gere um novo compartilhamento.';
+  var bytes = blob.getBytes();
+  if (bytes.length < 4 || (bytes[0]&255)!==80 || (bytes[1]&255)!==75 || (bytes[2]&255)!==3 || (bytes[3]&255)!==4) throw new Error(invalid);
+  var entries;
+  try { entries = Utilities.unzip(blob.setContentType('application/zip')); }
+  catch (e) { throw new Error(invalid); }
+  var files = {}, workbook = false, xlsx = false;
+  entries.forEach(function(b) {
+    var name = b.getName();
+    if (name === 'xl/workbook.xml') workbook = true;
+    if (name === '[Content_Types].xml') xlsx = b.getDataAsString('UTF-8').indexOf('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml') >= 0;
+    if (/^xl\/(sharedStrings\.xml|worksheets\/sheet\d+\.xml)$/.test(name)) files[name] = b.getDataAsString('UTF-8');
+  });
+  if (!workbook || !xlsx || !Object.keys(files).some(function(name) { return /^xl\/worksheets\//.test(name); })) throw new Error(invalid);
+  return files;
+}
 function accAuth_() {
   var sa = JSON.parse(PropertiesService.getScriptProperties().getProperty('ACC_FIREBASE_SA') || 'null');
   if (!sa || !sa.project_id || !sa.private_key || !sa.client_email) throw new Error('Configure ACC_FIREBASE_SA');
@@ -194,12 +219,13 @@ function accQueueSave_(p,queue) {
   while(at<text.length) { var end=Math.min(at+1800,text.length); if(/[\uD800-\uDBFF]/.test(text[end-1])) end--; parts.push(text.slice(at,end)); at=end; }
   if(accBytes_(text)>350000) throw new Error('Fila excede limite seguro de Script Properties');
   var old=+(p.getProperty('ACC_QUEUE_PARTS') || 0);
-  parts.forEach(function(value,i) { p.setProperty('ACC_QUEUE_'+i,value); });
-  p.setProperty('ACC_QUEUE_PARTS',String(parts.length));
+  var updates={ACC_QUEUE_PARTS:String(parts.length)};
+  parts.forEach(function(value,i) { updates['ACC_QUEUE_'+i]=value; });
+  p.setProperties(updates,false);
   for(var i=parts.length;i<old;i++) p.deleteProperty('ACC_QUEUE_'+i);
 }
 function accDiscover_(mode,cursor,deadline) {
-  var query = PropertiesService.getScriptProperties().getProperty('ACC_GMAIL_QUERY') || 'subject:("was shared with you")';
+  var query = PropertiesService.getScriptProperties().getProperty('ACC_GMAIL_QUERY') || 'subject:MRK subject:("was shared with you")';
   if(mode==='daily') query+=' newer_than:2d';
   if(cursor && cursor.query) query=cursor.query;
   var queue=[], seen={}, offset=cursor ? cursor.offset : 0, threads;
@@ -218,20 +244,54 @@ function accTrigger_() {
   ScriptApp.getProjectTriggers().filter(function(t) { return t.getHandlerFunction()==='accContinuar_'; }).forEach(function(t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('accContinuar_').timeBased().after(60000).create();
 }
+function accImportMeta_(report) {
+  return {lidos:report.lidos,novos:report.novos,alterados:report.alterados,erros:report.erros.slice(-100),avisos:report.avisos.slice(-100)};
+}
+function accPublishWarnings_(auth,summary,report,budget,dry) {
+  if (!report.avisos.length && !report.erros.length) return summary;
+  var meta=accImportMeta_(report);
+  if (JSON.stringify(summary.ultimaImportacao)===JSON.stringify(meta)) return summary;
+  var next=JSON.parse(JSON.stringify(summary)); delete next.chunked; delete next.chunkCount; delete next.byteLength;
+  next.updatedAt=new Date().toISOString(); next.ultimaImportacao=meta;
+  var plans=accPlan_('accResumo/atual',next,summary);
+  if (!dry) accCommit_(auth,plans,budget);
+  return Object.assign({},next,plans.find(function(plan) { return plan.path==='accResumo/atual'; }).data);
+}
+function accPending_(p) {
+  try { return accQueueRead_(p).length>0 || +(JSON.parse(p.getProperty('ACC_DISCOVERY') || '{}').offset || 0)>0 || !!p.getProperty('ACC_PENDING_MODE'); }
+  catch (e) { return true; } // A corrupt checkpoint must remain visible/retryable.
+}
 function accRun_(mode,forceDry) {
-  var lock=LockService.getScriptLock(); if(!lock.tryLock(1000)) throw new Error('Importacao ACC em andamento');
   var started=Date.now(), p=PropertiesService.getScriptProperties(), dry=forceDry || p.getProperty('DRY_RUN')!=='false';
-  var report={dryRun:dry,lidos:0,novos:0,alterados:0,erros:[],files:[]};
+  var report={dryRun:dry,lidos:0,novos:0,alterados:0,erros:[],avisos:[],files:[]}, lease='', busy=false;
   try {
+    if(!dry) {
+      // ACC-only soft lease. Never block the unchanged email grouper.
+      var running=JSON.parse(p.getProperty('ACC_RUNNING') || 'null');
+      if(running && started-Number(running.timestamp || running)<600000) {
+        busy=true; report.busy=true;
+        if(mode!=='continue') p.setProperty('ACC_PENDING_MODE',mode);
+        console.log(JSON.stringify(report)); return report;
+      }
+      lease=JSON.stringify({timestamp:started,token:started+':'+Math.random()});
+      p.setProperty('ACC_RUNNING',lease);
+      if(p.getProperty('ACC_RUNNING')!==lease) { busy=true; report.busy=true; return report; }
+    }
     if(!dry) ScriptApp.getProjectTriggers().filter(function(t) { return t.getHandlerFunction()==='accContinuar_'; }).forEach(function(t) { ScriptApp.deleteTrigger(t); });
     var cursor=mode==='continue' ? JSON.parse(p.getProperty('ACC_DISCOVERY') || 'null') : null;
     var queue=mode==='continue' ? accQueueRead_(p) : [];
+    if(!dry && mode==='continue' && !queue.length && !(cursor && cursor.offset) && p.getProperty('ACC_PENDING_MODE')) {
+      mode=p.getProperty('ACC_PENDING_MODE'); cursor=null;
+    }
     if(!queue.length && (mode!=='continue' || cursor && cursor.offset)) {
-      if(!dry && mode!=='continue' && (accQueueRead_(p).length || +(JSON.parse(p.getProperty('ACC_DISCOVERY') || '{}').offset || 0))) throw new Error('Fila pendente: execute accContinuar_');
+      if(!dry && mode!=='continue' && (accQueueRead_(p).length || +(JSON.parse(p.getProperty('ACC_DISCOVERY') || '{}').offset || 0))) {
+        p.setProperty('ACC_PENDING_MODE',mode); report.busy=true; return report;
+      }
       var discovered=accDiscover_(mode,cursor,started+60000); queue=discovered.items;
       if(forceDry && queue.length) { var batchId=queue[0].id; queue=queue.filter(function(i) { return i.id===batchId; }); }
       if(!dry) accQueueSave_(p,queue);
       if(!dry) p.setProperty('ACC_DISCOVERY',JSON.stringify({offset:discovered.next,query:discovered.query}));
+      if(!dry) p.deleteProperty('ACC_PENDING_MODE');
     }
     var auth=dry?null:accAuth_(), summary=dry?{osVersions:{},empresas:[],totais:{}}:accRead_(auth,'accResumo/atual') || {osVersions:{},empresas:[],totais:{}}, cadastro={};
     var budget={remaining:Math.min(450,Math.max(1,+(p.getProperty('ACC_MAX_WRITES') || 100)))}, downloaded={}, latest={};
@@ -254,7 +314,7 @@ function accRun_(mode,forceDry) {
         }
         if(cached.error) throw cached.error;
         var response=cached.response;
-        if(response.getResponseCode()!==200) throw new Error('Download HTTP '+response.getResponseCode());
+        if(response.getResponseCode()!==200) throw new Error('Download HTTP '+response.getResponseCode()+': link Autodesk pode ter expirado; gere novo compartilhamento.');
         var headers=response.getHeaders(), disposition=String(headers['Content-Disposition'] || headers['content-disposition'] || '');
         var fileMatch=/filename\*=UTF-8''([^;]+)/i.exec(disposition), plainMatch=/filename="?([^";]+)/i.exec(disposition);
         var filename=fileMatch ? decodeURIComponent(fileMatch[1]) : plainMatch ? plainMatch[1] : (item.os || 'ACC')+'.xlsx';
@@ -262,7 +322,8 @@ function accRun_(mode,forceDry) {
         var parsed=accParse_(accUnzip_(response.getBlob())), normalized=accNormalize_(parsed,filename+' '+item.os+' '+(item.subject || ''),cadastro);
         var parseMs=Date.now()-parseStarted;
         report.lidos+=parsed.rows.length; report.erros=report.erros.concat(normalized.errors);
-        if(normalized.errors.length) throw new Error('Arquivo invalido; OS preservada');
+        report.avisos=report.avisos.concat((parsed.avisos || []).map(function(warning) { return Object.assign({sourceFile:filename},warning); }));
+        if(!normalized.issues.length) report.files.push({sourceFile:filename,quality:0,jsonBytes:2,parseMs:parseMs,fileMs:Date.now()-at});
         var groups={}; normalized.issues.forEach(function(r) { (groups[r.os] || (groups[r.os]=[])).push(r); });
         Object.keys(groups).forEach(function(os) {
           if(latest[os] && latest[os]>=item.date) return;
@@ -277,12 +338,13 @@ function accRun_(mode,forceDry) {
           Object.keys(next.totais).forEach(function(k) { if(JSON.parse(k)[0]===os) delete next.totais[k]; }); Object.assign(next.totais,partial.totais);
           var companies={}; Object.keys(next.totais).forEach(function(k) { var name=JSON.parse(k)[3]; if(name) companies[name]=true; }); next.empresas=Object.keys(companies).sort();
           if(previous) report.alterados++; else report.novos++;
-          next.ultimaImportacao={lidos:report.lidos,novos:report.novos,alterados:report.alterados,erros:report.erros.slice(-100)};
+          next.ultimaImportacao=accImportMeta_(report);
           var data={os:os,hash:hash,updatedAt:next.updatedAt,sourceFile:{name:filename,messageId:item.id,date:item.date},json:json};
           var summaryPlan=accPlan_('accResumo/atual',next,summary);
           if(!dry) accCommit_(auth,accPlan_('accOs/'+os,data,previous).concat(summaryPlan),budget);
           summary=Object.assign({},next,summaryPlan.find(function(plan) { return plan.path==='accResumo/atual'; }).data);
         });
+        summary=accPublishWarnings_(auth,summary,report,budget,dry);
         queue.shift();
       } catch(e) {
         item.attempts++; report.erros.push({messageId:item.id,erro:e.message});
@@ -294,9 +356,13 @@ function accRun_(mode,forceDry) {
     if(!dry) {
       accQueueSave_(p,queue);
       // Bounded, valid JSON; the full report is in execution logs.
-      p.setProperty('ACC_LAST',JSON.stringify({dryRun:false,lidos:report.lidos,novos:report.novos,alterados:report.alterados,erros:report.erros.slice(-5),ms:report.ms}));
-      if(queue.length || +(JSON.parse(p.getProperty('ACC_DISCOVERY') || '{}').offset || 0)) accTrigger_();
+      p.setProperty('ACC_LAST',JSON.stringify({dryRun:false,lidos:report.lidos,novos:report.novos,alterados:report.alterados,erros:report.erros.slice(-5),avisos:report.avisos.slice(-5),ms:report.ms}));
     }
     console.log(JSON.stringify(report)); return report;
-  } finally { lock.releaseLock(); }
+  } finally {
+    if(!dry) {
+      try { if(lease && p.getProperty('ACC_RUNNING')===lease) p.deleteProperty('ACC_RUNNING'); }
+      finally { if(busy || accPending_(p)) accTrigger_(); }
+    }
+  }
 }

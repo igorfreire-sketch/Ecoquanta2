@@ -2,6 +2,10 @@ import { nextCronogramaTimestamp, normalizeCronogramaRevision } from './cronoRev
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import {
+  documentId,
+  orderBy,
+  startAt,
+  endAt,
   collection,
   deleteDoc,
   doc,
@@ -1225,13 +1229,43 @@ export async function fetchFirebaseCollection<T = Record<string, unknown>>(
   });
 }
 
-export async function setFirebaseDocument(collectionName: string, id: string, data: object) {
+// Prefix on the document ID also finds older overlays that have no os field.
+export async function fetchFirebaseCollectionPrefix<T>(collectionName: string, prefix: string): Promise<T[]> {
+  await ensureFirebaseAuth();
+  const snapshot = await getDocs(query(collection(getDb(), collectionName), orderBy(documentId()), startAt(prefix), endAt(prefix + '\uf8ff')));
+  return snapshot.docs.map(entry => normalizeFirestoreRecord(entry) as T);
+}
+
+export async function fetchFirebaseDocument<T = Record<string, unknown>>(
+  collectionName: string,
+  id: string,
+): Promise<T | null> {
+  await ensureFirebaseAuth();
+  const snapshot = await getDoc(doc(getDb(), collectionName, id));
+  return snapshot.exists() ? normalizeFirestoreRecord(snapshot) as T : null;
+}
+
+export async function fetchFirebaseDocumentChunks(
+  collectionName: string,
+  id: string,
+  chunkCount: number,
+): Promise<string[]> {
+  await ensureFirebaseAuth();
+  const dbRef = getDb();
+  const snapshots = await Promise.all(Array.from({ length: chunkCount }, (_, index) =>
+    getDoc(doc(dbRef, collectionName, id, 'chunks', String(index).padStart(5, '0')))));
+  const values = snapshots.map((entry) => String(entry.data()?.value || entry.data()?.json || ''));
+  if (values.some((value) => !value)) throw new Error(`${collectionName}/${id}: chunk ausente.`);
+  return values;
+}
+
+export async function setFirebaseDocument(collectionName: string, id: string, data: object, stampUpdate = true) {
   await ensureFirebaseAuth();
   const dbRef = getDb();
   const payload = data as Record<string, unknown>;
   await setDoc(doc(dbRef, collectionName, id), {
     ...payload,
-    updatedAt: payload.updatedAt || serverTimestamp(),
+    ...(stampUpdate ? { updatedAt: payload.updatedAt || serverTimestamp() } : {}),
   }, { merge: true });
 }
 

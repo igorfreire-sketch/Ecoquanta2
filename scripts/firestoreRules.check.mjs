@@ -53,8 +53,10 @@ for (const name of ['appData', 'nc2Records', 'contractPriorities', 'contractInte
   assert.doesNotMatch(block, /siteUsers|ownsNc|ownsContractData/, `${name} ainda depende de perfil por uid inexistente`);
 }
 
-console.log('firestoreRules: OK');
 
+for (const name of ['accOs', 'accResumo', 'accEdicoes', 'accTerceirizadas', 'qualidadeManual']) {
+  assert.equal((rules.match(new RegExp(`match /${name}/`, 'g')) || []).length, 1, `${name}: duplicate root rule`);
+}
 for (const name of ['accOs', 'accResumo']) {
   const block = rules.match(new RegExp(`match /${name}/\\{document\\} \\{([\\s\\S]*?)\\n    \\}`))?.[1] || '';
   assert.equal((block.match(/allow read: if isSignedIn\(\);/g) || []).length, 2, `${name}: root and chunks require auth`);

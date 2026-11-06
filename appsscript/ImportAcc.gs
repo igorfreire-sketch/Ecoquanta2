@@ -119,11 +119,12 @@ function accChunk_(text) {
   return chunks;
 }
 function accHash_(text, digest) { return digest(text); }
+function accMonth_(iso) { var d = new Date(iso); return isNaN(d) ? '' : new Date(+d - 10800000).toISOString().slice(0,7); } // America/Sao_Paulo is fixed UTC-3 (no DST since 2019)
 function accSummary_(issues) {
   var totals = {}, companies = {};
   issues.forEach(function(r) {
     if (r.empresa) companies[r.empresa] = true;
-    var dims = [r.os,r.setor,r.tipo,r.empresa,r.status,r.criadoEm.slice(0,7)], key = JSON.stringify(dims);
+    var dims = [r.os,r.setor,r.tipo,r.empresa,r.status,accMonth_(r.criadoEm)], key = JSON.stringify(dims);
     totals[key] = (totals[key] || 0) + 1;
   }); return { empresas: Object.keys(companies).sort(), totais: totals };
 }
@@ -134,7 +135,7 @@ function accCargaHistorica() { return accRun_('history',false); }
 function accContinuar_() { return accRun_('continue',false); }
 function accStatus() {
   var p = PropertiesService.getScriptProperties();
-  var state = { dryRun: p.getProperty('DRY_RUN') !== 'false', queue: accQueueRead_(p).length,
+  var state = { dryRun: p.getProperty('ACC_DRY_RUN') !== 'false', queue: accQueueRead_(p).length,
     running: JSON.parse(p.getProperty('ACC_RUNNING') || 'null'),
     discovery: JSON.parse(p.getProperty('ACC_DISCOVERY') || 'null'),
     last: JSON.parse(p.getProperty('ACC_LAST') || 'null') }; console.log(JSON.stringify(state)); return state;
@@ -262,7 +263,7 @@ function accPending_(p) {
   catch (e) { return true; } // A corrupt checkpoint must remain visible/retryable.
 }
 function accRun_(mode,forceDry) {
-  var started=Date.now(), p=PropertiesService.getScriptProperties(), dry=forceDry || p.getProperty('DRY_RUN')!=='false';
+  var started=Date.now(), p=PropertiesService.getScriptProperties(), dry=forceDry || p.getProperty('ACC_DRY_RUN')!=='false';
   var report={dryRun:dry,lidos:0,novos:0,alterados:0,erros:[],avisos:[],files:[]}, lease='', busy=false;
   try {
     if(!dry) {

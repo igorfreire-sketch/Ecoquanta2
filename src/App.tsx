@@ -53,7 +53,7 @@ import {
   type AnnotationSheet,
 } from './components/CoordenacaoEngenharia/Anotacoes';
 import type { CronogramaDoc } from './components/SolucoesDigitais';
-import { isNc2Leader, type Nc2Record } from './components/NaoConformidade2/ncStore';
+import { isNc2Leader } from './components/NaoConformidade2/ncStore';
 // ponytail: string literal em vez de importar CRONOGRAMAS_COLLECTION (runtime, nao so tipo) de
 // SolucoesDigitais.tsx — esse import puxaria o modulo inteiro (Atividades.tsx, CampoDialog etc.)
 // pro bundle principal em vez de ficar so no chunk lazy de <Cronogramas/>. O `import type` acima
@@ -166,7 +166,7 @@ const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEnge
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
 const ImportarEAP = React.lazy(() => import('./components/Planejamento/ImportarEAP'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
-// Kanban vive na Principal; o clique no card atravessa pra aba de Conformidade (Preenchimento).
+// Resumo de Qualidade na Principal abre a OS selecionada em Revisoes.
 const Nc2Kanban = React.lazy(() => import('./components/NaoConformidade2/Kanban'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
 const Cronogramas = React.lazy(() => import('./components/Cronogramas'));
@@ -259,7 +259,7 @@ type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | '
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro' | 'firebase';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
-  { key: 'nc2', label: 'Conformidade' },
+  { key: 'nc2', label: 'Qualidade' },
   { key: 'compatibilizacao', label: 'Compatibilização' },
   { key: 'controle', label: 'Coordenação de Engenharia' },
   { key: 'planejamento', label: 'Planejamento' },
@@ -1706,8 +1706,8 @@ export default function App() {
   const [planejamentoSubTab, setPlanejamentoSubTab] = useNavigationState<PlanejamentoSubTab>('atividades');
   const [nc2SubTab, setNc2SubTab] = useNavigationState<Nc2SubTab>('dashboard');
   const [compatibilizacaoSubTab, setCompatibilizacaoSubTab] = useNavigationState<CompatibilizacaoSubTab>('analise-os');
-  // Registro clicado no Kanban da Principal: fica aqui ate a Conformidade montar e consumir.
-  const [pendingNc2EditRecord, setPendingNc2EditRecord] = React.useState<Nc2Record | null>(null);
+  // OS selecionada na Principal abre Revisoes sem perder a navegacao.
+  const [pendingQualityOs, setPendingQualityOs] = React.useState('');
   const [contratoSubTab, setContratoSubTab] = useNavigationState<ContratoSubTab>('atividades');
   const [adminSubTab, setAdminSubTab] = useNavigationState<AdminSubTab>('usuarios');
   const [cronogramaSubTab, setCronogramaSubTab] = useNavigationState<'cronograma' | 'disciplinas'>('cronograma');
@@ -3897,7 +3897,7 @@ export default function App() {
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: nc2SubTab === 'dashboard', onClick: () => setNc2SubTab('dashboard') },
         { key: 'preenchimento', label: 'Preenchimento', icon: <Clipboard size={16} />, active: nc2SubTab === 'preenchimento', onClick: () => setNc2SubTab('preenchimento') },
         { key: 'revisoes', label: 'Revisoes', icon: <CheckSquare size={16} />, active: nc2SubTab === 'revisoes', onClick: () => setNc2SubTab('revisoes') },
-        { key: 'terceirizadas', label: 'Terceirizadas', icon: <Users size={16} />, active: nc2SubTab === 'terceirizadas', onClick: () => setNc2SubTab('terceirizadas') },
+        { key: 'terceirizadas', label: 'Terceirizados', icon: <Users size={16} />, active: nc2SubTab === 'terceirizadas', onClick: () => setNc2SubTab('terceirizadas') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: nc2SubTab === 'disciplinas', onClick: () => setNc2SubTab('disciplinas') },
         ...projectSubTab(nc2SubTab, () => setNc2SubTab('project')),
       ];
@@ -4086,7 +4086,7 @@ export default function App() {
               )}
               {currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
                 <>
-                  <NavItem icon={<AlertTriangle size={20} />} label="Conformidade" active={activeTab === 'nc2'} onClick={() => setActiveTab('nc2')} />
+                  <NavItem icon={<AlertTriangle size={20} />} label="Qualidade" active={activeTab === 'nc2'} onClick={() => setActiveTab('nc2')} />
                   {activeTab === 'nc2' && subNav}
                 </>
               )}
@@ -4254,9 +4254,9 @@ export default function App() {
                     onAbrirNota={abrirNotaNotificada}
                     currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin, disciplina: currentUser.disciplina, disciplinas: currentUser.disciplinas }}
                     onSalvarNota={saveAnnotationSheet}
-                    onEdit={(record) => {
-                      setPendingNc2EditRecord(record);
-                      setNc2SubTab('preenchimento');
+                    onOpenOs={(os) => {
+                      setPendingQualityOs(os);
+                      setNc2SubTab('revisoes');
                       setActiveTab('nc2');
                     }}
                   />
@@ -4330,8 +4330,8 @@ export default function App() {
                 <NaoConformidades
                   activeTab={nc2SubTab}
                   onTabChange={setNc2SubTab}
-                  pendingEditRecord={pendingNc2EditRecord}
-                  onPendingEditConsumed={() => setPendingNc2EditRecord(null)}
+                  pendingOs={pendingQualityOs}
+                  onPendingEditConsumed={() => setPendingQualityOs('')}
                   currentUser={currentUser}
                   activeContractCode={lockedContractCode || filtrosAtivos.contrato}
                   preloadedData={effectiveGlobalData}

@@ -33,10 +33,6 @@ for (const [index, path] of paths.entries()) {
   assert.equal(parsed.avisos.length, 0, 'verified categories must not generate warnings');
   if (index === 0) {
     assert(normalized.issues.some(r => r.empresa === 'BLR Engenharia'));
-    // This assignment belongs to non-Quality rows, deliberately filtered early.
-    const text = Array.from(files['xl/sharedStrings.xml'].matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g), m => core.accTexts_(m[1])).find(s => s.startsWith('Yan Botelho\nMOB'));
-    assert(text); const yan = core.accSplit_(text);
-    assert.equal(yan.pessoa, 'Yan Botelho'); assert.match(yan.cargo, /^MOB/);
   } else {
     const raw = parsed.rows.find(r => r.linha === 29);
     const r = normalized.issues.find(r => r.id === raw.id);
@@ -63,6 +59,8 @@ for (const pair of core.ACC_STATUS) {
     assert.equal(core.accNormalize_({ rows: [row] }, '', {}).issues[0].status, pair[1]);
   }
 }
+const assignment = core.accSplit_('Synthetic Person\nSynthetic Company');
+assert.equal(assignment.pessoa, 'Synthetic Person'); assert.equal(assignment.cargo, 'Synthetic Company');
 const inline = { 'xl/worksheets/sheet1.xml': '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Title &amp; test</t></is></c></row></sheetData>' };
 assert.equal(core.accCells_(inline['xl/worksheets/sheet1.xml'], {})['A'], 'Title & test');
 assert.equal(core.accTexts_('<t>A</t><r><t>B</t></r>'), 'AB');
@@ -81,7 +79,7 @@ assert(!/accEdicoes/i.test(source), 'importer must not read or write user overla
 
 // Service-boundary tests: no network, mailbox, credentials, or production access.
 function harness({ dry = false, fail = false, previous = null, queue = null } = {}) {
-  const values = new Map(dry ? [] : [['DRY_RUN', 'false']]);
+  const values = new Map(dry ? [] : [['ACC_DRY_RUN', 'false']]);
   const calls = { propertyWrites: 0, propertyBatches: 0, triggers: 0, commits: 0, downloads: 0, auth: 0, plans: [] };
   const props = { getProperty: k => values.get(k) ?? null,
     setProperty(k, v) { calls.propertyWrites++; values.set(k, v); return props; },
@@ -107,6 +105,12 @@ function harness({ dry = false, fail = false, previous = null, queue = null } = 
   };
   if (queue) c.accQueueSave_(props, queue);
   return { c, props, calls, item };
+}
+for (const value of [null, '', 'true', 'False', '0', false, 'false']) {
+  const h = harness({ dry: true });
+  if (value !== null) h.props.setProperty('ACC_DRY_RUN', value);
+  h.props.setProperty('DRY' + '_RUN', 'false'); // An unrelated legacy property must not enable ACC writes.
+  assert.equal(h.c.accStatus().dryRun, value !== 'false');
 }
 {
   const h = harness({ dry: true });

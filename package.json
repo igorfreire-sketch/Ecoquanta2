@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "check:quality": "tsx scripts/accImportSummary.check.ts && node scripts/importAcc.check.mjs && tsx src/lib/accData.check.ts && tsx src/components/NaoConformidade2/Conformidade.metrics.check.ts && node scripts/firestoreRules.check.mjs",
+    "check:quality-ui": "node scripts/qualityUi.check.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -31,6 +33,7 @@
   "devDependencies": {
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
+    "playwright": "1.65.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

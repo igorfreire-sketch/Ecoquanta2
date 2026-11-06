@@ -163,7 +163,7 @@ const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEnge
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
 const ImportarEAP = React.lazy(() => import('./components/Planejamento/ImportarEAP'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
-// Kanban vive na Principal; o clique no card atravessa pra aba de Conformidade (Preenchimento).
+// Resumo de Qualidade na Principal abre a OS selecionada em Revisoes.
 const Nc2Kanban = React.lazy(() => import('./components/NaoConformidade2/Kanban'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
 const Cronogramas = React.lazy(() => import('./components/Cronogramas'));
@@ -1692,7 +1692,7 @@ export default function App() {
   const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('atividades');
   const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
   const [compatibilizacaoSubTab, setCompatibilizacaoSubTab] = React.useState<CompatibilizacaoSubTab>('analise-os');
-  // Registro clicado no Kanban da Principal: fica aqui ate a Conformidade montar e consumir.
+  // OS clicada na Principal: fica aqui ate Qualidade montar e consumir.
   const [pendingQualityOs, setPendingQualityOs] = React.useState('');
   const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('atividades');
   const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
@@ -3883,7 +3883,7 @@ export default function App() {
 
       return [
         { key: 'usuarios', label: 'Usuários', icon: <Users size={16} />, active: adminSubTab === 'usuarios', onClick: () => setAdminSubTab('usuarios') },
-        { key: 'terceirizadas', label: 'Terceirizados', icon: <ShieldCheck size={16} />, active: adminSubTab === 'terceirizadas', onClick: () => setAdminSubTab('terceirizadas') },
+        { key: 'terceirizadas', label: 'Terceirizadas', icon: <ShieldCheck size={16} />, active: adminSubTab === 'terceirizadas', onClick: () => setAdminSubTab('terceirizadas') },
         { key: 'pre-cadastro', label: 'Pré-cadastro', icon: <UserCheck size={16} />, active: adminSubTab === 'pre-cadastro', onClick: () => setAdminSubTab('pre-cadastro') },
         { key: 'gerenciamento', label: 'Gerenciamento', icon: <Settings size={16} />, active: adminSubTab === 'gerenciamento', onClick: () => setAdminSubTab('gerenciamento') },
         { key: 'firebase', label: 'Firebase', icon: <Database size={16} />, active: adminSubTab === 'firebase', onClick: () => setAdminSubTab('firebase') },

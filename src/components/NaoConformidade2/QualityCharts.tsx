@@ -1,17 +1,20 @@
-import React from 'react';
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
+import React from "react";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 type DashboardMetricSlice = { name: string; value: number };
 const DISTRIBUTION_COLORS = [
-  '#F05D28',
-  '#334155',
-  '#64748B',
-  '#0F766E',
-  '#D97706',
-  '#0284C7',
-  '#94A3B8',
+  "#F05D28",
+  "#334155",
+  "#64748B",
+  "#0F766E",
+  "#D97706",
+  "#0284C7",
+  "#94A3B8",
 ];
 
-function compactDistribution(data: DashboardMetricSlice[], remainderLabel: string) {
+function compactDistribution(
+  data: DashboardMetricSlice[],
+  remainderLabel: string,
+) {
   if (data.length <= 7) return data;
   return [
     ...data.slice(0, 6),
@@ -55,12 +58,17 @@ export function DistributionDonut({
           <div
             className="relative h-[260px] min-w-0"
             role="img"
-            aria-label={`${title}: ${total.toLocaleString('pt-BR')} não conformidades`}
+            aria-label={`${title}: ${total.toLocaleString("pt-BR")} issues`}
           >
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer
+              width="100%"
+              height={260}
+              initialDimension={{ width: 260, height: 260 }}
+            >
               <PieChart>
                 <Pie
                   data={chartData}
+                  isAnimationActive={false}
                   cx="50%"
                   cy="50%"
                   innerRadius={66}
@@ -75,29 +83,31 @@ export function DistributionDonut({
                   {chartData.map((item, index) => (
                     <Cell
                       key={item.name}
-                      fill={DISTRIBUTION_COLORS[index % DISTRIBUTION_COLORS.length]}
+                      fill={
+                        DISTRIBUTION_COLORS[index % DISTRIBUTION_COLORS.length]
+                      }
                     />
                   ))}
                 </Pie>
                 <Tooltip
                   formatter={(value) => [
-                    Number(value).toLocaleString('pt-BR'),
-                    'Não conformidades',
+                    Number(value).toLocaleString("pt-BR"),
+                    "Issues",
                   ]}
                   contentStyle={{
-                    borderRadius: '12px',
-                    border: '1px solid #E5E7EB',
-                    boxShadow: '0 14px 30px -20px rgba(15,23,42,0.5)',
+                    borderRadius: "12px",
+                    border: "1px solid #E5E7EB",
+                    boxShadow: "0 14px 30px -20px rgba(15,23,42,0.5)",
                   }}
                 />
               </PieChart>
             </ResponsiveContainer>
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
               <strong className="text-[28px] font-black leading-none text-[#1E293B]">
-                {total.toLocaleString('pt-BR')}
+                {total.toLocaleString("pt-BR")}
               </strong>
               <span className="mt-2 text-[9px] font-extrabold uppercase tracking-[1px] text-[#94A3B8]">
-                Não conformidades
+                Issues
               </span>
             </div>
           </div>
@@ -110,13 +120,19 @@ export function DistributionDonut({
               >
                 <span
                   className="h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: DISTRIBUTION_COLORS[index % DISTRIBUTION_COLORS.length] }}
+                  style={{
+                    backgroundColor:
+                      DISTRIBUTION_COLORS[index % DISTRIBUTION_COLORS.length],
+                  }}
                 />
-                <span className="truncate text-[11px] font-bold text-[#475569]" title={item.name}>
+                <span
+                  className="truncate text-[11px] font-bold text-[#475569]"
+                  title={item.name}
+                >
                   {item.name}
                 </span>
                 <span className="text-[12px] font-black text-[#1E293B]">
-                  {item.value.toLocaleString('pt-BR')}
+                  {item.value.toLocaleString("pt-BR")}
                 </span>
               </div>
             ))}

@@ -1,49 +1,247 @@
-﻿import React, { useEffect, useState } from 'react';
-import { issueKey, type AccEdit, type AccIssue } from '../../lib/accData';
-import { effectiveAcc, readQualityOs, saveQualityEdit, saveQualityManual, type QualityData } from '../../lib/qualityStore';
-import { IssueFields, QUALITY_FIELDS, qualityButtonClass, qualityInputClass, validateIssue } from './Preenchimento';
+﻿import React, { useEffect, useState } from "react";
+import { issueKey, type AccEdit, type AccIssue } from "../../lib/accData";
+import {
+  effectiveAcc,
+  readQualityOs,
+  saveQualityEdit,
+  saveQualityManual,
+  type QualityData,
+} from "../../lib/qualityStore";
+import {
+  IssueFields,
+  QUALITY_FIELDS,
+  qualityButtonClass,
+  qualityInputClass,
+  validateIssue,
+} from "./Preenchimento";
 
-export default function Revisoes({ data, os, osValues, onOsChange, user, options, onSaved, contract }: {
-  data: QualityData; os: string; osValues: string[]; onOsChange: (os: string) => void; user: string;
-  options: Partial<Record<keyof AccIssue, string[]>>; onSaved: () => void; contract?: string;
+export default function Revisoes({
+  data,
+  os,
+  osValues,
+  onOsChange,
+  user,
+  options,
+  onSaved,
+  contract,
+}: {
+  data: QualityData;
+  os: string;
+  osValues: string[];
+  onOsChange: (os: string) => void;
+  user: string;
+  options: Partial<Record<keyof AccIssue, string[]>>;
+  onSaved: () => void;
+  contract?: string;
 }) {
   const [imported, setImported] = useState<AccIssue[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [editing, setEditing] = useState<{ original: AccIssue; draft: AccIssue; edit?: AccEdit }>();
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState<{
+    original: AccIssue;
+    draft: AccIssue;
+    edit?: AccEdit;
+  }>();
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    let active = true; setImported([]); setEditing(undefined); setError('');
-    if (!os || !data.resumo.osVersions[os]) { setLoading(false); return; }
+    let active = true;
+    setImported([]);
+    setEditing(undefined);
+    setError("");
+    if (!os || !data.resumo.osVersions[os]) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    readQualityOs(os, data.resumo).then(rows => { if (active) setImported(rows); }).catch(error => { if (active) setError(String(error.message || error)); }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    readQualityOs(os, data.resumo)
+      .then((rows) => {
+        if (active) setImported(rows);
+      })
+      .catch((error) => {
+        if (active) setError(String(error.message || error));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [os, data]);
-  const rows = [...imported.map(issue => ({ ...issue, origem: 'acc' as const })), ...data.manual.filter(issue => issue.os === os)]
-    .filter(issue => !contract || !issue.contratoCodigo || issue.contratoCodigo === contract);
+  const rows = [
+    ...imported.map((issue) => ({ ...issue, origem: "acc" as const })),
+    ...data.manual.filter((issue) => issue.os === os),
+  ].filter(
+    (issue) =>
+      !contract || !issue.contratoCodigo || issue.contratoCodigo === contract,
+  );
   const beginEdit = (original: AccIssue) => {
-    const edit = original.origem === 'acc' ? data.edits.find(edit => edit.id === issueKey(original)) : undefined;
-    setEditing({ original, edit, draft: original.origem === 'acc' ? effectiveAcc(original, data.edits) : { ...original } }); setError('');
+    const edit =
+      original.origem === "acc"
+        ? data.edits.find((edit) => edit.id === issueKey(original))
+        : undefined;
+    setEditing({
+      original,
+      edit,
+      draft:
+        original.origem === "acc"
+          ? effectiveAcc(original, data.edits)
+          : { ...original },
+    });
+    setError("");
   };
-  return <section className="space-y-5 rounded-2xl bg-white p-6 shadow-sm">
-    <div><h2 className="text-xl font-bold">Revisoes · Issues ACC e manuais</h2><p className="mt-1 text-sm text-slate-500">Selecione uma OS para consultar seus itens. Edicoes do ACC preservam o valor importado.</p></div>
-    <label className="block max-w-sm space-y-1 text-sm font-bold">OS para revisar<select aria-label="OS para revisar" className={qualityInputClass} value={os} onChange={event => onOsChange(event.target.value)}><option value="">Selecione uma OS</option>{osValues.map(value => <option key={value}>{value}</option>)}</select></label>
-    {loading && <p role="status">Carregando OS {os}...</p>}
-    {error && <p role="alert" className="text-red-700">{error}</p>}
-    {os && !loading && !rows.length && <p>Nenhum item ACC ou manual nesta OS.</p>}
-    {!loading && <div className="divide-y divide-slate-200">{rows.map(original => {
-      const issue = original.origem === 'acc' ? effectiveAcc(original, data.edits) : original;
-      const edit = original.origem === 'acc' ? data.edits.find(edit => edit.id === issueKey(original)) : undefined;
-      return <article key={`${original.origem}-${issueKey(original)}`} className="py-4">
-        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold text-slate-500">{original.origem === 'acc' ? 'ACC' : 'Manual'} · {issueKey(issue)} · {issue.status}</p><h3 className="mt-1 font-bold">{issue.titulo}</h3><p className="mt-1 text-sm text-slate-600">{issue.setor} · {issue.tipo} · {issue.empresa || 'Interno'}</p></div><button className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold" onClick={() => beginEdit(original)}>Editar</button></div>
-        {edit && <p className="mt-2 text-xs text-amber-800">Editado por {edit.editadoPor} em {edit.editadoEm}</p>}
-        <details className="mt-2 text-sm"><summary className="cursor-pointer text-slate-600">Ver todos os campos</summary><dl className="mt-2 grid gap-2 md:grid-cols-2">{QUALITY_FIELDS.map(({ key, label }) => <div key={key}><dt className="font-semibold">{label}</dt><dd className="whitespace-pre-wrap break-words">{Array.isArray(issue[key]) ? (issue[key] as string[]).join(', ') : String(issue[key] ?? '')}{edit && Object.hasOwn(edit, key) && <small className="block text-amber-800">Editado · ACC: {String(original[key] || '(vazio)')}</small>}</dd></div>)}</dl></details>
-      </article>;
-    })}</div>}
-    {editing && <form className="rounded-xl border border-orange-200 bg-orange-50/30 p-5" onSubmit={async event => {
-      event.preventDefault(); setBusy(true); setError('');
-      try { validateIssue(editing.draft); if (editing.original.origem === 'acc') await saveQualityEdit(editing.original, editing.draft, user, editing.edit); else await saveQualityManual(editing.draft); setEditing(undefined); onSaved(); }
-      catch (error) { setError(error instanceof Error ? error.message : 'Falha ao salvar.'); } finally { setBusy(false); }
-    }}><h3 className="mb-4 font-bold">Editar {issueKey(editing.original)}</h3><IssueFields issue={editing.draft} original={editing.original} edit={editing.edit} options={options} onChange={draft => setEditing({ ...editing, draft })} /><div className="mt-5 flex gap-3"><button disabled={busy} className={qualityButtonClass}>{busy ? 'Salvando...' : 'Salvar edicao'}</button><button type="button" disabled={busy} className="rounded-xl border px-4 py-2" onClick={() => setEditing(undefined)}>Cancelar</button></div></form>}
-  </section>;
+  return (
+    <section className="space-y-5 rounded-2xl bg-white p-6 shadow-sm">
+      <div>
+        <h2 className="text-xl font-bold">Revisoes · Issues ACC e manuais</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Selecione uma OS para consultar seus itens. Edicoes do ACC preservam o
+          valor importado.
+        </p>
+      </div>
+      <label className="block max-w-sm space-y-1 text-sm font-bold">
+        OS para revisar
+        <select
+          aria-label="OS para revisar"
+          className={qualityInputClass}
+          value={os}
+          onChange={(event) => onOsChange(event.target.value)}
+        >
+          <option value="">Selecione uma OS</option>
+          {osValues.map((value) => (
+            <option key={value}>{value}</option>
+          ))}
+        </select>
+      </label>
+      {loading && <p role="status">Carregando OS {os}...</p>}
+      {error && (
+        <p role="alert" className="text-red-700">
+          {error}
+        </p>
+      )}
+      {os && !loading && !rows.length && (
+        <p>Nenhum item ACC ou manual nesta OS.</p>
+      )}
+      {!loading && (
+        <div className="divide-y divide-slate-200">
+          {rows.map((original) => {
+            const issue =
+              original.origem === "acc"
+                ? effectiveAcc(original, data.edits)
+                : original;
+            const edit =
+              original.origem === "acc"
+                ? data.edits.find((edit) => edit.id === issueKey(original))
+                : undefined;
+            return (
+              <article
+                key={`${original.origem}-${issueKey(original)}`}
+                className="py-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-slate-500">
+                      {original.origem === "acc" ? "ACC" : "Manual"} ·{" "}
+                      {issueKey(issue)} · {issue.status}
+                    </p>
+                    <h3 className="mt-1 font-bold">{issue.titulo}</h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                      {issue.setor} · {issue.tipo} ·{" "}
+                      {issue.empresa || "Interno"}
+                    </p>
+                  </div>
+                  <button
+                    className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold"
+                    onClick={() => beginEdit(original)}
+                  >
+                    Editar
+                  </button>
+                </div>
+                {edit && (
+                  <p className="mt-2 text-xs text-amber-800">
+                    Editado por {edit.editadoPor} em {edit.editadoEm}
+                  </p>
+                )}
+                <details className="mt-2 text-sm">
+                  <summary className="cursor-pointer text-slate-600">
+                    Ver todos os campos
+                  </summary>
+                  <dl className="mt-2 grid gap-2 md:grid-cols-2">
+                    {QUALITY_FIELDS.map(({ key, label }) => (
+                      <div key={key}>
+                        <dt className="font-semibold">{label}</dt>
+                        <dd className="whitespace-pre-wrap break-words">
+                          {Array.isArray(issue[key])
+                            ? (issue[key] as string[]).join(", ")
+                            : String(issue[key] ?? "")}
+                          {edit && Object.hasOwn(edit, key) && (
+                            <small className="block text-amber-800">
+                              Editado · ACC:{" "}
+                              {String(original[key] || "(vazio)")}
+                            </small>
+                          )}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </details>
+              </article>
+            );
+          })}
+        </div>
+      )}
+      {editing && (
+        <form
+          className="rounded-xl border border-orange-200 bg-orange-50/30 p-5"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true);
+            setError("");
+            try {
+              validateIssue(editing.draft);
+              if (editing.original.origem === "acc")
+                await saveQualityEdit(
+                  editing.original,
+                  editing.draft,
+                  user,
+                  editing.edit,
+                );
+              else await saveQualityManual(editing.draft);
+              setEditing(undefined);
+              onSaved();
+            } catch (error) {
+              setError(
+                error instanceof Error ? error.message : "Falha ao salvar.",
+              );
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <h3 className="mb-4 font-bold">
+            Editar {issueKey(editing.original)}
+          </h3>
+          <IssueFields
+            issue={editing.draft}
+            original={editing.original}
+            edit={editing.edit}
+            options={options}
+            onChange={(draft) => setEditing({ ...editing, draft })}
+          />
+          <div className="mt-5 flex gap-3">
+            <button disabled={busy} className={qualityButtonClass}>
+              {busy ? "Salvando..." : "Salvar edicao"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              className="rounded-xl border px-4 py-2"
+              onClick={() => setEditing(undefined)}
+            >
+              Cancelar
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
 }

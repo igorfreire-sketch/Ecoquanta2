@@ -20,4 +20,4 @@
 - Nenhum documento de `nc2Records` será apagado ou reescrito.
 - Campos legados (`observacoesHistorico`, `correcaoOrigem`, `correcaoSetor`, `statusCorrecao`, C/T e Kanban) ficam intactos nos documentos antigos.
 - Registros antigos continuam visíveis e contabilizados no Dashboard por uma conversão somente leitura para o modelo de Qualidade.
-- Novas entradas são gravadas exclusivamente em `qualidadeManual`; issues importadas são somente leitura em `accOs`.
+- Novas entradas são gravadas exclusivamente em `qualidadeManual`; issues importadas permanecem intactas em `accOs`; Revisoes salva campos alterados em `accEdicoes`, conforme a secao Screen do contrato.

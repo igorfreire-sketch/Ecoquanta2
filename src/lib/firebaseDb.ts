@@ -1205,13 +1205,13 @@ export async function fetchFirebaseDocumentChunks(
   return values;
 }
 
-export async function setFirebaseDocument(collectionName: string, id: string, data: object) {
+export async function setFirebaseDocument(collectionName: string, id: string, data: object, stampUpdate = true) {
   await ensureFirebaseAuth();
   const dbRef = getDb();
   const payload = data as Record<string, unknown>;
   await setDoc(doc(dbRef, collectionName, id), {
     ...payload,
-    updatedAt: payload.updatedAt || serverTimestamp(),
+    ...(stampUpdate ? { updatedAt: payload.updatedAt || serverTimestamp() } : {}),
   }, { merge: true });
 }
 

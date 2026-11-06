@@ -52,4 +52,17 @@ for (const name of ['appData', 'nc2Records', 'contractPriorities', 'contractInte
   assert.doesNotMatch(block, /siteUsers|ownsNc|ownsContractData/, `${name} ainda depende de perfil por uid inexistente`);
 }
 
+
+for (const name of ['accOs', 'accResumo']) {
+  const block = rules.match(new RegExp(`match /${name}/\\{document\\} \\{([\\s\\S]*?)\\n    \\}`))?.[1] || '';
+  assert.match(block, /allow read: if isSignedIn\(\);/);
+  assert.match(block, /allow write: if false;/);
+  assert.match(block, /match \/chunks\/\{chunk\}/);
+  assert.equal((block.match(/allow write: if false;/g) || []).length, 2, `${name}: root and chunks stay read-only`);
+}
+for (const name of ['accEdicoes', 'accTerceirizadas', 'qualidadeManual']) {
+  const block = rules.match(new RegExp(`match /${name}/\\{document\\} \\{([\\s\\S]*?)\\n    \\}`))?.[1] || '';
+  assert.match(block, /allow read, create, update: if isSignedIn\(\);/);
+  assert.match(block, /allow delete: if false;/);
+}
 console.log('firestoreRules: OK');

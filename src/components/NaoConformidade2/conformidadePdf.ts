@@ -29,6 +29,7 @@ export interface ConformidadePdfData {
   generatedAt: Date;
   contractLabel: string;
   osLabel: string;
+  filterLabel?: string;
   recordCount: number;
   internalAnalyzed: number;
   outsourcedAnalyzed: number;
@@ -212,19 +213,19 @@ function drawCover(doc: jsPDF, data: ConformidadePdfData, logoDataUrl?: string) 
   setColor(doc, 'text', COLORS.muted);
   doc.text('Visão consolidada para acompanhamento da diretoria', MARGIN, 63);
 
-  const filterText = `Contrato: ${cleanLabel(data.contractLabel, 'Todos os contratos')}   |   OS: ${cleanLabel(data.osLabel, 'Todas as OS')}`;
+  const filterText = data.filterLabel || `Contrato: ${cleanLabel(data.contractLabel, 'Todos os contratos')}   |   OS: ${cleanLabel(data.osLabel, 'Todas as OS')}`;
   setColor(doc, 'fill', COLORS.white);
   doc.roundedRect(MARGIN, 72, CONTENT_W, 17, 3, 3, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   setColor(doc, 'text', COLORS.slate);
-  doc.text((doc.splitTextToSize(filterText, CONTENT_W - 12) as string[]).slice(0, 1), MARGIN + 6, 82.5);
+  doc.text((doc.splitTextToSize(filterText, CONTENT_W - 12) as string[]).slice(0, 3), MARGIN + 6, 79);
 
   const gap = 5;
   const cardWidth = (CONTENT_W - gap * 3) / 4;
   drawMetricCard(doc, 'Total de issues', data.totalAnalyzed, MARGIN, 98, cardWidth, COLORS.slate);
   drawMetricCard(doc, 'Concluidas / fechadas', data.perfectFiles, MARGIN + cardWidth + gap, 98, cardWidth, COLORS.green, COLORS.greenSoft);
-  drawMetricCard(doc, 'Não conformidades', data.totalNonConformities, MARGIN + (cardWidth + gap) * 2, 98, cardWidth, COLORS.orange, COLORS.orangeSoft);
+  drawMetricCard(doc, 'Issues abertas', data.totalNonConformities, MARGIN + (cardWidth + gap) * 2, 98, cardWidth, COLORS.orange, COLORS.orangeSoft);
   drawMetricCard(doc, 'Registros', data.recordCount, MARGIN + (cardWidth + gap) * 3, 98, cardWidth, COLORS.slateDark);
 
   setColor(doc, 'fill', COLORS.white);
@@ -245,12 +246,12 @@ function drawCover(doc: jsPDF, data: ConformidadePdfData, logoDataUrl?: string) 
   doc.text(formatNumber(data.totalAnalyzed), MARGIN + 30, 164, { align: 'center' });
   doc.setFontSize(7);
   setColor(doc, 'text', COLORS.muted);
-  doc.text('ANALISADOS', MARGIN + 30, 170, { align: 'center' });
+  doc.text('ISSUES', MARGIN + 30, 170, { align: 'center' });
 
   const legendX = MARGIN + 62;
   [
-    { label: 'Internos analisados', value: data.internalAnalyzed, color: COLORS.slate },
-    { label: 'Terceirizados analisados', value: data.outsourcedAnalyzed, color: COLORS.orange },
+    { label: 'Issues internas', value: data.internalAnalyzed, color: COLORS.slate },
+    { label: 'Issues terceirizadas', value: data.outsourcedAnalyzed, color: COLORS.orange },
   ].forEach((item, index) => {
     const y = 152 + index * 17;
     setColor(doc, 'fill', item.color);
@@ -286,7 +287,7 @@ function addRankingPages(
     drawPageBase(doc, logoDataUrl);
     drawSectionHeading(
       doc,
-      'ANÁLISE DE NÃO CONFORMIDADES',
+      'ANALISE DE QUALIDADE',
       pageIndex ? `${title} - continuação` : title,
       subtitle,
     );
@@ -297,7 +298,7 @@ function addRankingPages(
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(12);
       setColor(doc, 'text', COLORS.slate);
-      doc.text('Nenhuma não conformidade encontrada neste recorte.', PAGE_W / 2, 108, {
+      doc.text('Nenhuma issue encontrada neste recorte.', PAGE_W / 2, 108, {
         align: 'center',
       });
       doc.setFont('helvetica', 'normal');
@@ -387,22 +388,22 @@ export function buildConformidadePdf(
   drawCover(doc, data, options.logoDataUrl);
   addRankingPages(
     doc,
-    'Não conformidades por disciplina',
+    'Issues por setor',
     'Issues por setor no recorte de filtros.',
     data.ncByDiscipline,
     options.logoDataUrl,
   );
   addRankingPages(
     doc,
-    'Não conformidades por tipo',
-    'Quantidade T agrupada em Carimbo, Desenho, Relatório, Arquivo e Outros.',
+    'Issues por tipo',
+    'Issues por tipo no recorte de filtros.',
     data.ncByType,
     options.logoDataUrl,
   );
   addRankingPages(
     doc,
-    'Não conformidades por terceirizada',
-    'Somente registros terceirizados. Cadastros legados sem nome aparecem como Não informada.',
+    'Issues por empresa',
+    'Empresas de todos os itens no recorte de filtros.',
     data.ncByCompany,
     options.logoDataUrl,
   );

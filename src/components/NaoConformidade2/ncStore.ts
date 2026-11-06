@@ -88,6 +88,12 @@ function normalizeDiscipline(value: unknown) {
   return resolveDisciplineEntry(String(value || '')).normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 }
 
+// Setores da nota que tambem sao setores do usuario, com nomes normalizados (ELET - Eletrica = Eletrica).
+export function matchingUserSectors(user: AuthUserLike, sectors: string[]) {
+  const mine = new Set(getUserDisciplineList(user).map(normalizeDiscipline).filter(Boolean));
+  return sectors.filter((sector) => mine.has(normalizeDiscipline(sector)));
+}
+
 export function isNc2ConformidadeUser(user: AuthUserLike) {
   return getUserDisciplineList(user).some((discipline) => normalizeDiscipline(discipline).includes('conformidade'));
 }

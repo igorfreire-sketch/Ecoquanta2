@@ -53,7 +53,7 @@ import {
   type AnnotationSheet,
 } from './components/CoordenacaoEngenharia/Anotacoes';
 import type { CronogramaDoc } from './components/SolucoesDigitais';
-import { isNc2Leader } from './components/NaoConformidade2/ncStore';
+import { isNc2Leader, matchingUserSectors } from './components/NaoConformidade2/ncStore';
 // ponytail: string literal em vez de importar CRONOGRAMAS_COLLECTION (runtime, nao so tipo) de
 // SolucoesDigitais.tsx — esse import puxaria o modulo inteiro (Atividades.tsx, CampoDialog etc.)
 // pro bundle principal em vez de ficar so no chunk lazy de <Cronogramas/>. O `import type` acima
@@ -1874,12 +1874,12 @@ export default function App() {
   // qualquer usuario (dono ve a propria nota privada, mas ela nao vaza pro setor).
   const notasKanbanPrincipal = React.useMemo(() => {
     if (!currentUser) return [];
-    const ehLider = isNc2Leader(currentUser);
-    const minhasDisciplinas = new Set(getUserDisciplineList(currentUser));
     return notes.filter((sheet) => (
       !isConcluidaAntiga(sheet)
       && (
-        (sheet.autorEmail !== currentUser.email && ehLider && sheet.publica !== false && getSheetDisciplinas(sheet).some((item) => minhasDisciplinas.has(item)))
+        // Dono precisa ver o card para aprovar a acao pendente.
+        (sheet.pendingProposal && sheet.autorEmail === currentUser.email)
+        || (sheet.publica !== false && matchingUserSectors(currentUser, getSheetDisciplinas(sheet)).length > 0)
         || (sheet.marcadosUsuarios || []).includes(currentUser.email)
         || (sheet.publica === false && sheet.autorEmail === currentUser.email)
       )
@@ -2741,7 +2741,11 @@ export default function App() {
           ? acceptNoteProposal(existing, currentUser.email, now)
           : rejectNoteProposal(existing, currentUser.email);
       } else {
-        saved = applyNoteSave(existing, sheet, currentUser, now);
+        // Lider/coordenador do setor citado so propoe: a mudanca espera a aprovacao do dono.
+        const canProposeBySector = Boolean(existing) && isNc2Leader(currentUser)
+          && existing!.publica !== false
+          && matchingUserSectors(currentUser, getSheetDisciplinas(existing!)).length > 0;
+        saved = applyNoteSave(existing, sheet, currentUser, now, canProposeBySector);
         if (existing) {
           saved = {
             ...saved,

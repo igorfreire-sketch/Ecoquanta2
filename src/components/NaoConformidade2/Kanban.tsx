@@ -2,12 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2, Lock, MessageCircle } from 'lucide-react';
 import { sameContractCode } from '../../lib/contractCode';
 import { subscribeFirebaseCollection } from '../../lib/firebaseDb';
-import { getSheetStatus, GoogleIcon, moveSheetStatus, type AnnotationSheet } from '../CoordenacaoEngenharia/Anotacoes';
+import { getSheetDisciplinas, getSheetStatus, GoogleIcon, moveSheetStatus, type AnnotationSheet } from '../CoordenacaoEngenharia/Anotacoes';
 import { getDisciplineDisplayName, getDisciplineIconInfo } from '../Atividades';
-import { isNoteOwner, previewNoteProposal, type NoteSaveIntent } from '../../lib/noteProposals';
+import { isNoteOwner, type NoteSaveIntent } from '../../lib/noteProposals';
 import {
   confirmItemCorrection,
   canViewNc2Record,
+  matchingUserSectors,
   correctionStatus,
   getRecordItems,
   getRecordStatus,
@@ -213,9 +214,16 @@ export default function Kanban({
     }
   };
 
-  // Lider/coordenador move qualquer nota do quadro; quem so foi marcado move as suas.
+  const foiCitado = (sheet: AnnotationSheet) => (sheet.marcadosUsuarios || []).includes(currentUser.email);
+  const setoresDaNota = (sheet: AnnotationSheet) => matchingUserSectors(currentUser, getSheetDisciplinas(sheet));
+  // Dono move direto; citado move a sua; nota do setor so lider/coordenador daquele setor.
+  // Quem nao e dono cria uma acao que fica em aberto ate a aprovacao do dono.
   const podeMoverNota = (sheet: AnnotationSheet) =>
-    Boolean(onSalvarNota) && (ehLider || (sheet.marcadosUsuarios || []).includes(currentUser.email));
+    Boolean(onSalvarNota) && (
+      isNoteOwner(sheet, currentUser.email)
+      || foiCitado(sheet)
+      || (ehLider && setoresDaNota(sheet).length > 0)
+    );
 
   // Autor decide sobre a proposta pendente direto no card do Kanban (mesma persistencia da nota:
   // App.saveAnnotationSheet resolve accept/reject a partir da nota atual no Firebase via intent,
@@ -264,7 +272,9 @@ export default function Kanban({
   }
 
   // Sem nada pra mostrar: some do Principal, sem texto de vazio.
-  if (cards.length === 0 && notas.length === 0) return null;
+  if (cards.length === 0 && notas.length === 0) {
+    return <p className="rounded-2xl bg-white/80 p-5 text-[13px] font-medium text-[#757575]">Nenhuma nota aberta citando você ou seu setor.</p>;
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-4 pb-10 animate-in fade-in duration-500">
@@ -279,7 +289,7 @@ export default function Kanban({
             // proposta pendente aparece na coluna do status PROPOSTO (previewNoteProposal), pra
             // parecer que ja foi movida, ate o autor aceitar ou rejeitar.
             const notasColuna = notas
-              .filter((sheet) => getSheetStatus(sheet.pendingProposal ? previewNoteProposal(sheet) : sheet) === coluna.key)
+              .filter((sheet) => getSheetStatus(sheet) === coluna.key)
               .sort((a, b) => (a.criadoEm || a.updatedAt || '').localeCompare(b.criadoEm || b.updatedAt || ''));
             return (
               <div
@@ -312,8 +322,9 @@ export default function Kanban({
                     const proposal = sheet.pendingProposal;
                     // Enquanto ha proposta pendente, o card mostra a nota como se ja tivesse sido
                     // movida/alterada (previewNoteProposal) - o autor decide aceitar ou rejeitar.
-                    const displaySheet = proposal ? previewNoteProposal(sheet) : sheet;
-                    const disciplinaIcon = getDisciplineIconInfo(displaySheet.disciplina);
+                    const displaySheet = sheet;
+                    const setorDoCard = foiCitado(sheet) ? '' : setoresDaNota(sheet)[0] || '';
+                    const disciplinaIcon = getDisciplineIconInfo(setorDoCard);
                     const DisciplinaIcon = disciplinaIcon.icon;
                     const podeRevisar = Boolean(proposal && onSalvarNota && isNoteOwner(sheet, currentUser.email));
                     return (
@@ -340,7 +351,7 @@ export default function Kanban({
                             className="w-full rounded-2xl p-4 text-left"
                           >
                             <div className="flex items-center gap-2">
-                              {disciplinaIcon.imageSrc ? (
+                              {!setorDoCard ? null : disciplinaIcon.imageSrc ? (
                                 <img
                                   src={disciplinaIcon.imageSrc}
                                   alt={disciplinaIcon.label}
@@ -349,7 +360,7 @@ export default function Kanban({
                               ) : DisciplinaIcon ? (
                                 <DisciplinaIcon size={16} className="flex-shrink-0 text-[#0F766E]" />
                               ) : null}
-                              <p className="text-[13px] font-black text-[#0F766E]">Nota</p>
+                              <p className="text-[13px] font-black text-[#0F766E]">{setorDoCard ? `Setor ${getDisciplineDisplayName(setorDoCard)}` : 'Citado'}</p>
                             </div>
                             <div className="mt-2 flex items-center gap-1">
                               <p className="line-clamp-2 flex-1 text-[13px] font-bold text-[#2D2D2D]" title={displaySheet.titulo}>
@@ -371,8 +382,8 @@ export default function Kanban({
                           </button>
                           {proposal && (
                             <div className="flex items-center justify-between gap-2 px-4 pb-3">
-                              <p className="truncate text-[10px] font-bold text-[#DC2626]">
-                                {proposal.proposerName || proposal.proposerEmail} moveu
+                              <p className="text-[10px] font-bold text-[#DC2626]">
+                                {proposal.proposerName || proposal.proposerEmail} moveu · aguardando aprovação do dono
                               </p>
                               {podeRevisar && (
                                 <div className="flex flex-shrink-0 items-center gap-1">

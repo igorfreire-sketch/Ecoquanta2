@@ -207,6 +207,7 @@ export function applyNoteSave(
   draft: AnnotationSheet,
   actor: NoteActor,
   now: string,
+  canProposeBySector = false,
 ): AnnotationSheet {
   const actorEmail = normalizeEmail(actor.email);
   if (!actorEmail) throw new Error('Usuario sem e-mail nao pode salvar notas.');
@@ -241,7 +242,7 @@ export function applyNoteSave(
   }
 
   const linked = (existing.marcadosUsuarios || []).some((email) => normalizeEmail(email) === actorEmail);
-  if (!linked) throw new Error('Apenas o autor ou um usuario vinculado pode alterar esta nota.');
+  if (!linked && !canProposeBySector) throw new Error('Apenas o autor ou um usuario vinculado pode alterar esta nota.');
   if (existing.pendingProposal) throw new Error('Esta nota ja possui uma proposta aguardando revisao do autor.');
 
   const changes = diffNoteProposal(existing, draft);

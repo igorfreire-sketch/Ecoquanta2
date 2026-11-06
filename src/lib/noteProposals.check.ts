@@ -91,3 +91,10 @@ assert.equal(legacy.projectId, undefined);
 assert.deepEqual(diffNoteProposal(legacy, structuredClone(legacy)).changedFields, []);
 
 console.log('noteProposals: OK');
+
+// Sector leader may only propose: the note stays unchanged until the owner approves.
+{
+  const bySector = applyNoteSave(base, { ...base, status: 'concluido' }, { nome: 'Lider', email: 'lider@quanta.com' }, '2026-11-06T00:00:00.000Z', true);
+  if (!bySector.pendingProposal) throw new Error('sector leader move must create a proposal');
+  if ((bySector.status || 'criado') === 'concluido') throw new Error('status must not change before owner approval');
+}

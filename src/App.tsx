@@ -1,6 +1,6 @@
 import { saveCronogramaChecked, fetchCronogramaDocument, subscribeFirebaseCollection } from './lib/firebaseDb';
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigationState } from './lib/useNavigationState';
+import { BEFORE_APP_NAVIGATION, useNavigationState } from './lib/useNavigationState';
 import SearchableSelect from './components/SearchableSelect';
 import {
   ClipboardList,
@@ -1679,7 +1679,14 @@ export default function App() {
   // hash e o menor jeito de ter uma URL estavel pra apontar uma IA local.
   const [locationHash, setLocationHash] = useState(() => window.location.hash);
   useEffect(() => {
-    const onHashChange = () => setLocationHash(window.location.hash);
+    const onHashChange = (event: HashChangeEvent) => {
+      // #ia replaces the whole app tree, so it must honor the same dirty-editor veto as tab switches.
+      if (window.location.hash === '#ia' && !window.dispatchEvent(new Event(BEFORE_APP_NAVIGATION, { cancelable: true }))) {
+        window.history.replaceState(null, '', event.oldURL);
+        return;
+      }
+      setLocationHash(window.location.hash);
+    };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);

@@ -72,4 +72,3 @@ for (const mode of ['note','cronograma']) {
  console.log('PASS CREATE: empty standalone Project starts with one row and saves first document');
  assert.deepEqual(pageErrors, []);
 } finally {await browser.close();}
-

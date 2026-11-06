@@ -166,7 +166,7 @@ const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEnge
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
 const ImportarEAP = React.lazy(() => import('./components/Planejamento/ImportarEAP'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
-// Resumo de Qualidade na Principal abre a OS selecionada em Revisoes.
+// Kanban original da Principal; cards antigos abrem a aba Qualidade.
 const Nc2Kanban = React.lazy(() => import('./components/NaoConformidade2/Kanban'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
 const Cronogramas = React.lazy(() => import('./components/Cronogramas'));
@@ -4254,8 +4254,7 @@ export default function App() {
                     onAbrirNota={abrirNotaNotificada}
                     currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin, disciplina: currentUser.disciplina, disciplinas: currentUser.disciplinas }}
                     onSalvarNota={saveAnnotationSheet}
-                    onOpenOs={(os) => {
-                      setPendingQualityOs(os);
+                    onEdit={() => {
                       setNc2SubTab('revisoes');
                       setActiveTab('nc2');
                     }}

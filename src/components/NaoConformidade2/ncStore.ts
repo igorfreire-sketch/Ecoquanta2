@@ -172,6 +172,19 @@ export function getRecordItems(record: Nc2Record): Nc2Item[] {
   return Array.isArray(record.itensT) ? record.itensT : [];
 }
 
+export function hasUnreadNc2Chat(record: Nc2Record, email?: string) {
+  const messages = record.observacoesHistorico || [];
+  if (!messages.length || typeof localStorage === 'undefined') return false;
+  const key = `nc2-chat-seen:${record.id}:${String(email || '').toLowerCase()}`;
+  return localStorage.getItem(key) !== messages[messages.length - 1].dataHora;
+}
+
+export function markNc2ChatSeen(record: Nc2Record, email?: string) {
+  const messages = record.observacoesHistorico || [];
+  if (!messages.length || typeof localStorage === 'undefined') return;
+  localStorage.setItem(`nc2-chat-seen:${record.id}:${String(email || '').toLowerCase()}`, messages[messages.length - 1].dataHora);
+}
+
 export function correctionStatus(item: Nc2Item): 'pendente' | 'corrigido' {
   return item.statusCorrecao === 'corrigido' ? 'corrigido' : 'pendente';
 }

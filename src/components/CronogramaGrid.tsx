@@ -3,7 +3,7 @@ import { ordemColunasCronograma, ordemArvore, calcularCodigos, irmaoAnterior, ni
 export { ordemColunasCronograma, ordemArvore, calcularCodigos } from '../lib/cronoGridLogic';
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Globe, Indent, Link2, Lock, Outdent, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Maximize2, Minimize2, Indent, Link2, Outdent, Trash2 } from 'lucide-react';
 import { addDias, criarLinhaVazia, diffDias, proximoSeq, type CronoRow } from '../lib/cronoRow';
 import SearchableSelect from './SearchableSelect';
 import CampoDialog from './CampoDialog';
@@ -147,6 +147,7 @@ export default function CronogramaGrid({ doc, onChange, currentUser, usuarios = 
   // ~386-388/505-534), so pra coluna (aqui nao existe redimensionar linha).
   const redimensionarRef = useRef<{ key: string; inicioPx: number; tamanhoInicial: number } | null>(null);
 
+  const [fullscreen, setFullscreen] = useState(false);
   const rows = doc.rows;
   const bloqueado = readOnly;
   const notaOrigem = doc.origemNotaId ? notes.find((n) => n.id === doc.origemNotaId) : undefined;
@@ -528,7 +529,7 @@ export default function CronogramaGrid({ doc, onChange, currentUser, usuarios = 
       case 'nota':
         // Project vindo de nota: a coluna Nota deixa de ser seletor e vira o atalho pra ABRIR a
         // nota de origem (mesmo mecanismo de `sheetAberta` usado pelo "+ Criar nova nota").
-        if (bloqueado) {
+        if (bloqueado && doc.origemNotaId) {
           return (
             <td key={key} className="px-3 py-1">
               {/* role=button em vez de <button>: a tabela inteira fica dentro de um <fieldset
@@ -573,11 +574,15 @@ export default function CronogramaGrid({ doc, onChange, currentUser, usuarios = 
     }
   }
 
-  return (
-    <>
+  const content = (
+    <div className={fullscreen ? "fixed inset-0 z-[205] overflow-auto bg-white p-4" : "min-w-0 max-w-full"} data-cronograma-grid>
           <div className="mt-3 overflow-hidden rounded-xl border border-[#E5E7EB]">
             <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
-              <select
+              <button type="button" onClick={() => setFullscreen((value) => !value)} className="flex items-center gap-1 text-[12px] font-bold text-[#F05D28]">
+                {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                {fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
+              </button>
+              <select aria-label="Filtrar por responsável"
                 value={filtroResponsavel}
                 onChange={(e) => setFiltroResponsavel(e.target.value)}
                 className="h-7 rounded-md border border-[#E5E7EB] bg-white px-2 text-[12px] text-[#2D2D2D]"
@@ -603,7 +608,7 @@ export default function CronogramaGrid({ doc, onChange, currentUser, usuarios = 
                   veio de uma nota (nao ha handler pra esquecer). */}
               <fieldset disabled={bloqueado} className="m-0 min-w-full border-0 p-0">
               {/* table-fixed + colgroup: sem isso o navegador ignora as larguras arrastadas (mesmo aviso do banco da nota). */}
-              <table className="min-w-full table-fixed text-sm text-[#2D2D2D]">
+              <table style={{ width: colunasVisiveis.reduce((sum, col) => sum + larguraColuna(col.key, col.largura), 40) }} className="min-w-full table-fixed text-sm text-[#2D2D2D]">
                 <colgroup>
                   {colunasVisiveis.map((col) => <col key={col.key} style={{ width: `${larguraColuna(col.key, col.largura)}px` }} />)}
                   <col style={{ width: '40px' }} />
@@ -795,6 +800,7 @@ export default function CronogramaGrid({ doc, onChange, currentUser, usuarios = 
           onCancel={() => setDialogoLink(null)}
         />
       )}
-    </>
+    </div>
   );
+  return fullscreen ? createPortal(content, document.body) : content;
 }

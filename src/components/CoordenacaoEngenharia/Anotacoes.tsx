@@ -31,7 +31,7 @@ import {
   type NoteSaveIntent,
 } from '../../lib/noteProposals';
 import type { CronogramaDoc } from '../SolucoesDigitais';
-import { addDias, criarLinhaVazia, diffDias, proximoSeq, type CronoRow } from '../../lib/cronoRow';
+import CronogramaGrid from '../CronogramaGrid';
 import { joinSerializedCellParts } from '../../lib/noteCellDom';
 import CronogramaResumo from './CronogramaResumo';
 import MindMap from './MindMap';
@@ -237,7 +237,7 @@ interface NoteProjectsContextValue {
   projects: CronogramaDoc[];
   onCreateProject?: (title: string, origemNotaId?: string) => Promise<CronogramaDoc>;
   // Grava o Project editado pelo bloco embutido na nota (mesmo doc da colecao `cronogramas`).
-  onSaveProject?: (project: CronogramaDoc) => Promise<void>;
+  onSaveProject?: (project: CronogramaDoc) => Promise<CronogramaDoc>;
   loadError?: string;
 }
 
@@ -1786,60 +1786,6 @@ export default function Anotacoes({
     const linkedProject = projectDraft && projectDraft.id === editing.projectId
       ? projectDraft
       : noteProjects.projects.find((project) => project.id === editing.projectId);
-    const projectRows = linkedProject?.rows ?? [];
-    const patchProjectRow = (rowId: string, patch: Partial<CronoRow>) => setProjectDraft((prev) => {
-      const base = prev && prev.id === editing.projectId ? prev : linkedProject;
-      if (!base) return prev;
-      return { ...base, rows: base.rows.map((row) => (row.id === rowId ? { ...row, ...patch } : row)) };
-    });
-    // Mesma prioridade de campo da tela solta (SolucoesDigitais.tsx onEditarInicio/onEditarFim/onEditarDuracao):
-    // duracao ja definida manda no fim ao editar o inicio; sem duracao, o fim que ja existia recalcula a duracao.
-    const editarInicioProject = (row: CronoRow, valor: string) => {
-      if (row.duracaoDias != null) {
-        patchProjectRow(row.id, { dataInicio: valor, dataFim: valor ? addDias(valor, row.duracaoDias) : '' });
-      } else if (row.dataFim) {
-        patchProjectRow(row.id, { dataInicio: valor, duracaoDias: diffDias(valor, row.dataFim) });
-      } else {
-        patchProjectRow(row.id, { dataInicio: valor });
-      }
-    };
-    const editarFimProject = (row: CronoRow, valor: string) => {
-      if (row.dataInicio) {
-        patchProjectRow(row.id, { dataFim: valor, duracaoDias: valor ? diffDias(row.dataInicio, valor) : null });
-      } else {
-        patchProjectRow(row.id, { dataFim: valor });
-      }
-    };
-    const editarDuracaoProject = (row: CronoRow, valorTexto: string) => {
-      const duracao = valorTexto === '' ? null : Number(valorTexto);
-      const duracaoValida = duracao !== null && Number.isFinite(duracao) ? duracao : null;
-      if (row.dataInicio && duracaoValida != null) {
-        patchProjectRow(row.id, { duracaoDias: duracaoValida, dataFim: addDias(row.dataInicio, duracaoValida) });
-      } else {
-        patchProjectRow(row.id, { duracaoDias: duracaoValida });
-      }
-    };
-    // Mesma validacao de ciclo de 1 nivel da tela solta (onEditarPredecessora).
-    const editarPredecessoraProject = (row: CronoRow, predecessoraId: string) => {
-      if (predecessoraId) {
-        if (predecessoraId === row.id) return;
-        const alvo = projectRows.find((r) => r.id === predecessoraId);
-        if (alvo && alvo.predecessoraId === row.id) return;
-      }
-      const predecessora = projectRows.find((r) => r.id === predecessoraId);
-      const sugerirInicio = predecessora?.dataFim && !row.dataInicio ? predecessora.dataFim : row.dataInicio;
-      patchProjectRow(row.id, { predecessoraId, dataInicio: sugerirInicio });
-    };
-    const addProjectRow = () => setProjectDraft((prev) => {
-      const base = prev && prev.id === editing.projectId ? prev : linkedProject;
-      if (!base) return prev;
-      return { ...base, rows: [...base.rows, { ...criarLinhaVazia(proximoSeq(base.rows)), ordem: base.rows.length }] };
-    });
-    const removeProjectRow = (rowId: string) => setProjectDraft((prev) => {
-      const base = prev && prev.id === editing.projectId ? prev : linkedProject;
-      if (!base) return prev;
-      return { ...base, rows: base.rows.filter((row) => row.id !== rowId) };
-    });
     const saveProject = async () => {
       if (!linkedProject) return;
       if (!noteProjects.onSaveProject) {
@@ -1849,7 +1795,8 @@ export default function Anotacoes({
       setSavingProject(true);
       setProjectError('');
       try {
-        await noteProjects.onSaveProject(linkedProject);
+        const saved = await noteProjects.onSaveProject(linkedProject);
+        setProjectDraft(saved);
       } catch (error) {
         setProjectError(error instanceof Error ? error.message : 'Nao foi possivel salvar o Project.');
       } finally {
@@ -3135,143 +3082,9 @@ export default function Anotacoes({
                   <p role="alert" className="border-b border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-[12px] font-semibold text-[#B91C1C]">{projectError}</p>
                 )}
                 {linkedProject ? (
-                  <>
-                    <div className="overflow-auto">
-                      <table className="min-w-full text-[12px] text-[#2D2D2D]">
-                        <thead className="border-b border-[#E5E7EB] bg-white">
-                          <tr>
-                            <th className="px-3 py-1.5 text-left font-medium">ID</th>
-                            <th className="px-3 py-1.5 text-left font-medium">Atividade</th>
-                            <th className="px-3 py-1.5 text-left font-medium">Predecessora</th>
-                            <th className="px-3 py-1.5 text-left font-medium">Início</th>
-                            <th className="px-3 py-1.5 text-left font-medium">Duração (dias)</th>
-                            <th className="px-3 py-1.5 text-left font-medium">Fim</th>
-                            <th className="px-3 py-1.5 text-left font-medium">Responsável</th>
-                            <th className="px-3 py-1.5 text-left font-medium">% Concluído</th>
-                            <th className="px-3 py-1.5 text-left font-medium">Atividade agenda</th>
-                            <th className="px-3 py-1.5" />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {projectRows.map((row) => (
-                            <tr key={row.id} className="border-b border-[#E5E7EB] last:border-b-0" style={{ backgroundColor: row.corLinha }}>
-                              <td className="px-3 py-1 text-[#94A3B8]">#{row.seq}</td>
-                              <td className="px-3 py-1">
-                                <input
-                                  value={row.nome}
-                                  readOnly={!podeEditar}
-                                  onChange={(event) => patchProjectRow(row.id, { nome: event.target.value })}
-                                  placeholder="Nome da atividade"
-                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1"
-                                />
-                              </td>
-                              <td className="px-3 py-1">
-                                <select
-                                  value={row.predecessoraId}
-                                  disabled={!podeEditar}
-                                  onChange={(event) => editarPredecessoraProject(row, event.target.value)}
-                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1"
-                                >
-                                  <option value="">Nenhuma</option>
-                                  {projectRows.filter((r) => r.id !== row.id).map((r) => (
-                                    <option key={r.id} value={r.id}>#{r.seq} - {r.nome || '(sem nome)'}</option>
-                                  ))}
-                                </select>
-                              </td>
-                              <td className="px-3 py-1">
-                                <input
-                                  type="date"
-                                  value={row.dataInicio}
-                                  disabled={!podeEditar}
-                                  onChange={(event) => editarInicioProject(row, event.target.value)}
-                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1"
-                                />
-                              </td>
-                              <td className="px-3 py-1">
-                                <input
-                                  type="number"
-                                  value={row.duracaoDias ?? ''}
-                                  disabled={!podeEditar}
-                                  onChange={(event) => editarDuracaoProject(row, event.target.value)}
-                                  className="w-24 rounded border border-[#E5E7EB] px-2 py-1"
-                                />
-                              </td>
-                              <td className="px-3 py-1">
-                                <input
-                                  type="date"
-                                  value={row.dataFim}
-                                  disabled={!podeEditar}
-                                  onChange={(event) => editarFimProject(row, event.target.value)}
-                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1"
-                                />
-                              </td>
-                              <td className="px-3 py-1">
-                                {/* ponytail: sem filtro por disciplina "solucoes digitais" como na tela solta -
-                                    o prop `usuarios` da nota nao carrega `disciplinas`; lista o time inteiro. */}
-                                <select
-                                  value={row.responsavelEmail}
-                                  disabled={!podeEditar}
-                                  onChange={(event) => patchProjectRow(row.id, { responsavelEmail: event.target.value })}
-                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1"
-                                >
-                                  <option value="">Sem responsável</option>
-                                  {usuarios.map((u) => <option key={u.email} value={u.email}>{u.nome}</option>)}
-                                </select>
-                              </td>
-                              <td className="px-3 py-1">
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={100}
-                                  value={row.percentualConcluido ?? ''}
-                                  disabled={!podeEditar}
-                                  onChange={(event) => patchProjectRow(row.id, { percentualConcluido: event.target.value === '' ? null : Number(event.target.value) })}
-                                  className="w-20 rounded border border-[#E5E7EB] px-2 py-1"
-                                  placeholder="%"
-                                />
-                              </td>
-                              <td className="px-3 py-1">
-                                <SearchableSelect
-                                  value={row.atividadeId || ''}
-                                  disabled={!podeEditar}
-                                  onChange={(event) => patchProjectRow(row.id, { atividadeId: event.target.value })}
-                                  className="w-full rounded border border-[#E5E7EB] px-2 py-1 bg-white"
-                                  searchPlaceholder="Sem vínculo"
-                                >
-                                  <option value="">Sem vínculo</option>
-                                  {activities.map((a) => <option key={a.id} value={a.id}>{a.osCodigo} - {a.atividade || a.itemNome || '(sem nome)'}</option>)}
-                                </SearchableSelect>
-                              </td>
-                              <td className="px-3 py-1 text-center">
-                                {podeEditar && (
-                                  <button
-                                    type="button"
-                                    title="Excluir linha"
-                                    onClick={() => removeProjectRow(row.id)}
-                                    className="flex h-5 w-5 items-center justify-center rounded-full text-[#94A3B8] hover:bg-[#FEE2E2] hover:text-[#DC2626]"
-                                  >
-                                    <Trash2 size={12} />
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                          {projectRows.length === 0 && (
-                            <tr>
-                              <td colSpan={10} className="px-3 py-3 text-center text-[#94A3B8]">Nenhuma atividade neste Project ainda.</td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                    {podeEditar && (
-                      <div className="border-t border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5">
-                        <button type="button" onClick={addProjectRow} className="text-[12px] font-bold text-[#F05D28] hover:underline">
-                          + Linha
-                        </button>
-                      </div>
-                    )}
-                  </>
+                  <CronogramaGrid doc={linkedProject} onChange={setProjectDraft}
+                    currentUser={currentUser} usuarios={usuarios} notes={sheets} activities={activities}
+                    readOnly={!podeEditar || savingProject} />
                 ) : (
                   <p className="px-3 py-3 text-[12px] text-[#94A3B8]">Project {editing.projectId} nao encontrado.</p>
                 )}

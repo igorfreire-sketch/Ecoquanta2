@@ -1,3 +1,4 @@
+import { saveCronogramaChecked } from './lib/firebaseDb';
 import React, { useState, useEffect, useCallback } from 'react';
 import SearchableSelect from './components/SearchableSelect';
 import {
@@ -3049,11 +3050,11 @@ export default function App() {
 
   // Salva o Project editado DENTRO da nota — mesma colecao/mesma funcao de escrita que a tela
   // solta usa; a nota nunca guarda copia das linhas, so o `projectId`.
-  const saveNoteProject = useCallback(async (project: CronogramaDoc): Promise<void> => {
+  const saveNoteProject = useCallback(async (project: CronogramaDoc): Promise<CronogramaDoc> => {
     if (!isFirebaseConfigured()) throw new Error('Firebase indisponivel. O Project nao foi salvo.');
-    const atualizado = { ...project, updatedAt: new Date().toISOString() };
-    await setFirebaseDocument(CRONOGRAMAS_COLLECTION, atualizado.id, atualizado);
+    const atualizado = await saveCronogramaChecked(project);
     setNoteProjects((previous) => previous.map((item) => (item.id === atualizado.id ? atualizado : item)));
+    return atualizado;
   }, []);
 
   const handleLogin = async (email: string, password: string, rememberMe: boolean) => {

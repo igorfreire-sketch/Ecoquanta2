@@ -1,3 +1,4 @@
+import { nextCronogramaTimestamp } from './cronoRevision';
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import {
@@ -1277,4 +1278,17 @@ export function subscribeFirebaseAppData(
     onError?.(error as Error);
     return () => {};
   }
+}
+
+/** Compare-and-set atômico: drafts mantêm o updatedAt da versão que foi aberta. */
+export async function saveCronogramaChecked<T extends { id: string; updatedAt: string }>(project: T, allowCreate = false): Promise<T> {
+  await ensureFirebaseAuth();
+  const ref = doc(getDb(), 'cronogramas', project.id);
+  return runTransaction(getDb(), async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    const updatedAt = nextCronogramaTimestamp(project.updatedAt, snapshot.exists() ? snapshot.data().updatedAt : undefined, allowCreate);
+    const saved = { ...project, updatedAt };
+    transaction.set(ref, saved, { merge: true });
+    return saved;
+  });
 }

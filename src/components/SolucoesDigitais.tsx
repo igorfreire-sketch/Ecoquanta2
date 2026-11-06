@@ -2,8 +2,8 @@ import { buildActivitiesFromEap } from './Atividades';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Lock, X } from 'lucide-react';
-import { isFirebaseConfigured, setFirebaseDocument } from '../lib/firebaseDb';
-import CronogramaGrid, { CRONOGRAMAS_COLLECTION, type CronogramaDoc } from './CronogramaGrid';
+import { isFirebaseConfigured, saveCronogramaChecked } from '../lib/firebaseDb';
+import CronogramaGrid, { type CronogramaDoc } from './CronogramaGrid';
 import Anotacoes, { novaNotaBase, type AnnotationSheet } from './CoordenacaoEngenharia/Anotacoes';
 export { CRONOGRAMAS_COLLECTION, ordemArvore, calcularCodigos, ordemColunasCronograma } from './CronogramaGrid';
 export type { CronogramaDoc, ColunaCustom, CronoRow } from './CronogramaGrid';
@@ -17,6 +17,7 @@ interface SolucoesDigitaisProps {
   onSaveNote?: (sheet: AnnotationSheet) => Promise<void>;
   onDeleteNote?: (id: string) => Promise<void>;
   preloadedData?: any;
+  onSaveProject?: (doc: CronogramaDoc) => Promise<CronogramaDoc>;
 }
 
 function formatDateBRLocal(value?: string) {
@@ -34,6 +35,7 @@ export default function SolucoesDigitais({
   onSaveNote,
   onDeleteNote,
   preloadedData,
+  onSaveProject = saveCronogramaChecked,
 }: SolucoesDigitaisProps) {
   const [doc, setDoc] = useState<CronogramaDoc>(cronograma);
   const [sujo, setSujo] = useState(false);
@@ -44,15 +46,16 @@ export default function SolucoesDigitais({
   const [linhaDaNotaEmCriacao, setLinhaDaNotaEmCriacao] = useState<string | null>(null);
   function atualizarDoc(patch: Partial<CronogramaDoc>) {
     if (bloqueado) return;
-    setDoc((prev) => ({ ...prev, ...patch, updatedAt: new Date().toISOString() }));
+    setDoc((prev) => ({ ...prev, ...patch }));
     setSujo(true);
     setErroSalvar(null);
   }
   async function handleSalvar() {
-    if (!isFirebaseConfigured()) return;
+    if (!isFirebaseConfigured() && onSaveProject === saveCronogramaChecked) return;
     setSalvando(true);
     try {
-      await setFirebaseDocument(CRONOGRAMAS_COLLECTION, doc.id, doc);
+      const saved = await onSaveProject(doc);
+      setDoc(saved);
       setSujo(false);
       setErroSalvar(null);
     } catch (err) {
@@ -131,14 +134,14 @@ export default function SolucoesDigitais({
               value={doc.titulo}
               onChange={(e) => atualizarDoc({ titulo: e.target.value })}
               placeholder="Nome do cronograma"
-              readOnly={bloqueado}
+              readOnly={bloqueado || salvando}
               className="h-11 min-w-[220px] flex-1 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[14px] font-bold text-[#2D2D2D] outline-none focus:border-[#F05D28]"
             />
             <label className="flex h-11 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-medium text-[#2D2D2D] cursor-pointer">
               <input
                 type="checkbox"
                 checked={doc.publica !== false}
-                disabled={bloqueado}
+                disabled={bloqueado || salvando}
                 onChange={(e) => atualizarDoc({ publica: e.target.checked })}
                 className="h-4 w-4 accent-[#F05D28] cursor-pointer"
               />
@@ -161,7 +164,7 @@ export default function SolucoesDigitais({
             )}
           </div>
 
-          <CronogramaGrid doc={doc} onChange={atualizarDoc} currentUser={currentUser} usuarios={usuarios} notes={notes} activities={buildActivitiesFromEap(preloadedData, currentUser)} readOnly={bloqueado}
+          <CronogramaGrid doc={doc} onChange={atualizarDoc} currentUser={currentUser} usuarios={usuarios} notes={notes} activities={buildActivitiesFromEap(preloadedData, currentUser)} readOnly={bloqueado || salvando}
             onCreateNote={onSaveNote ? (rowId) => { setLinhaDaNotaEmCriacao(rowId); setSheetAberta(novaNotaBase(currentUser)); } : undefined}
             onOpenNote={(id) => setSheetAberta(notes.find((note) => note.id === id) || null)} />
         </div>

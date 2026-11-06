@@ -151,6 +151,7 @@ export default function Notes({ disciplinas, notes, osOptions, currentUser, prel
       onSave={onSaveNote || (async () => {})}
       onDelete={onDeleteNote || (async () => {})}
       controlledSheet={sheetAberta}
+      onControlledOpenRejected={setSheetAberta}
       onCloseControlled={() => setSheetAberta(null)}
       noteIdsComCronograma={noteIdsComCronograma}
       readOnly={readOnly}

@@ -54,20 +54,9 @@ for (const name of ['appData', 'nc2Records', 'contractPriorities', 'contractInte
 }
 
 
-for (const name of ['accOs', 'accResumo']) {
-  const block = rules.match(new RegExp(`match /${name}/\\{document\\} \\{([\\s\\S]*?)\\n    \\}`))?.[1] || '';
-  assert.match(block, /allow read: if isSignedIn\(\);/);
-  assert.match(block, /allow write: if false;/);
-  assert.match(block, /match \/chunks\/\{chunk\}/);
-  assert.equal((block.match(/allow write: if false;/g) || []).length, 2, `${name}: root and chunks stay read-only`);
+for (const name of ['accOs', 'accResumo', 'accEdicoes', 'accTerceirizadas', 'qualidadeManual']) {
+  assert.equal((rules.match(new RegExp(`match /${name}/`, 'g')) || []).length, 1, `${name}: duplicate root rule`);
 }
-for (const name of ['accEdicoes', 'accTerceirizadas', 'qualidadeManual']) {
-  const block = rules.match(new RegExp(`match /${name}/\\{document\\} \\{([\\s\\S]*?)\\n    \\}`))?.[1] || '';
-  assert.match(block, /allow read, create, update: if isSignedIn\(\);/);
-  assert.match(block, /allow delete: if false;/);
-}
-console.log('firestoreRules: OK');
-
 for (const name of ['accOs', 'accResumo']) {
   const block = rules.match(new RegExp(`match /${name}/\\{document\\} \\{([\\s\\S]*?)\\n    \\}`))?.[1] || '';
   assert.equal((block.match(/allow read: if isSignedIn\(\);/g) || []).length, 2, `${name}: root and chunks require auth`);

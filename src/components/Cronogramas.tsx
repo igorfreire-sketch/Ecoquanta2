@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Copy, FileSpreadsheet, FileText, Globe, Lock, MoreVertical, Plus, Trash2 } from 'lucide-react';
-import { isFirebaseConfigured, fetchFirebaseCollection, setFirebaseDocument, deleteFirebaseDocument, canDeleteNote } from '../lib/firebaseDb';
+import { isFirebaseConfigured, fetchFirebaseCollection, setFirebaseDocument, deleteFirebaseDocument, canDeleteNote, saveCronogramaChecked } from '../lib/firebaseDb';
 import { exportCronogramaToCsv, exportCronogramaToPdf, exportCronogramasToMarkdown } from '../lib/cronogramaExport';
 import PdfExportDialog from './PdfExportDialog';
 import SearchableSelect from './SearchableSelect';
@@ -25,6 +25,7 @@ interface CronogramasProps {
   onDeleteNote?: (id: string) => Promise<void>;
   preloadedData?: any;
   onAbrirNotas?: () => void;
+  onProjectSaved?: (project: CronogramaDoc) => void;
 }
 
 // Mesma logica de deteccao de SolucoesDigitais.tsx: aponta a causa real (regra do Firestore nao
@@ -54,7 +55,8 @@ function copiarCronograma(origem: CronogramaDoc, autor: { nome: string; email: s
 // autor, botao .MD, abas Meus/Publicos, card com menu de 3 pontos) + o botao/modal de criacao
 // no estilo de Notes.tsx, adaptados ao que CronogramaDoc realmente tem (sem contrato/OS/
 // disciplina/edificação — esses campos nao existem no modelo, entao nao entraram nos filtros).
-export default function Cronogramas({ currentUser, usuarios = [], notes = [], onSaveNote, onDeleteNote, preloadedData, onAbrirNotas }: CronogramasProps) {
+export default function Cronogramas({ currentUser, usuarios = [], notes = [], onSaveNote, onDeleteNote, preloadedData, onAbrirNotas, onProjectSaved }: CronogramasProps) {
+  const unsavedProjectIds = useRef(new Set<string>());
   const [cronogramas, setCronogramas] = useState<CronogramaDoc[]>([]);
   const [abertoId, setAbertoId] = useState<string | null>(null);
   const [carregado, setCarregado] = useState(false);
@@ -129,6 +131,7 @@ export default function Cronogramas({ currentUser, usuarios = [], notes = [], on
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    unsavedProjectIds.current.add(doc.id);
     setCronogramas((prev) => [doc, ...prev]);
     setAbertoId(doc.id);
   }
@@ -139,7 +142,7 @@ export default function Cronogramas({ currentUser, usuarios = [], notes = [], on
     const copia = copiarCronograma(c, currentUser);
     setCronogramas((prev) => [copia, ...prev]);
     if (isFirebaseConfigured()) {
-      setFirebaseDocument(CRONOGRAMAS_COLLECTION, copia.id, copia).catch((err) => {
+      setFirebaseDocument(CRONOGRAMAS_COLLECTION, copia.id, copia).then(() => onProjectSaved?.(copia)).catch((err) => {
         console.error('Erro ao duplicar cronograma:', err);
         setErroAcao(mensagemErro('duplicar o cronograma', err));
       });
@@ -365,6 +368,13 @@ export default function Cronogramas({ currentUser, usuarios = [], notes = [], on
       {aberto && (
         <SolucoesDigitais
           cronograma={aberto}
+          onSaveProject={async (project) => {
+            const saved = await saveCronogramaChecked(project, unsavedProjectIds.current.has(project.id));
+            unsavedProjectIds.current.delete(project.id);
+            onProjectSaved?.(saved);
+            setCronogramas((prev) => prev.map((item) => item.id === saved.id ? saved : item));
+            return saved;
+          }}
           onVoltar={() => { setAbertoId(null); carregar(); }}
           currentUser={currentUser}
           usuarios={usuarios}

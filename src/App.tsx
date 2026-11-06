@@ -1,4 +1,6 @@
+import { saveCronogramaChecked, fetchCronogramaDocument, subscribeFirebaseCollection } from './lib/firebaseDb';
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigationState } from './lib/useNavigationState';
 import SearchableSelect from './components/SearchableSelect';
 import {
   ClipboardList,
@@ -1685,18 +1687,18 @@ export default function App() {
   const [feedbackLoadError, setFeedbackLoadError] = useState('');
   const [feedbackLoading, setFeedbackLoading] = useState(false);
 
-  const [activeTab, setActiveTab] = React.useState<AppTab>('principal');
-  const [principalSubTab, setPrincipalSubTab] = React.useState<'inicio' | 'project'>('inicio');
-  const [areaTecnicaSubTab, setAreaTecnicaSubTab] = React.useState<AreaTecnicaSubTab>('atividades');
-  const [subTab, setSubTab] = React.useState<ControleSubTab>('planejamento');
-  const [planejamentoSubTab, setPlanejamentoSubTab] = React.useState<PlanejamentoSubTab>('atividades');
-  const [nc2SubTab, setNc2SubTab] = React.useState<Nc2SubTab>('dashboard');
-  const [compatibilizacaoSubTab, setCompatibilizacaoSubTab] = React.useState<CompatibilizacaoSubTab>('analise-os');
-  // OS clicada na Principal: fica aqui ate Qualidade montar e consumir.
+  const [activeTab, setActiveTab] = useNavigationState<AppTab>('principal');
+  const [principalSubTab, setPrincipalSubTab] = useNavigationState<'inicio' | 'project'>('inicio');
+  const [areaTecnicaSubTab, setAreaTecnicaSubTab] = useNavigationState<AreaTecnicaSubTab>('atividades');
+  const [subTab, setSubTab] = useNavigationState<ControleSubTab>('planejamento');
+  const [planejamentoSubTab, setPlanejamentoSubTab] = useNavigationState<PlanejamentoSubTab>('atividades');
+  const [nc2SubTab, setNc2SubTab] = useNavigationState<Nc2SubTab>('dashboard');
+  const [compatibilizacaoSubTab, setCompatibilizacaoSubTab] = useNavigationState<CompatibilizacaoSubTab>('analise-os');
+  // OS selecionada na Principal abre Revisoes sem perder a navegacao.
   const [pendingQualityOs, setPendingQualityOs] = React.useState('');
-  const [contratoSubTab, setContratoSubTab] = React.useState<ContratoSubTab>('atividades');
-  const [adminSubTab, setAdminSubTab] = React.useState<AdminSubTab>('usuarios');
-  const [cronogramaSubTab, setCronogramaSubTab] = React.useState<'cronograma' | 'disciplinas'>('cronograma');
+  const [contratoSubTab, setContratoSubTab] = useNavigationState<ContratoSubTab>('atividades');
+  const [adminSubTab, setAdminSubTab] = useNavigationState<AdminSubTab>('usuarios');
+  const [cronogramaSubTab, setCronogramaSubTab] = useNavigationState<'cronograma' | 'disciplinas'>('cronograma');
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [globalData, setGlobalData] = useState<GlobalData>({});
 
@@ -1874,12 +1876,12 @@ export default function App() {
   // editor/migracao e faz a leitura propria sem acoplar seu fluxo a este estado.
   const [noteProjects, setNoteProjects] = useState<CronogramaDoc[]>([]);
   const [noteProjectsLoadError, setNoteProjectsLoadError] = useState('');
+  const noteProjectCacheVersion = React.useRef(0);
   const noteIdsComCronograma = React.useMemo(() => {
     const ids = new Set<string>();
     noteProjects.forEach((project) => (project.rows || []).forEach((row) => { if (row.noteId) ids.add(row.noteId); }));
     return ids;
   }, [noteProjects]);
-  const cronogramasLoadAttemptRef = React.useRef(false);
 
   // Aba do usuario: pedido de outras disciplinas, aprovado/negado pelo admin.
   const [disciplinaRequests, setDisciplinaRequests] = useState<DisciplinaRequest[]>([]);
@@ -2935,22 +2937,39 @@ export default function App() {
     };
   }, [currentUser?.email]);
 
+  const receiveSavedProject = useCallback((project: CronogramaDoc) => {
+    noteProjectCacheVersion.current += 1;
+    setNoteProjects((previous) => [project, ...previous.filter((item) => item.id !== project.id)]);
+  }, []);
+
+  const loadNoteProject = useCallback(async (id: string): Promise<CronogramaDoc> => {
+    const project = await fetchCronogramaDocument<CronogramaDoc>(id);
+    receiveSavedProject(project);
+    return project;
+  }, [receiveSavedProject]);
+
   useEffect(() => {
-    // Documentos completos alimentam o seletor Note -> Project; esta leitura nunca migra nem grava.
     if (!currentUser) return;
-    if (cronogramasLoadAttemptRef.current) return;
-    cronogramasLoadAttemptRef.current = true;
-    (async () => {
+    let active = true;
+    let request = 0;
+    const load = async () => {
+      const ownRequest = ++request;
+      const cacheVersion = noteProjectCacheVersion.current;
       try {
         const cronogramas = await fetchFirebaseCollection<CronogramaDoc>(CRONOGRAMAS_COLLECTION);
+        if (!active || ownRequest !== request || cacheVersion !== noteProjectCacheVersion.current) return;
         setNoteProjects(cronogramas);
         setNoteProjectsLoadError('');
       } catch (error) {
+        if (!active || ownRequest !== request || cacheVersion !== noteProjectCacheVersion.current) return;
         console.error('Erro ao carregar Projects para as notas:', error);
-        setNoteProjectsLoadError('Nao foi possivel carregar os Projects. Tente novamente mais tarde.');
+        setNoteProjectsLoadError('Nao foi possivel carregar os Projects. A copia local anterior foi preservada.');
       }
-    })();
-  }, [currentUser]);
+    };
+    void load();
+    const unsubscribe = subscribeFirebaseCollection(CRONOGRAMAS_COLLECTION, () => void load());
+    return () => { active = false; unsubscribe(); };
+  }, [currentUser?.email]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -3049,12 +3068,12 @@ export default function App() {
 
   // Salva o Project editado DENTRO da nota — mesma colecao/mesma funcao de escrita que a tela
   // solta usa; a nota nunca guarda copia das linhas, so o `projectId`.
-  const saveNoteProject = useCallback(async (project: CronogramaDoc): Promise<void> => {
+  const saveNoteProject = useCallback(async (project: CronogramaDoc): Promise<CronogramaDoc> => {
     if (!isFirebaseConfigured()) throw new Error('Firebase indisponivel. O Project nao foi salvo.');
-    const atualizado = { ...project, updatedAt: new Date().toISOString() };
-    await setFirebaseDocument(CRONOGRAMAS_COLLECTION, atualizado.id, atualizado);
-    setNoteProjects((previous) => previous.map((item) => (item.id === atualizado.id ? atualizado : item)));
-  }, []);
+    const atualizado = await saveCronogramaChecked(project);
+    receiveSavedProject(atualizado);
+    return atualizado;
+  }, [receiveSavedProject]);
 
   const handleLogin = async (email: string, password: string, rememberMe: boolean) => {
     if (!isFirebaseConfigured()) {
@@ -3279,7 +3298,6 @@ export default function App() {
     setAdminHasPendingChanges(false);
     setIsSavingAdminChanges(false);
     adminDraftRef.current = null;
-    cronogramasLoadAttemptRef.current = false;
     setNotes([]);
     setNoteProjects([]);
     setNotesLoadError('');
@@ -3706,8 +3724,9 @@ export default function App() {
     projects: noteProjects,
     onCreateProject: createNoteProject,
     onSaveProject: saveNoteProject,
+    onLoadProject: loadNoteProject,
     loadError: notesLoadError || noteProjectsLoadError,
-  }), [createNoteProject, noteProjects, noteProjectsLoadError, notesLoadError, saveNoteProject]);
+  }), [createNoteProject, noteProjects, noteProjectsLoadError, notesLoadError, saveNoteProject, loadNoteProject]);
 
   // P.Cronograma grava no mesmo snapshot global lido pelas telas relacionadas.
   const aplicarCronogramaSalvo = useCallback((payload: { eap?: any; cronograma?: any[] }) => {
@@ -3754,7 +3773,7 @@ export default function App() {
   ) : null;
   // Pagina Project: uma unica instancia reusada por todas as areas, igual a de Notas.
   const projectsPage = currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions) ? (
-    <Cronogramas currentUser={currentUser} usuarios={usuarios} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} preloadedData={effectiveGlobalData} onAbrirNotas={abrirNotasDaArea} />
+    <Cronogramas onProjectSaved={receiveSavedProject} currentUser={currentUser} usuarios={usuarios} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} preloadedData={effectiveGlobalData} onAbrirNotas={abrirNotasDaArea} />
   ) : null;
   const contractNotesScopeCode = String(lockedContractCode || filtrosAtivos.contrato || '').trim();
   const contractNotesPage = currentUser ? (

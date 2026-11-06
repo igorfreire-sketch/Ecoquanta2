@@ -182,7 +182,8 @@ service cloud.firestore {
       }
     }
     match /accTerceirizadas/{document} {
-      allow read, delete: if isSignedIn();
+      allow read: if isSignedIn();
+      allow delete: if false;
       allow create, update: if isSignedIn() &&
         request.resource.data.keys().hasOnly(['nome', 'terceirizada', 'manual']) &&
         request.resource.data.nome is string && request.resource.data.nome.size() > 0 &&
@@ -193,7 +194,8 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
     match /qualidadeManual/{document} {
-      allow read, delete: if isSignedIn();
+      allow read: if isSignedIn();
+      allow delete: if false;
       allow create, update: if isSignedIn() && request.resource.data.origem == 'manual';
     }
 
@@ -276,36 +278,6 @@ service cloud.firestore {
     }
 
     match /atividadesIssues/{document} {
-      allow read, create, update: if isSignedIn();
-      allow delete: if false;
-    }
-
-    // Contract R5: signed-in access to new quality collections, no publishing here.
-    match /accOs/{document} {
-      allow read: if isSignedIn();
-      allow write: if false;
-      match /chunks/{chunk} {
-        allow read: if isSignedIn();
-        allow write: if false;
-      }
-    }
-    match /accResumo/{document} {
-      allow read: if isSignedIn();
-      allow write: if false;
-      match /chunks/{chunk} {
-        allow read: if isSignedIn();
-        allow write: if false;
-      }
-    }
-    match /accEdicoes/{document} {
-      allow read, create, update: if isSignedIn();
-      allow delete: if false;
-    }
-    match /accTerceirizadas/{document} {
-      allow read, create, update: if isSignedIn();
-      allow delete: if false;
-    }
-    match /qualidadeManual/{document} {
       allow read, create, update: if isSignedIn();
       allow delete: if false;
     }

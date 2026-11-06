@@ -180,7 +180,9 @@ async function writeCache(os: string, entry: CacheEntry) {
 }
 
 export function parseAccJson(json: string): AccIssue[] {
-  const parsed = JSON.parse(json || "[]");
+  let parsed = JSON.parse(json || "[]");
+  // OS grande: o importador grava em chunks o documento inteiro ({ os, hash, json }).
+  if (typeof parsed?.json === "string") parsed = JSON.parse(parsed.json);
   if (!Array.isArray(parsed))
     throw new Error("accOs: json deve conter uma lista.");
   return parsed as AccIssue[];

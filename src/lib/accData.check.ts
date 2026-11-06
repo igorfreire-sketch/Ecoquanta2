@@ -172,3 +172,10 @@ assert.throws(() => parseAccJson("{}"), /lista/);
 console.log(
   "accData.check: OK (filters, corrections, legacy, chunks, cache, import races)",
 );
+
+// Regression: chunked OS documents hold the whole envelope, not just the list.
+{
+  const { parseAccJson: parseEnvelope } = await import("./accData");
+  const issues = parseEnvelope(JSON.stringify({ os: "061", hash: "h", json: JSON.stringify([{ id: "1" }]) }));
+  if (issues.length !== 1) throw new Error("chunked envelope must yield the issue list");
+}

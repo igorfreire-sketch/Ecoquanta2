@@ -372,6 +372,7 @@ export default function Conformidade({
         />
       ) : (
         <>
+          {filterBar}
           <div className="grid gap-3 sm:grid-cols-4">
             {[
               ["Issues", total],

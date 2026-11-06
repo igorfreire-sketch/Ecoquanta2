@@ -50,7 +50,7 @@ Não muda marcadores nem dispara emails. Requer as autorizações Gmail, requisi
 externas, propriedades e triggers do Apps Script.
 
 Configurar `ACC_FIREBASE_SA` nas Script Properties com o JSON da conta de serviço.
-Nunca copiar a credencial para o repositório. `DRY_RUN` ausente significa `true`;
+Nunca copiar a credencial para o repositório. `ACC_DRY_RUN` ausente significa `true`;
 somente o valor literal `false` permite escrita. `accTesteSimulacao()` força dry-run
 e processa um lote do email mais recente, sem alterar Properties, triggers ou
 Firestore. A consulta padrão exige assunto MRK e "was shared with you".
@@ -68,7 +68,7 @@ O importador não adquire o script lock compartilhado com o agrupador de emails.
 esse sinalizador por propriedade é uma proteção cooperativa, não uma operação
 atômica de mutex. Execução ocupada reagenda sem lançar erro. Só o dono remove seu
 token. A continuação é recriada no `finally` sempre que há trabalho pendente e
-não é DRY_RUN, inclusive após falhas de autenticação, leitura ou persistência.
+não é ACC_DRY_RUN, inclusive após falhas de autenticação, leitura ou persistência.
 Fila fragmentada em Script Properties, gravada em lote com `setProperties`, respeita
 9 KB por valor, busca em páginas pequenas, prazo de processamento de 4 minutos
 reserva tempo para persistência, três tentativas por item e trigger temporário

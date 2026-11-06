@@ -134,7 +134,7 @@ function accCargaHistorica() { return accRun_('history',false); }
 function accContinuar_() { return accRun_('continue',false); }
 function accStatus() {
   var p = PropertiesService.getScriptProperties();
-  var state = { dryRun: p.getProperty('DRY_RUN') !== 'false', queue: accQueueRead_(p).length,
+  var state = { dryRun: p.getProperty('ACC_DRY_RUN') !== 'false', queue: accQueueRead_(p).length,
     running: JSON.parse(p.getProperty('ACC_RUNNING') || 'null'),
     discovery: JSON.parse(p.getProperty('ACC_DISCOVERY') || 'null'),
     last: JSON.parse(p.getProperty('ACC_LAST') || 'null') }; console.log(JSON.stringify(state)); return state;
@@ -262,7 +262,7 @@ function accPending_(p) {
   catch (e) { return true; } // A corrupt checkpoint must remain visible/retryable.
 }
 function accRun_(mode,forceDry) {
-  var started=Date.now(), p=PropertiesService.getScriptProperties(), dry=forceDry || p.getProperty('DRY_RUN')!=='false';
+  var started=Date.now(), p=PropertiesService.getScriptProperties(), dry=forceDry || p.getProperty('ACC_DRY_RUN')!=='false';
   var report={dryRun:dry,lidos:0,novos:0,alterados:0,erros:[],avisos:[],files:[]}, lease='', busy=false;
   try {
     if(!dry) {

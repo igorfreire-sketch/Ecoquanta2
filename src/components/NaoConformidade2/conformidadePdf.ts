@@ -206,7 +206,7 @@ function drawCover(doc: jsPDF, data: ConformidadePdfData, logoDataUrl?: string) 
   doc.text('RELATÓRIO EXECUTIVO', MARGIN, 39);
   doc.setFontSize(28);
   setColor(doc, 'text', COLORS.ink);
-  doc.text('Conformidade documental', MARGIN, 54);
+  doc.text('Qualidade', MARGIN, 54);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   setColor(doc, 'text', COLORS.muted);
@@ -222,8 +222,8 @@ function drawCover(doc: jsPDF, data: ConformidadePdfData, logoDataUrl?: string) 
 
   const gap = 5;
   const cardWidth = (CONTENT_W - gap * 3) / 4;
-  drawMetricCard(doc, 'Total analisado', data.totalAnalyzed, MARGIN, 98, cardWidth, COLORS.slate);
-  drawMetricCard(doc, 'Arquivos perfeitos', data.perfectFiles, MARGIN + cardWidth + gap, 98, cardWidth, COLORS.green, COLORS.greenSoft);
+  drawMetricCard(doc, 'Total de issues', data.totalAnalyzed, MARGIN, 98, cardWidth, COLORS.slate);
+  drawMetricCard(doc, 'Concluidas / fechadas', data.perfectFiles, MARGIN + cardWidth + gap, 98, cardWidth, COLORS.green, COLORS.greenSoft);
   drawMetricCard(doc, 'Não conformidades', data.totalNonConformities, MARGIN + (cardWidth + gap) * 2, 98, cardWidth, COLORS.orange, COLORS.orangeSoft);
   drawMetricCard(doc, 'Registros', data.recordCount, MARGIN + (cardWidth + gap) * 3, 98, cardWidth, COLORS.slateDark);
 
@@ -376,7 +376,7 @@ export function getConformidadePdfFilename(
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '') || fallback;
   const date = generatedAt.toISOString().slice(0, 10);
-  return `ecoquanta-conformidade-${slug(contractCode, 'todos')}-${slug(osCode, 'todas')}-${date}.pdf`;
+  return `ecoquanta-qualidade-${slug(contractCode, 'todos')}-${slug(osCode, 'todas')}-${date}.pdf`;
 }
 
 export function buildConformidadePdf(
@@ -388,7 +388,7 @@ export function buildConformidadePdf(
   addRankingPages(
     doc,
     'Não conformidades por disciplina',
-    'Quantidade T agrupada por disciplina. Todos os tipos no recorte de Contrato e OS.',
+    'Issues por setor no recorte de filtros.',
     data.ncByDiscipline,
     options.logoDataUrl,
   );

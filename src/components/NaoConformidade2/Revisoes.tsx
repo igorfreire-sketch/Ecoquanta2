@@ -1,1 +1,1 @@
-export default function Revisoes() { return null; }
+export default function Revisoes(_props: any) { return null; }

@@ -34,9 +34,16 @@ export interface AccResumo {
   updatedAt?: unknown;
   osVersions: Record<string, string>;
   empresas: string[];
-  totais?: Record<string, unknown>;
+  totais?: { cruzamentos?: AccCount[] } | AccCount[];
   ultimaImportacao?: { lidos?: number; novos?: number; alterados?: number; erros?: unknown[] };
 }
+
+export type AccCount = AccIssue & { count?: number };
+export type AccEdit = Partial<AccIssue> & { id: string; editadoPor: string; editadoEm: string };
+export const ACC_STATUSES = ['Aberto', 'Pendente', 'Em andamento', 'Em revisao', 'Em disputa', 'Nao aprovado', 'Rascunho', 'Concluido', 'Fechado'];
+export const issueKey = (issue: Pick<AccIssue, 'os' | 'id'>) => `${issue.os}-${issue.id}`;
+export const isAccDone = (status: string) => ['concluido', 'fechado'].includes(normalizeAccValue(status));
+export const issueWeight = (issue: AccCount) => issue.count ?? 1;
 
 export interface AccFilters {
   contrato?: string;
@@ -108,10 +115,10 @@ export function parseAccJson(json: string): AccIssue[] {
   return parsed as AccIssue[];
 }
 
-export function filterAccIssues(issues: AccIssue[], filters: AccFilters, terceirizadas: Set<string>) {
+export function filterAccIssues<T extends AccIssue>(issues: T[], filters: AccFilters, terceirizadas: Set<string>) {
   return issues.filter((issue) => {
     const month = String(issue.criadoEm || '').slice(0, 7);
-    const outsourced = terceirizadas.has(normalizeAccValue(issue.empresa)) ? 'sim' : 'nao';
+    const outsourced = isOutsourced(issue.empresa, terceirizadas) ? 'sim' : 'nao';
     return (!filters.contrato || normalizeAccValue(issue.contratoCodigo) === normalizeAccValue(filters.contrato))
       && (!filters.os || normalizeAccValue(issue.os) === normalizeAccValue(filters.os))
       && (!filters.mes || month === filters.mes)
@@ -122,31 +129,36 @@ export function filterAccIssues(issues: AccIssue[], filters: AccFilters, terceir
   });
 }
 
-export function countBy(issues: AccIssue[], field: keyof Pick<AccIssue, 'os' | 'setor' | 'tipo' | 'empresa' | 'status'>) {
+export function countBy(issues: AccCount[], field: keyof Pick<AccIssue, 'os' | 'setor' | 'tipo' | 'empresa' | 'status'>) {
   return Object.entries(issues.reduce<Record<string, number>>((counts, issue) => {
     const key = String(issue[field] || 'Nao informado').trim() || 'Nao informado';
-    counts[key] = (counts[key] || 0) + 1;
+    counts[key] = (counts[key] || 0) + issueWeight(issue);
     return counts;
   }, {})).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
 }
 
 export async function loadAccResumo(): Promise<AccResumo> {
   if (!resumoPromise) resumoPromise = fetchFirebaseDocument<AccResumo>('accResumo', 'atual')
-    .then((value) => value || { osVersions: {}, empresas: [] })
+    .then(async (value) => {
+      const raw = value as AccResumo & { chunkCount?: number; json?: string };
+      if (raw?.chunkCount) return JSON.parse((await fetchFirebaseDocumentChunks('accResumo', 'atual', raw.chunkCount)).join('')) as AccResumo;
+      return raw?.json ? JSON.parse(raw.json) as AccResumo : value || { osVersions: {}, empresas: [] };
+    })
     .catch((error) => { resumoPromise = null; throw error; });
   return resumoPromise;
 }
 
 export async function loadAccOsWith(os: string, hash: string, deps: AccDeps): Promise<AccIssue[]> {
-  const cached = await deps.readCache(os);
+  const cached = await deps.readCache(os).catch(() => null);
   if (cached?.hash === hash) return cached.issues;
   const document = await deps.fetchOs(os);
-  if (!document) return [];
+  if (!document) throw new Error(`accOs/${os}: documento ausente para hash ${hash}.`);
+  if (document.hash && document.hash !== hash) throw new Error(`accOs/${os}: importacao em andamento; reabra a pagina.`);
   const json = typeof document.json === 'string'
     ? document.json
     : (await deps.fetchChunks(os, Number(document.chunkCount || 0))).join('');
   const issues = parseAccJson(json);
-  await deps.writeCache(os, { hash, issues });
+  await deps.writeCache(os, { hash, issues }).catch(() => { /* Cache indisponivel nao impede leitura. */ });
   return issues;
 }
 
@@ -170,3 +182,42 @@ export async function loadManualQuality(contractCode?: string) {
 export async function loadAccTerceirizadas() {
   return fetchFirebaseCollection<{ id: string; nome: string; terceirizada: boolean; manual?: boolean }>('accTerceirizadas');
 }
+
+
+export function isOutsourced(empresa: string | undefined, checked: Set<string>) {
+  const name = normalizeAccValue(empresa);
+  return Boolean(name) && name !== 'quanta consultoria' && checked.has(name);
+}
+
+// Compact cross counts retain all dimensions so every combination of filters is exact.
+export function resumoRows(resumo: AccResumo): AccCount[] {
+  const totals = resumo.totais;
+  if (!totals) {
+    if (Object.keys(resumo.osVersions || {}).length) throw new Error('accResumo sem totais cruzados.');
+    return [];
+  }
+  const rows = Array.isArray(totals) ? totals : totals.cruzamentos;
+  if (!rows) {
+    if (!Object.keys(resumo.osVersions || {}).length) return [];
+    throw new Error('accResumo: esperado totais.cruzamentos (ver docs/acc-screen.md).');
+  }
+  return rows.map((row) => ({ ...row, criadoEm: row.criadoEm || String((row as AccCount & { mes?: string }).mes || ''), count: Number(row.count ?? 1) }));
+}
+
+export function applyAccEdit(issue: AccIssue, edit?: AccEdit): AccIssue {
+  if (!edit) return issue;
+  const { id: _id, editadoPor: _por, editadoEm: _em, ...patch } = edit;
+  return { ...issue, ...patch, id: issue.id, os: issue.os, origem: 'acc' };
+}
+
+export function correctResumo(rows: AccCount[], originals: AccIssue[], edits: AccEdit[]): AccCount[] {
+  const result = [...rows];
+  const byKey = new Map(edits.map((edit) => [edit.id, edit]));
+  originals.forEach((issue) => {
+    const edit = byKey.get(issueKey(issue));
+    if (edit) result.push({ ...issue, count: -1 }, { ...applyAccEdit(issue, edit), count: 1 });
+  });
+  return result;
+}
+
+export const browserAccCache = { readCache, writeCache };

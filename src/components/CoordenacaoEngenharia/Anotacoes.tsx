@@ -31,6 +31,7 @@ import {
 } from '../../lib/noteProposals';
 import type { CronogramaDoc } from '../SolucoesDigitais';
 import { addDias, criarLinhaVazia, diffDias, proximoSeq, type CronoRow } from '../../lib/cronoRow';
+import { joinSerializedCellParts } from '../../lib/noteCellDom';
 import CronogramaResumo from './CronogramaResumo';
 import MindMap from './MindMap';
 // Status/cor/colunas do banco "+ Demanda Digital" moram em DemandasDigitais.tsx (fonte unica -
@@ -564,15 +565,18 @@ export function serializeCellDom(no: Node): string {
   if (no.nodeType === Node.TEXT_NODE) return (no.nodeValue || '').replace(/ /g, ' ');
   if (no.nodeType !== Node.ELEMENT_NODE) return '';
   const elem = no as HTMLElement;
-  const inner = Array.from(elem.childNodes).map((filho) => serializeCellDom(filho)).join('');
+  const inner = joinSerializedCellParts(Array.from(elem.childNodes).map((filho) => ({
+    text: serializeCellDom(filho),
+    block: filho.nodeType === Node.ELEMENT_NODE && ['DIV', 'P'].includes((filho as Element).tagName),
+  })));
   switch (elem.tagName) {
     case 'STRONG': case 'B': return `**${inner}**`;
     case 'EM': case 'I': return `*${inner}*`;
     case 'S': case 'STRIKE': case 'DEL': return `~~${inner}~~`;
     case 'SPAN': return elem.style.color ? `[c:${rgbParaHex(elem.style.color)}]${inner}[/c]` : inner;
     case 'BR': return '\n';
-    // Enter ja vira texto '\n'. DIV/P aqui sao wrappers que o browser pode criar ao formatar um
-    // trecho; prefixar '\n' transformava uma formatacao em linha invisivel a cada novo wrap.
+    // A quebra entre DIV/P irmaos e preservada por joinSerializedCellParts; o wrapper isolado
+    // continua sem prefixo/sufixo para nao criar linha invisivel.
     case 'DIV': case 'P': return inner;
     default: return inner; // wrapper desconhecido (ex.: <font> que o navegador as vezes insere): so desembrulha
   }

@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from "react";
-import { issueKey, type AccEdit, type AccIssue } from "../../lib/accData";
+import { normalizeAccValue, issueKey, type AccEdit, type AccIssue } from "../../lib/accData";
 import {
   effectiveAcc,
   readQualityOs,
@@ -42,6 +42,9 @@ export default function Revisoes({
     draft: AccIssue;
     edit?: AccEdit;
   }>();
+  const [page, setPage] = useState(1);
+  const [query, setQuery] = useState("");
+  useEffect(() => { setPage(1); setEditing(undefined); }, [os, query]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let active = true;
@@ -63,7 +66,7 @@ export default function Revisoes({
       .finally(() => {
         if (active) setLoading(false);
       });
-    return () => {
+  return () => {
       active = false;
     };
   }, [os, data]);
@@ -89,6 +92,67 @@ export default function Revisoes({
     });
     setError("");
   };
+    const matching = rows.filter(original => {
+    const issue = original.origem === 'acc' ? effectiveAcc(original, data.edits) : original;
+    return normalizeAccValue([issue.id, issue.titulo, issue.descricao, issue.status, issue.setor, issue.tipo, issue.empresa].join(' ')).includes(normalizeAccValue(query));
+  });
+  const pages = Math.max(1, Math.ceil(matching.length / 50));
+  const currentPage = Math.min(page, pages);
+  const visibleRows = matching.slice((currentPage - 1) * 50, currentPage * 50);
+  const editForm = editing ? (
+        <form
+          className="rounded-xl border border-orange-200 bg-orange-50/30 p-5"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true);
+            setError("");
+            try {
+              validateIssue(editing.draft);
+              if (editing.original.origem === "acc")
+                await saveQualityEdit(
+                  editing.original,
+                  editing.draft,
+                  user,
+                  editing.edit,
+                );
+              else await saveQualityManual(editing.draft);
+              setEditing(undefined);
+              onSaved();
+            } catch (error) {
+              setError(
+                error instanceof Error ? error.message : "Falha ao salvar.",
+              );
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <h3 className="mb-4 font-bold">
+            Editar {issueKey(editing.original)}
+          </h3>
+          <IssueFields
+            issue={editing.draft}
+            original={editing.original}
+            edit={editing.edit}
+            options={options}
+            onChange={(draft) => setEditing({ ...editing, draft })}
+          />
+          <div className="mt-5 flex gap-3">
+            <button disabled={busy} className={qualityButtonClass}>
+              {busy ? "Salvando..." : "Salvar edicao"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              className="rounded-xl border px-4 py-2"
+              onClick={() => setEditing(undefined)}
+            >
+              Cancelar
+            </button>
+          </div>
+        </form>
+) : null;
+
   return (
     <section className="space-y-5 rounded-2xl bg-white p-6 shadow-sm">
       <div>
@@ -112,6 +176,12 @@ export default function Revisoes({
           ))}
         </select>
       </label>
+      {os && <div className="flex flex-wrap items-end gap-3">
+        <label className="min-w-56 flex-1 text-sm font-semibold">Buscar issues<input aria-label="Buscar issues" className={qualityInputClass} value={query} onChange={event => setQuery(event.target.value)} placeholder="ID, titulo, status, setor ou empresa" /></label>
+        <button aria-label="Pagina anterior" disabled={currentPage === 1} className="rounded border px-3 py-2 disabled:opacity-40" onClick={() => { setPage(currentPage - 1); setEditing(undefined); }}>Anterior</button>
+        <span role="status" className="py-2 text-sm">Pagina {currentPage} de {pages} ? {matching.length} itens ? 50 por pagina</span>
+        <button aria-label="Proxima pagina" disabled={currentPage === pages} className="rounded border px-3 py-2 disabled:opacity-40" onClick={() => { setPage(currentPage + 1); setEditing(undefined); }}>Proxima</button>
+      </div>}
       {loading && <p role="status">Carregando OS {os}...</p>}
       {error && (
         <p role="alert" className="text-red-700">
@@ -123,7 +193,7 @@ export default function Revisoes({
       )}
       {!loading && (
         <div className="divide-y divide-slate-200">
-          {rows.map((original) => {
+          {visibleRows.map((original) => {
             const issue =
               original.origem === "acc"
                 ? effectiveAcc(original, data.edits)
@@ -184,64 +254,13 @@ export default function Revisoes({
                     ))}
                   </dl>
                 </details>
+                {editing?.original.origem === original.origem && issueKey(editing.original) === issueKey(original) && editForm}
               </article>
             );
           })}
         </div>
       )}
-      {editing && (
-        <form
-          className="rounded-xl border border-orange-200 bg-orange-50/30 p-5"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            setBusy(true);
-            setError("");
-            try {
-              validateIssue(editing.draft);
-              if (editing.original.origem === "acc")
-                await saveQualityEdit(
-                  editing.original,
-                  editing.draft,
-                  user,
-                  editing.edit,
-                );
-              else await saveQualityManual(editing.draft);
-              setEditing(undefined);
-              onSaved();
-            } catch (error) {
-              setError(
-                error instanceof Error ? error.message : "Falha ao salvar.",
-              );
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <h3 className="mb-4 font-bold">
-            Editar {issueKey(editing.original)}
-          </h3>
-          <IssueFields
-            issue={editing.draft}
-            original={editing.original}
-            edit={editing.edit}
-            options={options}
-            onChange={(draft) => setEditing({ ...editing, draft })}
-          />
-          <div className="mt-5 flex gap-3">
-            <button disabled={busy} className={qualityButtonClass}>
-              {busy ? "Salvando..." : "Salvar edicao"}
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              className="rounded-xl border px-4 py-2"
-              onClick={() => setEditing(undefined)}
-            >
-              Cancelar
-            </button>
-          </div>
-        </form>
-      )}
+
     </section>
   );
 }

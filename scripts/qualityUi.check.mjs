@@ -401,6 +401,23 @@ try {
     .getByText("Nenhum item neste recorte.", { exact: false })
     .waitFor();
   matrix.push({ emptyResumo: "renders before import", total: 0 });
+  await page.goto(`${base}&large&tab=revisoes&os=061`);
+  await page.getByRole('heading', { name: 'Audit issue 1', exact: true }).waitFor();
+  assert.equal(await page.locator('article').count(), 50);
+  assert(await page.evaluate(() => document.documentElement.scrollHeight < 20000));
+  await page.getByRole('button', { name: 'Proxima pagina', exact: true }).click();
+  await page.getByRole('heading', { name: 'Audit issue 51', exact: true }).waitFor();
+  await page.getByLabel('Buscar issues', { exact: true }).fill('#1297');
+  const selected = page.locator('article');
+  await page.getByRole('heading', { name: 'Audit issue 1297', exact: true }).waitFor();
+  assert.equal(await selected.count(), 1);
+  await selected.getByRole('button', { name: 'Editar', exact: true }).click();
+  assert.equal(await selected.locator('form').count(), 1, 'form must be inside selected item');
+  assert.equal(await page.getByLabel('Contrato', { exact: true }).evaluate(input => input.required), false);
+  await page.getByLabel('Titulo', { exact: true }).fill('Audit edited without contract');
+  await page.getByRole('button', { name: 'Salvar edicao', exact: true }).click();
+  await page.getByRole('heading', { name: 'Audit edited without contract', exact: true }).waitFor();
+  matrix.push({ audit1298: '50/page, search and inline ACC edit without contract', passed: true });
   assert.deepEqual(errors, []);
   assert.deepEqual(firebaseRequests, []);
   await writeFile(

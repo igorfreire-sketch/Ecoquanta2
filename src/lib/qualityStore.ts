@@ -107,7 +107,7 @@ async function readQualityOsUncached(os: string, resumo: AccResumo) {
       },
       fetchOs: async (id) => {
         fixtureStats.osFetches[id] = (fixtureStats.osFetches[id] || 0) + 1;
-        return { json: JSON.stringify(fixture[id] || []) };
+        return { json: JSON.stringify(new URLSearchParams(location.search).has("large") ? (await import("../../scripts/fixtures/accLarge")).largeIssues : fixture[id] || []) };
       },
       fetchChunks: async () => [],
     });
@@ -128,6 +128,7 @@ export function loadQuality(): Promise<QualityData> {
           (await import("../../scripts/fixtures/accResumo")).default,
         );
         const params = new URLSearchParams(location.search);
+        if (params.has("large")) resumo = structuredClone((await import("../../scripts/fixtures/accLarge")).largeResumo);
         if (params.has("empty")) resumo = { osVersions: {}, empresas: [] };
         if (params.has("changed")) resumo.osVersions["061"] = "hash-061-v2";
         manual = JSON.parse(

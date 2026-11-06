@@ -1,7 +1,7 @@
 import React, { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import Conformidade from "../../src/components/NaoConformidade2/Conformidade";
-import Kanban from "../../src/components/NaoConformidade2/Kanban";
+import Kanban from "../../src/components/NaoConformidade2/QualityKanban";
 import { getFixtureStats } from "../../src/lib/qualityStore";
 import "../../src/index.css";
 const user = { nome: "Teste local", email: "fixture@example.test" };

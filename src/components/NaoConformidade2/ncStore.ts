@@ -88,6 +88,12 @@ function normalizeDiscipline(value: unknown) {
   return resolveDisciplineEntry(String(value || '')).normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 }
 
+// Setores da nota que tambem sao setores do usuario, com nomes normalizados (ELET - Eletrica = Eletrica).
+export function matchingUserSectors(user: AuthUserLike, sectors: string[]) {
+  const mine = new Set(getUserDisciplineList(user).map(normalizeDiscipline).filter(Boolean));
+  return sectors.filter((sector) => mine.has(normalizeDiscipline(sector)));
+}
+
 export function isNc2ConformidadeUser(user: AuthUserLike) {
   return getUserDisciplineList(user).some((discipline) => normalizeDiscipline(discipline).includes('conformidade'));
 }
@@ -170,6 +176,19 @@ export function safeAmount(value: unknown): number {
 export function getRecordItems(record: Nc2Record): Nc2Item[] {
   if (Array.isArray(record.itens) && record.itens.length > 0) return record.itens;
   return Array.isArray(record.itensT) ? record.itensT : [];
+}
+
+export function hasUnreadNc2Chat(record: Nc2Record, email?: string) {
+  const messages = record.observacoesHistorico || [];
+  if (!messages.length || typeof localStorage === 'undefined') return false;
+  const key = `nc2-chat-seen:${record.id}:${String(email || '').toLowerCase()}`;
+  return localStorage.getItem(key) !== messages[messages.length - 1].dataHora;
+}
+
+export function markNc2ChatSeen(record: Nc2Record, email?: string) {
+  const messages = record.observacoesHistorico || [];
+  if (!messages.length || typeof localStorage === 'undefined') return;
+  localStorage.setItem(`nc2-chat-seen:${record.id}:${String(email || '').toLowerCase()}`, messages[messages.length - 1].dataHora);
 }
 
 export function correctionStatus(item: Nc2Item): 'pendente' | 'corrigido' {

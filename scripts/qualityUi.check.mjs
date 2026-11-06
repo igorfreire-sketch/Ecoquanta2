@@ -90,7 +90,7 @@ try {
     ["Mes", "2026-11", 3],
     ["Setor", "Arquitetura", 3],
     ["Tipo de erro", "Desenho", 2],
-    ["Terceirizada", "sim", 3],
+    ["Terceirizado ou interno", "sim", 3],
     ["Status", "Aberto", 2],
   ]) {
     await filter(label, value, expected);
@@ -103,7 +103,7 @@ try {
     ["Mes", "2026-11"],
     ["Setor", "Elétrica"],
     ["Tipo de erro", "Relatorio"],
-    ["Terceirizada", "sim"],
+    ["Terceirizado ou interno", "sim"],
     ["Status", "Pendente"],
   ])
     await page

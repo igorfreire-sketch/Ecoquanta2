@@ -47,13 +47,13 @@ import LoginScreen, { AuthUser } from './components/LoginScreen';
 import CampoDialog from './components/CampoDialog';
 import {
   getSheetDisciplinas,
-  isConcluidaAntiga,
+  getSheetStatus,
   NoteProjectsContext,
   type AnnotationBanco,
   type AnnotationSheet,
 } from './components/CoordenacaoEngenharia/Anotacoes';
 import type { CronogramaDoc } from './components/SolucoesDigitais';
-import { isNc2Leader } from './components/NaoConformidade2/ncStore';
+import { isNc2Leader, matchingUserSectors } from './components/NaoConformidade2/ncStore';
 // ponytail: string literal em vez de importar CRONOGRAMAS_COLLECTION (runtime, nao so tipo) de
 // SolucoesDigitais.tsx — esse import puxaria o modulo inteiro (Atividades.tsx, CampoDialog etc.)
 // pro bundle principal em vez de ficar so no chunk lazy de <Cronogramas/>. O `import type` acima
@@ -166,7 +166,7 @@ const ControleEngenharia = React.lazy(() => import('./components/CoordenacaoEnge
 const Planejamento = React.lazy(() => import('./components/CoordenacaoEngenharia/DashboardEngenharia'));
 const ImportarEAP = React.lazy(() => import('./components/Planejamento/ImportarEAP'));
 const NaoConformidades = React.lazy(() => import('./components/NaoConformidade2/Conformidade'));
-// Resumo de Qualidade na Principal abre a OS selecionada em Revisoes.
+// Kanban original da Principal; cards antigos abrem a aba Qualidade.
 const Nc2Kanban = React.lazy(() => import('./components/NaoConformidade2/Kanban'));
 const Cronograma = React.lazy(() => import('./components/Cronograma'));
 const Cronogramas = React.lazy(() => import('./components/Cronogramas'));
@@ -1868,18 +1868,18 @@ export default function App() {
   // Cards do kanban de Demandas Digitais derivados dos bancos "+ Demanda Digital" das notas
   // (a nota e a dona do dado, este e so leitura - mesmo padrao do "+ Project"/CronogramaDoc).
   const noteDemands = React.useMemo(() => mapNotesToDemandas(notes), [notes]);
-  // Notas que aparecem no Kanban da Principal, sem as concluidas ha 10+ dias (essas vivem na aba
+  // Notas abertas no Kanban da Principal: citado ou setor (concluidas vivem na aba
   // "Notas Concluidas" de Anotacoes.tsx). As do seu setor so pra lider/coordenador (isNc2Leader,
   // mesmo gate dos cards de conformidade); as que te marcaram, ou privadas suas, aparecem pra
   // qualquer usuario (dono ve a propria nota privada, mas ela nao vaza pro setor).
   const notasKanbanPrincipal = React.useMemo(() => {
     if (!currentUser) return [];
-    const ehLider = isNc2Leader(currentUser);
-    const minhasDisciplinas = new Set(getUserDisciplineList(currentUser));
     return notes.filter((sheet) => (
-      !isConcluidaAntiga(sheet)
+      getSheetStatus(sheet) !== 'concluido'
       && (
-        (sheet.autorEmail !== currentUser.email && ehLider && sheet.publica !== false && getSheetDisciplinas(sheet).some((item) => minhasDisciplinas.has(item)))
+        // Dono precisa ver o card para aprovar a acao pendente.
+        (sheet.pendingProposal && sheet.autorEmail === currentUser.email)
+        || (sheet.publica !== false && matchingUserSectors(currentUser, getSheetDisciplinas(sheet)).length > 0)
         || (sheet.marcadosUsuarios || []).includes(currentUser.email)
         || (sheet.publica === false && sheet.autorEmail === currentUser.email)
       )
@@ -2741,7 +2741,11 @@ export default function App() {
           ? acceptNoteProposal(existing, currentUser.email, now)
           : rejectNoteProposal(existing, currentUser.email);
       } else {
-        saved = applyNoteSave(existing, sheet, currentUser, now);
+        // Lider/coordenador do setor citado so propoe: a mudanca espera a aprovacao do dono.
+        const canProposeBySector = Boolean(existing) && isNc2Leader(currentUser)
+          && existing!.publica !== false
+          && matchingUserSectors(currentUser, getSheetDisciplinas(existing!)).length > 0;
+        saved = applyNoteSave(existing, sheet, currentUser, now, canProposeBySector);
         if (existing) {
           saved = {
             ...saved,
@@ -4254,8 +4258,7 @@ export default function App() {
                     onAbrirNota={abrirNotaNotificada}
                     currentUser={{ nome: currentUser.nome, email: currentUser.email, role: currentUser.role, isAdmin: currentUser.isAdmin, disciplina: currentUser.disciplina, disciplinas: currentUser.disciplinas }}
                     onSalvarNota={saveAnnotationSheet}
-                    onOpenOs={(os) => {
-                      setPendingQualityOs(os);
+                    onEdit={() => {
                       setNc2SubTab('revisoes');
                       setActiveTab('nc2');
                     }}

@@ -97,6 +97,7 @@ export interface AccFilters {
   setor?: string;
   tipo?: string;
   terceirizada?: string;
+  empresa?: string;
   status?: string;
 }
 
@@ -179,7 +180,9 @@ async function writeCache(os: string, entry: CacheEntry) {
 }
 
 export function parseAccJson(json: string): AccIssue[] {
-  const parsed = JSON.parse(json || "[]");
+  let parsed = JSON.parse(json || "[]");
+  // OS grande: o importador grava em chunks o documento inteiro ({ os, hash, json }).
+  if (typeof parsed?.json === "string") parsed = JSON.parse(parsed.json);
   if (!Array.isArray(parsed))
     throw new Error("accOs: json deve conter uma lista.");
   return parsed as AccIssue[];
@@ -213,6 +216,8 @@ export function filterAccIssues<T extends AccIssue>(
       (!filters.tipo ||
         normalizeAccValue(issue.tipo) === normalizeAccValue(filters.tipo)) &&
       (!filters.terceirizada || outsourced === filters.terceirizada) &&
+      (!filters.empresa ||
+        normalizeAccValue(issue.empresa) === normalizeAccValue(filters.empresa)) &&
       (!filters.status ||
         normalizeAccValue(issue.status) === normalizeAccValue(filters.status))
     );

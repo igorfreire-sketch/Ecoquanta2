@@ -53,3 +53,12 @@ for (const name of ['appData', 'nc2Records', 'contractPriorities', 'contractInte
 }
 
 console.log('firestoreRules: OK');
+
+for (const name of ['accOs', 'accResumo']) {
+  const block = rules.match(new RegExp(`match /${name}/\\{document\\} \\{([\\s\\S]*?)\\n    \\}`))?.[1] || '';
+  assert.equal((block.match(/allow read: if isSignedIn\(\);/g) || []).length, 2, `${name}: root and chunks require auth`);
+  assert.equal((block.match(/allow write: if false;/g) || []).length, 2, `${name}: root and chunks deny client writes`);
+}
+assert.match(rules, /match \/accTerceirizadas\/\{document\}[\s\S]*?terceirizada is bool/);
+assert.match(rules, /match \/qualidadeManual\/\{document\}[\s\S]*?origem == 'manual'/);
+console.log('firestoreRules ACC: OK');

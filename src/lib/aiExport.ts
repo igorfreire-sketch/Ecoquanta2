@@ -6,6 +6,7 @@
 // one-liners de migracao de campo legado - reimplementados abaixo em vez de importados.
 import type { AnnotationBanco, AnnotationSheet, AnnotationTextBlock } from '../components/CoordenacaoEngenharia/Anotacoes';
 import type { FeedbackReport, FeedbackReportStatus } from '../types/feedbackReport';
+import { formatFeedbackDate } from './feedbackReports';
 
 // Ordem e rotulos identicos ao Kanban de DemandasDigitais.tsx:15-20.
 const COLUNAS: Array<{ titulo: string; statuses: FeedbackReportStatus[] }> = [
@@ -116,7 +117,7 @@ function notaParaMarkdown(nota: AnnotationSheet): string {
 function demandaParaMarkdown(demanda: FeedbackReport): string {
   const tipo = demanda.kind === 'bug' ? 'bug' : demanda.kind === 'request' ? 'pedido de alteração' : 'ideia';
   const titulo = demanda.title || '(sem título)';
-  const partes = [`**${titulo}**`, `(${tipo}, status: ${demanda.status}, autor: ${demanda.authorEmail}, rota: ${demanda.route})`];
+  const partes = [`**${titulo}**`, `(${tipo}, status: ${demanda.status}, autor: ${demanda.authorEmail}, data: ${formatFeedbackDate(demanda.createdAt)}, rota: ${demanda.route})`];
   const linhas = [`- ${partes.join(' ')}`];
   if (demanda.body && demanda.body.trim()) {
     linhas.push(`  ${demanda.body.trim().replace(/\n/g, '\n  ')}`);

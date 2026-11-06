@@ -64,7 +64,7 @@ import BancoLinksPage from './components/BancoLinksPage';
 import FeedbackLauncher, { type FeedbackDraft } from './components/FeedbackLauncher';
 import IaExport from './components/IaExport';
 import DemandasDigitais, { mapNotesToDemandas } from './components/DemandasDigitais';
-import { createFeedbackReport, listFeedbackReports, subscribeFeedbackReports } from './lib/feedbackReports';
+import { buildFeedbackBreadcrumb, createFeedbackReport, listFeedbackReports, subscribeFeedbackReports } from './lib/feedbackReports';
 import type { FeedbackReport, FeedbackReportStatus } from './types/feedbackReport';
 
 // Firestore rejects nested arrays, so `rows: string[][]` (legado) and `bancos` (cada um com seu
@@ -1812,11 +1812,11 @@ export default function App() {
     );
   }, [currentUser, loadFeedbackReports]);
 
-  const submitFeedback = useCallback(async (draft: FeedbackDraft) => {
+  const submitFeedback = useCallback(async (draft: FeedbackDraft, breadcrumb: string) => {
     if (!currentUser) throw new Error('Entre novamente para enviar um relato.');
     await createFeedbackReport({
       kind: draft.kind,
-      route: draft.target?.path || `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      route: buildFeedbackBreadcrumb(breadcrumb, draft.target?.dataTarget),
       targetToken: draft.target?.dataTarget,
       xRatio: draft.target?.x,
       yRatio: draft.target?.y,
@@ -3894,6 +3894,7 @@ export default function App() {
   })();
 
   // Sub-abas vivem na barra da esquerda, com Project aninhado sob Notas.
+  const feedbackBreadcrumb = buildFeedbackBreadcrumb('Ecoquanta2', AREA_LABELS[activeTab], headerTabs.find((tab) => tab.active)?.label);
   const abasVisiveis = headerTabs.filter((tab) => tab.key !== 'alocacoes');
   subAbasNavRef.current = abasVisiveis;
   const subNav = abasVisiveis.length > 0 ? (
@@ -4174,7 +4175,7 @@ export default function App() {
           </div>
         )}
 
-        <main className="relative z-10 flex-1 overflow-y-auto px-8 pb-8 pt-2">
+        <main data-feedback-target="Conteudo principal" className="relative z-10 flex-1 overflow-y-auto px-8 pb-8 pt-2">
           <TabErrorBoundary resetKey={`${activeTab}:${principalSubTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${compatibilizacaoSubTab}:${adminSubTab}:${cronogramaSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
             {/* Troca de pagina = fade out + fade in (~0.5s no total) pra suavizar e cobrir o load.
@@ -4319,7 +4320,7 @@ export default function App() {
         </main>
       </div>
     </div>
-    {currentUser && <FeedbackLauncher onSubmit={submitFeedback} />}
+    {currentUser && <FeedbackLauncher breadcrumb={feedbackBreadcrumb} onSubmit={submitFeedback} />}
     </MotionConfig>
     </NoteProjectsContext.Provider>
   );

@@ -1,3 +1,4 @@
+import { REGEX_LINK_MARKDOWN, extrairLinkDaCelula } from '../../lib/cellLink';
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Brush, CalendarClock, Check, ChevronLeft, ChevronRight, Clock, Copy, FileSpreadsheet, FileText, Globe, GripHorizontal, GripVertical, History, Link2, ListChecks, Lock, Merge, MoreVertical, Scaling, Settings, Split, Trash2, X } from 'lucide-react';
@@ -374,14 +375,8 @@ function formatDateBR(value?: string) {
 
 // 1o link (markdown [label](url) ou URL solta) achado no texto da celula. Usado pro icone de
 // abrir a landando dentro da propria celula, sem precisar entrar em modo de edicao.
-export const REGEX_LINK_MARKDOWN = /\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/;
-export const REGEX_URL_SOLTA = /(https?:\/\/[^\s)]+)/;
-export function extrairLinkDaCelula(texto: string): string | null {
-  const viaMarkdown = REGEX_LINK_MARKDOWN.exec(texto || '');
-  if (viaMarkdown) return viaMarkdown[2];
-  const viaUrl = REGEX_URL_SOLTA.exec(texto || '');
-  return viaUrl ? viaUrl[1] : null;
-}
+export { REGEX_LINK_MARKDOWN, extrairLinkDaCelula } from '../../lib/cellLink';
+
 
 // Rotulo do link markdown "[rotulo](url)" - so existe pra esse formato (URL solta nao tem
 // rotulo proprio, mostra ela mesma). Usado pra exibir a celula em modo "visualizacao".

@@ -1,3 +1,4 @@
+import { DEFAULT_DISCIPLINES } from "./disciplineCatalog";
 import {
   fetchFirebaseCollection,
   fetchFirebaseDocument,
@@ -112,6 +113,13 @@ const memoryCache = new Map<string, CacheEntry>();
 const DB_NAME = "ecoquanta-acc";
 const STORE_NAME = "os";
 
+// Sector display has one source: the app's discipline catalog. Stored codes stay untouched.
+export function qualitySectorLabel(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return 'Setor nao informado';
+  return DEFAULT_DISCIPLINES.find(entry => entry.aliases.some(alias => normalizeAccValue(alias) === normalizeAccValue(raw)))?.name || raw;
+}
+
 export function normalizeAccValue(value: unknown) {
   return String(value || "")
     .normalize("NFD")
@@ -195,7 +203,7 @@ export function filterAccIssues<T extends AccIssue>(
         normalizeAccValue(issue.os) === normalizeAccValue(filters.os)) &&
       (!filters.mes || month === filters.mes) &&
       (!filters.setor ||
-        normalizeAccValue(issue.setor) === normalizeAccValue(filters.setor)) &&
+        normalizeAccValue(qualitySectorLabel(issue.setor)) === normalizeAccValue(qualitySectorLabel(filters.setor))) &&
       (!filters.tipo ||
         normalizeAccValue(issue.tipo) === normalizeAccValue(filters.tipo)) &&
       (!filters.terceirizada || outsourced === filters.terceirizada) &&
@@ -211,8 +219,7 @@ export function countBy(
 ) {
   return Object.entries(
     issues.reduce<Record<string, number>>((counts, issue) => {
-      const key =
-        String(issue[field] || "Nao informado").trim() || "Nao informado";
+      const key = field === "setor" ? qualitySectorLabel(issue.setor) : String(issue[field] || "Nao informado").trim() || "Nao informado";
       counts[key] = (counts[key] || 0) + issueWeight(issue);
       return counts;
     }, {}),

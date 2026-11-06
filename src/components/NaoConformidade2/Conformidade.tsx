@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  qualitySectorLabel,
   countBy,
   filterAccIssues,
   isAccDone,
@@ -149,7 +150,7 @@ export default function Conformidade({
   const unique = (field: keyof AccIssue) =>
     [
       ...new Set<string>(
-        rows.map((row) => String(row[field] || "")).filter(Boolean),
+        rows.map((row) => field === "setor" ? qualitySectorLabel(row[field]) : String(row[field] || "")).filter(Boolean),
       ),
     ].sort();
   const osValues = [
@@ -391,7 +392,7 @@ export default function Conformidade({
             <div className="max-h-96 overflow-auto">
               {filterAccIssues(data.legacy, filters, checked).map((issue) => (
                 <p key={issue.id} className="border-t py-2 text-sm">
-                  OS {issue.os} · {issue.titulo} · {issue.setor} ·{" "}
+                  OS {issue.os} · {issue.titulo} · {qualitySectorLabel(issue.setor)} ·{" "}
                   {issue.status} · {issue.empresa} · {issue.descricao}
                 </p>
               ))}

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ACC_STATUSES, type AccEdit, type AccIssue } from "../../lib/accData";
+import { qualitySectorLabel, ACC_STATUSES, type AccEdit, type AccIssue } from "../../lib/accData";
 import { saveQualityManual } from "../../lib/qualityStore";
 
 export const QUALITY_FIELDS: Array<{
@@ -69,7 +69,7 @@ export function IssueFields({
               }
             >
               {[
-                ...new Set([...ACC_STATUSES, issue.status].filter(Boolean)),
+                ...new Set([...qualitySectorLabel, ACC_STATUSES, issue.status].filter(Boolean)),
               ].map((status) => (
                 <option key={status}>{status}</option>
               ))}
@@ -78,7 +78,7 @@ export function IssueFields({
             <textarea
               className={qualityInputClass}
               aria-label={label}
-              value={fieldValue(issue[key])}
+              value={key === "setor" && issue.setor ? qualitySectorLabel(issue.setor) : fieldValue(issue[key])}
               onChange={(event) =>
                 onChange({
                   ...issue,
@@ -96,8 +96,9 @@ export function IssueFields({
                 aria-label={label}
                 required={required && !(issue.origem === "acc" && key === "contratoCodigo")}
                 disabled={original?.origem === "acc" && key === "os"}
+                placeholder={key === "setor" ? "Setor nao informado" : undefined}
                 list={`quality-${key}`}
-                value={fieldValue(issue[key])}
+                value={key === "setor" && issue.setor ? qualitySectorLabel(issue.setor) : fieldValue(issue[key])}
                 onChange={(event) =>
                   onChange({ ...issue, [key]: event.target.value })
                 }
@@ -113,7 +114,7 @@ export function IssueFields({
           )}
           {edit && Object.hasOwn(edit, key) && (
             <small className="block text-amber-800">
-              Editado · ACC: {fieldValue(original?.[key]) || "(vazio)"}
+              Editado · ACC: {key === "setor" ? qualitySectorLabel(original?.[key]) : fieldValue(original?.[key]) || "(vazio)"}
             </small>
           )}
           {["criadoEm", "vencimento", "atualizadoEm", "fechadoEm"].includes(

@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from "react";
-import { normalizeAccValue, issueKey, type AccEdit, type AccIssue } from "../../lib/accData";
+import { qualitySectorLabel, normalizeAccValue, issueKey, type AccEdit, type AccIssue } from "../../lib/accData";
 import {
   effectiveAcc,
   readQualityOs,
@@ -94,7 +94,7 @@ export default function Revisoes({
   };
     const matching = rows.filter(original => {
     const issue = original.origem === 'acc' ? effectiveAcc(original, data.edits) : original;
-    return normalizeAccValue([issue.id, issue.titulo, issue.descricao, issue.status, issue.setor, issue.tipo, issue.empresa].join(' ')).includes(normalizeAccValue(query));
+    return normalizeAccValue([issue.id, issue.titulo, issue.descricao, issue.status, issue.setor, qualitySectorLabel(issue.setor), issue.tipo, issue.empresa].join(' ')).includes(normalizeAccValue(query));
   });
   const pages = Math.max(1, Math.ceil(matching.length / 50));
   const currentPage = Math.min(page, pages);
@@ -215,7 +215,7 @@ export default function Revisoes({
                     </p>
                     <h3 className="mt-1 font-bold">{issue.titulo}</h3>
                     <p className="mt-1 text-sm text-slate-600">
-                      {issue.setor} · {issue.tipo} ·{" "}
+                      {qualitySectorLabel(issue.setor)} · {issue.tipo} ·{" "}
                       {issue.empresa || "Interno"}
                     </p>
                   </div>
@@ -242,11 +242,11 @@ export default function Revisoes({
                         <dd className="whitespace-pre-wrap break-words">
                           {Array.isArray(issue[key])
                             ? (issue[key] as string[]).join(", ")
-                            : String(issue[key] ?? "")}
+                            : key === "setor" ? qualitySectorLabel(issue[key]) : String(issue[key] ?? "")}
                           {edit && Object.hasOwn(edit, key) && (
                             <small className="block text-amber-800">
                               Editado · ACC:{" "}
-                              {String(original[key] || "(vazio)")}
+                              {key === "setor" ? qualitySectorLabel(original[key]) : String(original[key] || "(vazio)")}
                             </small>
                           )}
                         </dd>

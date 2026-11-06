@@ -89,7 +89,7 @@ try {
     ["Contrato", "MRK"],
     ["OS", "061"],
     ["Mes", "2026-11"],
-    ["Setor", "Eletrica"],
+    ["Setor", "Elétrica"],
     ["Tipo de erro", "Relatorio"],
     ["Terceirizada", "sim"],
     ["Status", "Pendente"],
@@ -231,7 +231,7 @@ try {
   await page.getByLabel("Filtro OS", { exact: true }).selectOption("");
   await metric("Issues", 6);
   await metric("Abertas", 3);
-  await filter("Setor", "Eletrica", 2);
+  await filter("Setor", "Elétrica", 2);
   await filter("Status", "Fechado", 1);
   matrix.push({
     overlay: "061-#1 becomes Fechado / Eletrica",
@@ -417,6 +417,11 @@ try {
   await page.getByLabel('Titulo', { exact: true }).fill('Audit edited without contract');
   await page.getByRole('button', { name: 'Salvar edicao', exact: true }).click();
   await page.getByRole('heading', { name: 'Audit edited without contract', exact: true }).waitFor();
+  await page.getByLabel('Buscar issues', { exact: true }).fill('Arquitetura');
+  await page.getByRole('heading', { name: 'Audit issue 1', exact: true }).waitFor();
+  assert.equal(await page.locator('article').count(), 50);
+  await page.getByLabel('Buscar issues', { exact: true }).fill('#1298');
+  await page.locator('article').getByText('Setor nao informado', { exact: false }).waitFor();
   matrix.push({ audit1298: '50/page, search and inline ACC edit without contract', passed: true });
   assert.deepEqual(errors, []);
   assert.deepEqual(firebaseRequests, []);

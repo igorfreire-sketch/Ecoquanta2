@@ -69,7 +69,7 @@ export function IssueFields({
               }
             >
               {[
-                ...new Set([...qualitySectorLabel, ACC_STATUSES, issue.status].filter(Boolean)),
+                ...new Set([...ACC_STATUSES, issue.status].filter(Boolean)),
               ].map((status) => (
                 <option key={status}>{status}</option>
               ))}

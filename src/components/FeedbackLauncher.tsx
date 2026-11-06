@@ -18,16 +18,17 @@ export interface FeedbackDraft {
 }
 
 interface FeedbackLauncherProps {
-  onSubmit: (draft: FeedbackDraft) => Promise<void> | void;
+  breadcrumb: string;
+  onSubmit: (draft: FeedbackDraft, breadcrumb: string) => Promise<void> | void;
 }
 
 type LauncherMode = 'closed' | 'menu' | 'bug-target' | 'idea-form' | 'idea-target' | 'form';
 type HoveredTarget = { left: number; top: number; width: number; height: number };
 
-function getTarget(event: PointerEvent, target: Element | null): FeedbackTarget {
+function getTarget(event: PointerEvent, target: Element | null, breadcrumb: string): FeedbackTarget {
   const marker = target?.closest<HTMLElement>('[data-feedback-target]')?.getAttribute('data-feedback-target') || undefined;
   return {
-    path: window.location.pathname,
+    path: breadcrumb,
     x: Math.round((event.clientX / Math.max(window.innerWidth, 1)) * 10000) / 10000,
     y: Math.round((event.clientY / Math.max(window.innerHeight, 1)) * 10000) / 10000,
     ...(marker ? { dataTarget: marker.slice(0, 120) } : {}),
@@ -46,7 +47,7 @@ function getTargetRect(target: Element | null): HoveredTarget | null {
   return { left, top, width, height };
 }
 
-export default function FeedbackLauncher({ onSubmit }: FeedbackLauncherProps) {
+export default function FeedbackLauncher({ breadcrumb, onSubmit }: FeedbackLauncherProps) {
   const [mode, setMode] = React.useState<LauncherMode>('closed');
   const [draft, setDraft] = React.useState<FeedbackDraft>({ kind: 'bug', title: '', description: '' });
   const [sending, setSending] = React.useState(false);
@@ -89,7 +90,7 @@ export default function FeedbackLauncher({ onSubmit }: FeedbackLauncherProps) {
       event.preventDefault();
       event.stopPropagation();
       if (!target) return;
-      setDraft((current) => ({ ...current, target: getTarget(event, target) }));
+      setDraft((current) => ({ ...current, target: getTarget(event, target, breadcrumb) }));
       setMode('form');
     };
     window.addEventListener('pointermove', onPointerMove, true);
@@ -99,7 +100,7 @@ export default function FeedbackLauncher({ onSubmit }: FeedbackLauncherProps) {
       window.removeEventListener('pointerdown', onPointerDown, true);
       document.body.style.cursor = previousCursor;
     };
-  }, [mode]);
+  }, [breadcrumb, mode]);
 
   const chooseBug = () => {
     setDraft({ kind: 'bug', title: '', description: '' });
@@ -130,7 +131,7 @@ export default function FeedbackLauncher({ onSubmit }: FeedbackLauncherProps) {
     setSending(true);
     setError('');
     try {
-      await onSubmit({ ...draft, title: draft.title.trim(), description: draft.description.trim() });
+      await onSubmit({ ...draft, title: draft.title.trim(), description: draft.description.trim() }, draft.target?.path || breadcrumb);
       close();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Não foi possível enviar agora.');

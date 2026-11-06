@@ -48,6 +48,7 @@ function report(overrides: Partial<FeedbackReport>): FeedbackReport {
 
 // Pedido não pode virar ideia no pacote que a IA usará para propor o plano.
 assert.ok(buildAiMarkdown([], [report({ kind: 'request', title: 'Trocar campo' })]).includes('pedido de alteração'));
+assert.ok(buildAiMarkdown([], [report({ createdAt: { toDate: () => new Date(2026, 10, 6, 14, 5) } as never })]).includes('data: 06/11/2026 14:05'));
 
 // ---- nota vazia (sem bancos/textos/checklists) nao quebra ----
 {

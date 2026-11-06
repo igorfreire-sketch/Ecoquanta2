@@ -16,11 +16,53 @@ import type {
 
 export const FEEDBACK_REPORTS_COLLECTION = 'feedbackReports';
 
+export function isQuantaDashReport(report: Pick<FeedbackReport, 'route'>): boolean {
+  return report.route.trim().toLowerCase().startsWith('quanta-dash');
+}
+
 const MAX_ROUTE_LENGTH = 500;
 const MAX_TARGET_TOKEN_LENGTH = 200;
 const MAX_TITLE_LENGTH = 200;
 const MAX_BODY_LENGTH = 5_000;
 
+export function buildFeedbackBreadcrumb(...segments: Array<string | null | undefined>): string {
+  return segments.map((segment) => String(segment || '').trim()).filter(Boolean).join(' › ').slice(0, MAX_ROUTE_LENGTH);
+}
+
+function feedbackDate(value: unknown): Date | null {
+  if (!value) return null;
+  let date: Date;
+  if (value instanceof Date) date = value;
+  else if (typeof value === 'string') date = new Date(value);
+  else if (typeof value === 'object' && 'toDate' in value && typeof (value as { toDate?: unknown }).toDate === 'function') {
+    date = (value as { toDate: () => Date }).toDate();
+  } else if (typeof value === 'object' && 'seconds' in value && typeof (value as { seconds?: unknown }).seconds === 'number') {
+    date = new Date((value as { seconds: number }).seconds * 1000);
+  } else return null;
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function formatFeedbackDate(value: unknown): string {
+  const date = feedbackDate(value);
+  if (!date) return 'Data nao registrada';
+  const pad = (number: number) => String(number).padStart(2, '0');
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export function compareFeedbackCreatedAt(a: { createdAt: unknown }, b: { createdAt: unknown }): number {
+  const aTime = feedbackDate(a.createdAt)?.getTime() ?? Number.POSITIVE_INFINITY;
+  const bTime = feedbackDate(b.createdAt)?.getTime() ?? Number.POSITIVE_INFINITY;
+  return aTime === bTime ? 0 : aTime - bTime;
+}
+
+export function formatFeedbackLocation(report: Pick<FeedbackReport, 'route' | 'xRatio' | 'yRatio'>): string {
+  const route = report.route.trim();
+  if (route && route !== '/') return route;
+  const coordinates = report.xRatio !== undefined && report.yRatio !== undefined
+    ? ` · ${Math.round(report.xRatio * 100)}%, ${Math.round(report.yRatio * 100)}%`
+    : '';
+  return `Aba nao registrada${coordinates}`;
+}
 /**
  * Deliberately conservative email key. It only applies the normalization the
  * existing app already uses (trim + lowercase); provider-specific rewrites

@@ -66,7 +66,7 @@ import BancoLinksPage from './components/BancoLinksPage';
 import FeedbackLauncher, { type FeedbackDraft } from './components/FeedbackLauncher';
 import IaExport from './components/IaExport';
 import DemandasDigitais, { mapNotesToDemandas } from './components/DemandasDigitais';
-import { createFeedbackReport, listFeedbackReports, subscribeFeedbackReports } from './lib/feedbackReports';
+import { buildFeedbackBreadcrumb, createFeedbackReport, listFeedbackReports, subscribeFeedbackReports } from './lib/feedbackReports';
 import type { FeedbackReport, FeedbackReportStatus } from './types/feedbackReport';
 
 // Firestore rejects nested arrays, so `rows: string[][]` (legado) and `bancos` (cada um com seu
@@ -151,6 +151,7 @@ import {
   isFirebaseConfigured,
   hashPasswordLikeAppsScript,
   mutateFirebaseAppData,
+  mergeAdminSnapshotForWrite,
   subscribeFirebaseAppData,
   replaceFirebaseAppData,
   canDeleteNote,
@@ -1013,7 +1014,11 @@ function mergeUserAccessRecords(...sources: any[][]): UserAccessRecord[] {
       if (!raw || !(raw.email || raw.id)) return;
       const user = normalizeUserAccessRecord(raw);
       const email = normalizeUserText(user.email || user.id);
-      if (!email || byEmail.has(email)) return;
+      if (!email) return;
+      // Primeira fonte ganha, exceto quando o registro guardado e vazio (sem cargo nem abas,
+      // ex.: appData/admin reescrito pelo Apps Script) e o seguinte tem acesso de verdade.
+      const kept = byEmail.get(email);
+      if (kept && (kept.adminReviewed || !user.adminReviewed)) return;
       byEmail.set(email, user);
     });
   });
@@ -1792,6 +1797,7 @@ export default function App() {
   const adminDraftVersionRef = React.useRef(0);
   const adminDraftRef = React.useRef<AdminSnapshotState | null>(null);
   const adminUserBaselineRef = React.useRef<UserAccessRecord[]>([]);
+  const adminDatabaseLinksBaselineRef = React.useRef<DatabaseLinkRecord[]>([]);
   const deletedUserEmailsRef = React.useRef<Set<string>>(new Set());
   const databaseLinksComSeed = React.useMemo(() => withSeedDatabaseLinks(databaseLinks), [databaseLinks]);
 
@@ -1821,11 +1827,11 @@ export default function App() {
     );
   }, [currentUser, loadFeedbackReports]);
 
-  const submitFeedback = useCallback(async (draft: FeedbackDraft) => {
+  const submitFeedback = useCallback(async (draft: FeedbackDraft, breadcrumb: string) => {
     if (!currentUser) throw new Error('Entre novamente para enviar um relato.');
     await createFeedbackReport({
       kind: draft.kind,
-      route: draft.target?.path || `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      route: buildFeedbackBreadcrumb(breadcrumb, draft.target?.dataTarget),
       targetToken: draft.target?.dataTarget,
       xRatio: draft.target?.x,
       yRatio: draft.target?.y,
@@ -2091,9 +2097,14 @@ export default function App() {
     };
   }, [buildAdminFirebaseSnapshot, currentUser, requestAdminConfirmation]);
 
-  const writeAdminSnapshotToFirebase = useCallback(async (snapshot: Record<string, any>) => {
-    if (!isFirebaseConfigured()) return;
-    await replaceFirebaseAppData('admin', snapshot);
+  const writeAdminSnapshotToFirebase = useCallback(async (
+    snapshot: Record<string, any>,
+    editedFields?: readonly AdminEditableField[],
+    baseDatabaseLinks: readonly DatabaseLinkRecord[] = [],
+  ) => {
+    if (!isFirebaseConfigured()) return snapshot;
+    return mutateFirebaseAppData<Record<string, any>>('admin', (current) =>
+      mergeAdminSnapshotForWrite(current, snapshot, editedFields, baseDatabaseLinks));
   }, []);
 
   const syncAdminSnapshotToFirebase = useCallback(async (overrides?: Parameters<typeof buildAdminFirebaseSnapshot>[0]) => {
@@ -2102,8 +2113,11 @@ export default function App() {
       ...(overrides || {}),
     };
     const { snapshot } = await prepareAdminSnapshotForSave(draftState);
-    await writeAdminSnapshotToFirebase(snapshot);
-    return snapshot;
+    return writeAdminSnapshotToFirebase(
+      snapshot,
+      draftState.editedFields,
+      adminDatabaseLinksBaselineRef.current,
+    );
   }, [getAdminSnapshotState, prepareAdminSnapshotForSave, writeAdminSnapshotToFirebase]);
 
   const syncAuthSnapshotToFirebase = useCallback(async (overrideUsers?: UserAccessRecord[], existingAuthOverride?: any, deletedUserEmails: readonly string[] = []) => {
@@ -2153,6 +2167,7 @@ export default function App() {
         preRegistrations: adminState.preRegistrations,
       };
       adminUserBaselineRef.current = adminState.usuarios;
+      adminDatabaseLinksBaselineRef.current = adminState.databaseLinks;
       setCurrentUser((prev) => prev ? applyAdminUserContext(prev, normalizedData.admin) : prev);
     }
     setDirtyUserIds([]);
@@ -2408,6 +2423,7 @@ export default function App() {
           setDirtyUserIds([]);
           dirtyUserIdsRef.current = new Set();
           adminUserBaselineRef.current = [];
+          adminDatabaseLinksBaselineRef.current = [];
           deletedUserEmailsRef.current = new Set();
           setPendingTerceirizadas([]);
           setAdminHasPendingChanges(false);
@@ -2545,6 +2561,7 @@ export default function App() {
     try {
       await ensureGoogleFirebaseAuth(currentUser.email);
       const draftState = adminDraftRef.current || getAdminSnapshotState();
+      const baseDatabaseLinksForSave = adminDatabaseLinksBaselineRef.current;
       const {
         snapshot: adminSnapshot,
         state: safeDraftState,
@@ -2552,14 +2569,18 @@ export default function App() {
         deletedUserEmails,
       } = await prepareAdminSnapshotForSave(draftState);
       if (adminDraftVersionRef.current !== versionToSave) return false;
-      await Promise.all([
-        writeAdminSnapshotToFirebase(adminSnapshot),
+      const [savedAdminSnapshot] = await Promise.all([
+        writeAdminSnapshotToFirebase(
+          adminSnapshot,
+          draftState.editedFields,
+          baseDatabaseLinksForSave,
+        ),
         syncAuthSnapshotToFirebase(safeDraftState.usuarios, existingAuth, deletedUserEmails),
       ]);
-      syncAdminSnapshotToAppsScriptInBackground(adminSnapshot);
+      syncAdminSnapshotToAppsScriptInBackground(savedAdminSnapshot);
 
       if (adminDraftVersionRef.current === versionToSave) {
-        const savedAdminState = getAdminState({ admin: adminSnapshot });
+        const savedAdminState = getAdminState({ admin: savedAdminSnapshot });
         setUsuarios(savedAdminState.usuarios);
         setDisciplineSettings(savedAdminState.disciplineSettings);
         setDisciplinas(savedAdminState.disciplinas);
@@ -2581,8 +2602,9 @@ export default function App() {
           preRegistrations: savedAdminState.preRegistrations,
         };
         adminUserBaselineRef.current = savedAdminState.usuarios;
-        setGlobalData((prev) => mergeGlobalData(prev, { admin: adminSnapshot }));
-        setCurrentUser((prev) => prev ? applyAdminUserContext(prev, adminSnapshot) : prev);
+        adminDatabaseLinksBaselineRef.current = savedAdminState.databaseLinks;
+        setGlobalData((prev) => mergeGlobalData(prev, { admin: savedAdminSnapshot }));
+        setCurrentUser((prev) => prev ? applyAdminUserContext(prev, savedAdminSnapshot) : prev);
         setDirtyUserIds([]);
         dirtyUserIdsRef.current = new Set();
         setAdminHasPendingChanges(false);
@@ -2670,7 +2692,10 @@ export default function App() {
     if (cargos.length === 0 && adminState.cargos.length > 0) setCargos(adminState.cargos);
     if (alocacoes.length === 0 && adminState.alocacoes.length > 0) setAlocacoes(adminState.alocacoes);
     if (terceirizadas.length === 0 && adminState.terceirizadas.length > 0) setTerceirizadas(adminState.terceirizadas);
-    if (databaseLinks.length === 0 && adminState.databaseLinks.length > 0) setDatabaseLinks(adminState.databaseLinks);
+    if (databaseLinks.length === 0 && adminState.databaseLinks.length > 0) {
+      setDatabaseLinks(adminState.databaseLinks);
+      adminDatabaseLinksBaselineRef.current = adminState.databaseLinks;
+    }
     if (Object.keys(roleTabPermissions).length === 0 && Object.keys(adminState.roleTabPermissions).length > 0) {
       setRoleTabPermissions(adminState.roleTabPermissions);
     }
@@ -3300,6 +3325,7 @@ export default function App() {
     setDirtyUserIds([]);
     dirtyUserIdsRef.current = new Set();
     adminUserBaselineRef.current = [];
+    adminDatabaseLinksBaselineRef.current = [];
     deletedUserEmailsRef.current = new Set();
     setPendingTerceirizadas([]);
     setAdminHasPendingChanges(false);
@@ -3920,6 +3946,10 @@ export default function App() {
   })();
 
   // Sub-abas vivem na barra da esquerda, com Project aninhado sob Notas.
+  const feedbackBreadcrumb = buildFeedbackBreadcrumb('Ecoquanta2', AREA_LABELS[activeTab],
+    activeTab === 'principal' && principalSubTab === 'project' ? 'Project'
+      : activeTab === 'cronograma' && cronogramaSubTab === 'disciplinas' ? 'Notas'
+      : headerTabs.find((tab) => tab.active)?.label);
   const abasVisiveis = headerTabs.filter((tab) => tab.key !== 'alocacoes');
   subAbasNavRef.current = abasVisiveis;
   const subNav = abasVisiveis.length > 0 ? (
@@ -4200,7 +4230,7 @@ export default function App() {
           </div>
         )}
 
-        <main className="relative z-10 flex-1 overflow-y-auto px-8 pb-8 pt-2">
+        <main data-feedback-target="Conteudo principal" className="relative z-10 flex-1 overflow-y-auto px-8 pb-8 pt-2">
           <TabErrorBoundary resetKey={`${activeTab}:${principalSubTab}:${areaTecnicaSubTab}:${subTab}:${planejamentoSubTab}:${contratoSubTab}:${nc2SubTab}:${compatibilizacaoSubTab}:${adminSubTab}:${cronogramaSubTab}`}>
             <React.Suspense fallback={<TabLoadingFallback />}>
             {/* Troca de pagina = fade out + fade in (~0.5s no total) pra suavizar e cobrir o load.
@@ -4345,7 +4375,7 @@ export default function App() {
         </main>
       </div>
     </div>
-    {currentUser && <FeedbackLauncher onSubmit={submitFeedback} />}
+    {currentUser && <FeedbackLauncher breadcrumb={feedbackBreadcrumb} onSubmit={submitFeedback} />}
     </MotionConfig>
     </NoteProjectsContext.Provider>
   );

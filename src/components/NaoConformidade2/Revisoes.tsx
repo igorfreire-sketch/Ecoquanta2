@@ -179,7 +179,7 @@ export default function Revisoes({
       {os && <div className="flex flex-wrap items-end gap-3">
         <label className="min-w-56 flex-1 text-sm font-semibold">Buscar issues<input aria-label="Buscar issues" className={qualityInputClass} value={query} onChange={event => setQuery(event.target.value)} placeholder="ID, titulo, status, setor ou empresa" /></label>
         <button aria-label="Pagina anterior" disabled={currentPage === 1} className="rounded border px-3 py-2 disabled:opacity-40" onClick={() => { setPage(currentPage - 1); setEditing(undefined); }}>Anterior</button>
-        <span role="status" className="py-2 text-sm">Pagina {currentPage} de {pages} ? {matching.length} itens ? 50 por pagina</span>
+        <span role="status" className="py-2 text-sm">Pagina {currentPage} de {pages} · {matching.length} itens · 50 por pagina</span>
         <button aria-label="Proxima pagina" disabled={currentPage === pages} className="rounded border px-3 py-2 disabled:opacity-40" onClick={() => { setPage(currentPage + 1); setEditing(undefined); }}>Proxima</button>
       </div>}
       {loading && <p role="status">Carregando OS {os}...</p>}

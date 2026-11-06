@@ -15,12 +15,11 @@ import {
   validateIssue,
 } from "./Preenchimento";
 
-export default function Revisoes({
+function OsIssues({
   data,
   os,
-  osValues,
-  osLabel,
-  onOsChange,
+  manualRows,
+  filterIssue,
   user,
   options,
   onSaved,
@@ -28,9 +27,8 @@ export default function Revisoes({
 }: {
   data: QualityData;
   os: string;
-  osValues: string[];
-  osLabel?: (value: string) => string;
-  onOsChange: (os: string) => void;
+  manualRows: AccIssue[];
+  filterIssue: (issue: AccIssue) => boolean;
   user: string;
   options: Partial<Record<keyof AccIssue, string[]>>;
   onSaved: () => void;
@@ -74,7 +72,7 @@ export default function Revisoes({
   }, [os, data]);
   const rows = [
     ...imported.map((issue) => ({ ...issue, origem: "acc" as const })),
-    ...data.manual.filter((issue) => issue.os === os),
+    ...manualRows,
   ].filter(
     (issue) =>
       !contract || !issue.contratoCodigo || issue.contratoCodigo === contract,
@@ -96,6 +94,7 @@ export default function Revisoes({
   };
     const matching = rows.filter(original => {
     const issue = original.origem === 'acc' ? effectiveAcc(original, data.edits) : original;
+    if (!filterIssue(issue)) return false;
     return normalizeAccValue([issue.id, issue.titulo, issue.descricao, issue.status, issue.setor, qualitySectorLabel(issue.setor), issue.tipo, issue.empresa].join(' ')).includes(normalizeAccValue(query));
   });
   const pages = Math.max(1, Math.ceil(matching.length / 50));
@@ -156,28 +155,7 @@ export default function Revisoes({
 ) : null;
 
   return (
-    <section className="space-y-5 rounded-2xl bg-white p-6 shadow-sm">
-      <div>
-        <h2 className="text-xl font-bold">Revisoes · Issues ACC e manuais</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Selecione uma OS para consultar seus itens. Edicoes do ACC preservam o
-          valor importado.
-        </p>
-      </div>
-      <label className="block max-w-sm space-y-1 text-sm font-bold">
-        OS para revisar
-        <select
-          aria-label="OS para revisar"
-          className={qualityInputClass}
-          value={os}
-          onChange={(event) => onOsChange(event.target.value)}
-        >
-          <option value="">Selecione uma OS</option>
-          {osValues.map((value) => (
-            <option key={value} value={value}>{osLabel ? osLabel(value) : value}</option>
-          ))}
-        </select>
-      </label>
+    <div className="space-y-3 border-t border-slate-200 p-4">
       {os && <div className="flex flex-wrap items-end gap-3">
         <label className="min-w-56 flex-1 text-sm font-semibold">Buscar issues<input aria-label="Buscar issues" className={qualityInputClass} value={query} onChange={event => setQuery(event.target.value)} placeholder="ID, titulo, status, setor ou empresa" /></label>
         <button aria-label="Pagina anterior" disabled={currentPage === 1} className="rounded border px-3 py-2 disabled:opacity-40" onClick={() => { setPage(currentPage - 1); setEditing(undefined); }}>Anterior</button>
@@ -205,10 +183,10 @@ export default function Revisoes({
                 ? data.edits.find((edit) => edit.id === issueKey(original))
                 : undefined;
             return (
-              <article
-                key={`${original.origem}-${issueKey(original)}`}
-                className="py-4"
-              >
+              <details key={`${original.origem}-${issueKey(original)}`} className="py-3">
+                <summary className="cursor-pointer text-sm font-bold">
+                  {issueKey(issue)} · {issue.titulo} · {issue.status}
+                </summary>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-bold text-slate-500">
@@ -233,7 +211,7 @@ export default function Revisoes({
                     Editado por {edit.editadoPor} em {edit.editadoEm}
                   </p>
                 )}
-                <details className="mt-2 text-sm">
+                <details open className="mt-2 text-sm">
                   <summary className="cursor-pointer text-slate-600">
                     Ver todos os campos
                   </summary>
@@ -257,12 +235,65 @@ export default function Revisoes({
                   </dl>
                 </details>
                 {editing?.original.origem === original.origem && issueKey(editing.original) === issueKey(original) && editForm}
-              </article>
+              </details>
             );
           })}
         </div>
       )}
 
+    </div>
+  );
+}
+
+// Cascata: toda OS aparece fechada; os itens so sao lidos ao abrir, para nao gastar a cota.
+function OsGroup({
+  os,
+  label,
+  count,
+  startOpen,
+  ...props
+}: Omit<React.ComponentProps<typeof OsIssues>, "os"> & {
+  os: string;
+  label: string;
+  count: number;
+  startOpen: boolean;
+}) {
+  const [open, setOpen] = useState(startOpen);
+  return (
+    <details
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      className="rounded-xl border border-slate-200 bg-white"
+    >
+      <summary className="flex cursor-pointer items-center justify-between gap-3 p-4 font-bold">
+        <span>{label}</span>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs">{count} itens</span>
+      </summary>
+      {open && <OsIssues {...(props as Omit<React.ComponentProps<typeof OsIssues>, "os">)} os={os} />}
+    </details>
+  );
+}
+
+export default function Revisoes({
+  groups,
+  openOs,
+  filterBar,
+  ...props
+}: Omit<React.ComponentProps<typeof OsIssues>, "os" | "manualRows"> & {
+  groups: Array<{ os: string; label: string; count: number; manualRows: AccIssue[] }>;
+  openOs: string;
+  filterBar: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-4">
+      {filterBar}
+      <p className="text-sm text-slate-500">
+        Abra uma OS para ver e editar os itens. Edicoes do ACC preservam o valor importado.
+      </p>
+      {groups.map((group) => (
+        <OsGroup key={group.os} {...props} {...group} startOpen={group.os === openOs} />
+      ))}
+      {!groups.length && <p className="rounded-xl bg-white p-5">Nenhum item neste recorte.</p>}
     </section>
   );
 }

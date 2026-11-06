@@ -92,7 +92,7 @@ export default function Conformidade({
   const [metricRows, setMetricRows] = useState<AccCount[]>();
   useEffect(() => {
     let active = true;
-    if (!data || activeTab !== "dashboard") return;
+    if (!data || (activeTab !== "dashboard" && activeTab !== "revisoes")) return;
     setMetricRows(undefined);
     qualityMetricRows(data)
       .then((rows) => {
@@ -106,7 +106,7 @@ export default function Conformidade({
     };
   }, [data, activeTab]);
   const refresh = () => setRevision((value) => value + 1);
-  const editScope = activeTab === "dashboard" ? filters.os || undefined : activeTab === "revisoes" && filters.os ? filters.os : null;
+  const editScope = activeTab === "dashboard" ? filters.os || undefined : activeTab === "revisoes" ? undefined : null;
   useEffect(() => {
     let active = true;
     setError("");
@@ -210,7 +210,7 @@ export default function Conformidade({
         </button>
       </div>
     );
-  if (!data || (activeTab === "dashboard" && !metricRows))
+  if (!data || ((activeTab === "dashboard" || activeTab === "revisoes") && !metricRows))
     return (
       <p role="status" className="p-6">
         Carregando Qualidade...
@@ -257,38 +257,8 @@ export default function Conformidade({
       setPdfBusy(false);
     }
   };
-  return (
-    <div className="space-y-5 pb-16 text-slate-800">
-      <div>
-        <h1 className="text-2xl font-bold">Qualidade</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          ACC, entradas manuais e registros anteriores
-        </p>
-      </div>
-      {activeTab === "preenchimento" ? (
-        <Preenchimento
-          contract={lockedContractCode || filters.contrato}
-          user={currentUser.nome || currentUser.email}
-          options={fieldOptions}
-          onSaved={refresh}
-        />
-      ) : activeTab === "terceirizadas" ? (
-        <QualityCompanies data={data} onSaved={refresh} />
-      ) : activeTab === "revisoes" ? (
-        <Revisoes
-          data={data}
-          os={filters.os || ""}
-          osValues={osValues}
-          osLabel={osLabel}
-          onOsChange={(os) => setFilters((current) => ({ ...current, os }))}
-          user={currentUser.email}
-          options={fieldOptions}
-          onSaved={refresh}
-          contract={lockedContractCode}
-        />
-      ) : (
-        <>
-          <div className="grid gap-3 rounded-2xl bg-white p-5 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
+  const filterBar = (
+    <div className="grid gap-3 rounded-2xl bg-white p-5 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
             {Object.entries(filterLabels).map(([key, label]) => {
               const field = key as keyof AccFilters;
               const options =
@@ -354,6 +324,54 @@ export default function Conformidade({
               {pdfBusy ? "Gerando..." : "Exportar PDF"}
             </button>
           </div>
+  );
+  const nested = filterAccIssues(
+    filtered.filter((row) => row.origem !== "legado"),
+    {},
+    checked,
+  );
+  const revisionGroups = [...new Set(nested.map((row) => String(row.os || "")))]
+    .filter(Boolean)
+    .sort()
+    .map((os) => ({
+      os,
+      label: osLabel(os),
+      count: sum(nested.filter((row) => row.os === os)),
+      manualRows: rows.filter((row) => row.origem === "manual" && row.os === os) as AccIssue[],
+    }));
+  return (
+    <div className="space-y-5 pb-16 text-slate-800">
+      <div>
+        <h1 className="text-2xl font-bold">Qualidade</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          ACC, entradas manuais e registros anteriores
+        </p>
+      </div>
+      {activeTab === "preenchimento" ? (
+        <Preenchimento
+          contract={lockedContractCode || filters.contrato}
+          user={currentUser.nome || currentUser.email}
+          options={fieldOptions}
+          onSaved={refresh}
+        />
+      ) : activeTab === "terceirizadas" ? (
+        <QualityCompanies data={data} onSaved={refresh} />
+      ) : activeTab === "revisoes" ? (
+        <Revisoes
+          data={data}
+          groups={revisionGroups}
+          openOs={filters.os || ""}
+          filterBar={filterBar}
+          filterIssue={(issue) =>
+            filterAccIssues([issue], { ...filters, contrato: "", os: "" }, checked).length > 0
+          }
+          user={currentUser.email}
+          options={fieldOptions}
+          onSaved={refresh}
+          contract={lockedContractCode}
+        />
+      ) : (
+        <>
           <div className="grid gap-3 sm:grid-cols-4">
             {[
               ["Issues", total],

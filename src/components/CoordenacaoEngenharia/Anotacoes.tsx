@@ -238,6 +238,7 @@ interface NoteProjectsContextValue {
   onCreateProject?: (title: string, origemNotaId?: string) => Promise<CronogramaDoc>;
   // Grava o Project editado pelo bloco embutido na nota (mesmo doc da colecao `cronogramas`).
   onSaveProject?: (project: CronogramaDoc) => Promise<CronogramaDoc>;
+  onLoadProject?: (id: string) => Promise<CronogramaDoc>;
   loadError?: string;
 }
 
@@ -854,6 +855,69 @@ export default function Anotacoes({
   // tela solta do Project.
   const [projectDraft, setProjectDraft] = React.useState<CronogramaDoc | null>(null);
   const [savingProject, setSavingProject] = React.useState(false);
+  const [projectDirty, setProjectDirty] = React.useState(false);
+  const projectDirtyRef = React.useRef(false);
+  const projectSavingRef = React.useRef(false);
+  const projectLoadRequestRef = React.useRef(0);
+  const [projectEpoch, setProjectEpoch] = React.useState(0);
+  const [freshProjectKey, setFreshProjectKey] = React.useState('');
+  const [projectLoadError, setProjectLoadError] = React.useState('');
+  const projectKey = `${editing?.id || ''}:${editing?.projectId || ''}:${projectEpoch}`;
+  const projectPending = Boolean(editing?.projectId && noteProjects.onLoadProject && freshProjectKey !== projectKey);
+
+  const clearProjectDraft = () => {
+    projectDirtyRef.current = false;
+    setProjectDirty(false);
+    setProjectDraft(null);
+    setProjectError('');
+    setProjectLoadError('');
+    setFreshProjectKey('');
+    projectLoadRequestRef.current += 1;
+    setProjectEpoch((value) => value + 1);
+  };
+  const confirmProjectDiscard = () => {
+    if (saving || projectSavingRef.current || creatingProject) return false;
+    return !projectDirtyRef.current || window.confirm('Este Project tem alterações não salvas. Continuar e descartar essas alterações?');
+  };
+  const changeProjectDraft = (project: CronogramaDoc) => {
+    projectDirtyRef.current = true;
+    setProjectDirty(true);
+    setProjectDraft(project);
+    setProjectError('');
+  };
+
+  React.useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!projectDirtyRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, []);
+
+  React.useEffect(() => {
+    // Live snapshots replace only clean drafts; an edited baseline must stay pinned for the checked save.
+    if (!projectDirtyRef.current) setProjectDraft(null);
+  }, [noteProjects.projects]);
+
+  React.useEffect(() => {
+    const id = editing?.projectId;
+    if (!id || !noteProjects.onLoadProject || projectDirtyRef.current) return;
+    const request = ++projectLoadRequestRef.current;
+    let active = true;
+    setProjectLoadError('');
+    void noteProjects.onLoadProject(id).then((project) => {
+      if (!active || request !== projectLoadRequestRef.current || projectDirtyRef.current) return;
+      setProjectDraft(project);
+      setFreshProjectKey(projectKey);
+    }).catch((error) => {
+      if (!active || request !== projectLoadRequestRef.current || projectDirtyRef.current) return;
+      setProjectLoadError(error instanceof Error ? error.message : 'Não foi possível atualizar o Project. Reabra a nota para tentar novamente.');
+      setFreshProjectKey(projectKey);
+    });
+    return () => { active = false; };
+  }, [editing?.id, editing?.projectId, projectEpoch, noteProjects.onLoadProject]);
   const [openCardMenuId, setOpenCardMenuId] = React.useState<string | null>(null);
   // Aba do painel direito do editor. null = segue a primeira disponivel (OS > Disciplina > Mapa).
   const [sidebarTab, setSidebarTab] = React.useState<'os' | 'disciplina' | 'mapa' | null>(null);
@@ -952,7 +1016,7 @@ export default function Anotacoes({
   }, [openCardMenuId]);
 
   React.useEffect(() => {
-    if (controlledSheet) setEditing(normalizeForEditing(controlledSheet));
+    if (controlledSheet && controlledSheet.id !== editing?.id) openNote(controlledSheet);
   }, [controlledSheet]);
 
   // Autosave anti-F5: grava `editing` no localStorage com debounce a cada mudanca, enquanto
@@ -1049,11 +1113,15 @@ export default function Anotacoes({
     setProjectPickerOpen(false);
     setProjectSearch('');
     setNewProjectTitle('');
-    setProjectError('');
+    clearProjectDraft();
     setSaveError('');
     setSaveNotice('');
   };
-  const openNote = (sheet: AnnotationSheet) => { setEditing(normalizeForEditing(sheet)); resetEditorFields(); };
+  const openNote = (sheet: AnnotationSheet) => {
+    if (!confirmProjectDiscard()) return;
+    resetEditorFields();
+    setEditing(normalizeForEditing(sheet));
+  };
 
   // ---- Operacoes de banco (escopo do componente: os listeners de janela abaixo precisam delas) ----
   const updateBanco = (bancoIndex: number, updater: (banco: AnnotationBanco) => AnnotationBanco) => setEditing((prev) => {
@@ -1620,13 +1688,16 @@ export default function Anotacoes({
   const autoresDisponiveis = usuarios
     .filter((user) => user.email !== currentUser.email)
     .sort((a, b) => (a.nome || a.email).localeCompare(b.nome || b.email, 'pt-BR'));
-  const closeEditing = () => {
+  const finishClosing = () => {
     setEditing(null);
     setContextMenu(null);
     setLinkPickerOpen(false);
     setRascunhoDisponivel(null);
     resetEditorFields();
     onCloseControlled?.();
+  };
+  const closeEditing = () => {
+    if (confirmProjectDiscard()) finishClosing();
   };
 
   if (editing) {
@@ -1786,33 +1857,44 @@ export default function Anotacoes({
     const linkedProject = projectDraft && projectDraft.id === editing.projectId
       ? projectDraft
       : noteProjects.projects.find((project) => project.id === editing.projectId);
-    const saveProject = async () => {
-      if (!linkedProject) return;
-      if (!noteProjects.onSaveProject) {
-        setProjectError('Salvar Project indisponivel nesta tela.');
-        return;
+    const persistProject = async () => {
+      if (!linkedProject || projectPending || projectLoadError) {
+        throw new Error(projectLoadError || 'Aguarde o carregamento do Project antes de salvar.');
       }
+      if (!noteProjects.onSaveProject) throw new Error('Salvar Project indisponivel nesta tela.');
+      if (projectSavingRef.current) throw new Error('O Project já está sendo salvo.');
+      projectSavingRef.current = true;
       setSavingProject(true);
       setProjectError('');
       try {
         const saved = await noteProjects.onSaveProject(linkedProject);
         setProjectDraft(saved);
+        projectDirtyRef.current = false;
+        setProjectDirty(false);
       } catch (error) {
         setProjectError(error instanceof Error ? error.message : 'Nao foi possivel salvar o Project.');
+        throw error;
       } finally {
+        projectSavingRef.current = false;
         setSavingProject(false);
       }
+    };
+    const saveProject = async () => {
+      try { await persistProject(); } catch { /* The block keeps the error and the dirty draft visible. */ }
     };
     const visibleProjects = noteProjects.projects
       .filter((project) => normalizeText(project.autorEmail) === normalizeText(currentUser.email) || project.publica !== false)
       .filter((project) => !projectSearch || normalizeText(project.titulo).includes(normalizeText(projectSearch)))
       .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-    const linkProject = (projectId: string) => {
+    const linkProject = (projectId: string, discardConfirmed = false) => {
+      if (!discardConfirmed && !confirmProjectDiscard()) return;
+      clearProjectDraft();
       setEditing((prev) => (prev ? { ...prev, projectId: projectId || undefined } : prev));
       setProjectPickerOpen(false);
       setProjectError('');
     };
     const createProject = async () => {
+      if (!confirmProjectDiscard()) return;
       if (!noteProjects.onCreateProject) {
         setProjectError('Criacao de Project indisponivel nesta tela.');
         return;
@@ -1823,7 +1905,7 @@ export default function Anotacoes({
         // Passa a nota de origem: o Project e um doc de verdade em `cronogramas` (aparece na lista
         // Project como qualquer outro), mas la ele fica somente leitura.
         const project = await noteProjects.onCreateProject(newProjectTitle, editing.id);
-        linkProject(project.id);
+        linkProject(project.id, true);
         setNewProjectTitle('');
       } catch (error) {
         setProjectError(error instanceof Error ? error.message : 'Nao foi possivel criar o Project.');
@@ -1895,12 +1977,13 @@ export default function Anotacoes({
       : uniqueOsOptions;
 
     const handleSave = async () => {
-      if (readOnly) return;
+      if (readOnly || saving || projectSavingRef.current || creatingProject) return;
       setSaving(true);
       setSaveError('');
       setSaveNotice('');
       try {
         // Salvar so persiste - fica na nota. Sair e o botao "Fechar" (closeEditing), separado.
+        if (projectDirtyRef.current) await persistProject();
         await onSave({ ...editing, updatedAt: new Date().toISOString() });
         removerRascunho(editing.id || 'nova');
         setSaveNotice(savedSheet && !isNoteOwner(savedSheet, currentUser.email)
@@ -1913,13 +1996,13 @@ export default function Anotacoes({
       }
     };
     const reviewProposal = async (proposalDecision: 'accept' | 'reject') => {
-      if (!savedSheet?.pendingProposal || !ownerReview) return;
+      if (!savedSheet?.pendingProposal || !ownerReview || !confirmProjectDiscard()) return;
       setSaving(true);
       setSaveError('');
       try {
         await onSave(savedSheet, { proposalDecision });
         removerRascunho(editing.id || 'nova');
-        closeEditing();
+        finishClosing();
       } catch (error) {
         setSaveError(error instanceof Error ? error.message : 'Nao foi possivel revisar a proposta.');
       } finally {
@@ -1929,6 +2012,8 @@ export default function Anotacoes({
 
     const continuarRascunho = () => {
       if (!rascunhoDisponivel) return;
+      if (!confirmProjectDiscard()) return;
+      clearProjectDraft();
       setEditing(normalizeForEditing(rascunhoDisponivel.sheet));
       setRascunhoDisponivel(null);
     };
@@ -2254,7 +2339,7 @@ export default function Anotacoes({
               <button
                 type="button"
                 onClick={() => void handleSave()}
-                disabled={saving}
+                disabled={saving || savingProject || creatingProject || projectPending}
                 className="h-11 rounded-xl bg-[#F05D28] px-5 text-[13px] font-bold text-white transition-colors hover:bg-[#D94E1F] disabled:opacity-60"
               >
                 {saving ? 'Salvando...' : 'Salvar'}
@@ -3060,6 +3145,7 @@ export default function Anotacoes({
                   <div className="flex min-w-0 items-center gap-2">
                     <CalendarClock size={14} className="flex-shrink-0 text-[#F05D28]" />
                     <span className="truncate text-[11px] font-bold text-[#64748B]">{linkedProject?.titulo || 'Project nao encontrado'}</span>
+                    {projectDirty && <span role="status" className="text-[11px] font-bold text-[#B45309]">Project com alterações não salvas.</span>}
                   </div>
                   {podeEditar && (
                     <div className="flex items-center gap-3">
@@ -3067,24 +3153,25 @@ export default function Anotacoes({
                         <button
                           type="button"
                           onClick={() => void saveProject()}
-                          disabled={savingProject}
+                          disabled={savingProject || saving || creatingProject || projectPending || Boolean(projectLoadError)}
                           className="text-[12px] font-bold text-[#F05D28] hover:underline disabled:opacity-60"
                         >
                           {savingProject ? 'Salvando...' : 'Salvar Project'}
                         </button>
                       )}
-                      <button type="button" onClick={() => setProjectPickerOpen(true)} className="text-[11px] font-bold text-[#F05D28] hover:underline">Trocar</button>
-                      <button type="button" onClick={() => linkProject('')} className="text-[11px] font-bold text-[#DC2626] hover:underline">Desvincular</button>
+                      <button type="button" disabled={saving || savingProject || creatingProject} onClick={() => setProjectPickerOpen(true)} className="text-[11px] font-bold text-[#F05D28] hover:underline">Trocar</button>
+                      <button type="button" disabled={saving || savingProject || creatingProject} onClick={() => linkProject('')} className="text-[11px] font-bold text-[#DC2626] hover:underline">Desvincular</button>
                     </div>
                   )}
                 </div>
                 {projectError && !projectPickerOpen && (
                   <p role="alert" className="border-b border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-[12px] font-semibold text-[#B91C1C]">{projectError}</p>
                 )}
-                {linkedProject ? (
-                  <CronogramaGrid doc={linkedProject} onChange={setProjectDraft}
+                {projectLoadError && <p role="alert" className="px-3 py-2 text-[12px] text-[#B91C1C]">{projectLoadError}</p>}
+                {projectPending ? <p role="status" className="px-3 py-3 text-[12px]">Carregando Project...</p> : linkedProject ? (
+                  <CronogramaGrid doc={linkedProject} onChange={changeProjectDraft}
                     currentUser={currentUser} usuarios={usuarios} notes={sheets} activities={activities}
-                    readOnly={!podeEditar || savingProject} />
+                    readOnly={!podeEditar || savingProject || saving || creatingProject || Boolean(projectLoadError)} />
                 ) : (
                   <p className="px-3 py-3 text-[12px] text-[#94A3B8]">Project {editing.projectId} nao encontrado.</p>
                 )}

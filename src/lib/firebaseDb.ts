@@ -1,4 +1,4 @@
-import { nextCronogramaTimestamp } from './cronoRevision';
+import { nextCronogramaTimestamp, normalizeCronogramaRevision } from './cronoRevision';
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import {
@@ -8,6 +8,7 @@ import {
   clearIndexedDbPersistence,
   getDoc,
   getDocFromCache,
+  getDocFromServer,
   getDocs,
   getFirestore,
   initializeFirestore,
@@ -1180,7 +1181,12 @@ export async function fetchFirebaseCollection<T = Record<string, unknown>>(
   const snapshot = await getDocs(equalityFilter
     ? query(collectionRef, where(equalityFilter.field, '==', equalityFilter.value))
     : collectionRef);
-  return snapshot.docs.map((entry) => normalizeFirestoreRecord(entry) as T);
+  return snapshot.docs.map((entry) => {
+    const record = normalizeFirestoreRecord(entry);
+    return (collectionName === 'cronogramas'
+      ? { ...record, updatedAt: normalizeCronogramaRevision(record.updatedAt) }
+      : record) as T;
+  });
 }
 
 export async function setFirebaseDocument(collectionName: string, id: string, data: object) {
@@ -1286,9 +1292,18 @@ export async function saveCronogramaChecked<T extends { id: string; updatedAt: s
   const ref = doc(getDb(), 'cronogramas', project.id);
   return runTransaction(getDb(), async (transaction) => {
     const snapshot = await transaction.get(ref);
-    const updatedAt = nextCronogramaTimestamp(project.updatedAt, snapshot.exists() ? snapshot.data().updatedAt : undefined, allowCreate);
+    const updatedAt = nextCronogramaTimestamp(project.updatedAt, snapshot.exists() ? snapshot.data().updatedAt : undefined, allowCreate, snapshot.exists());
     const saved = { ...project, updatedAt };
     transaction.set(ref, saved, { merge: true });
     return saved;
   });
+}
+
+/** A note opens a fresh server snapshot; an offline/cache fallback could produce a false conflict. */
+export async function fetchCronogramaDocument<T extends { id: string }>(id: string): Promise<T> {
+  await ensureFirebaseAuth();
+  const snapshot = await getDocFromServer(doc(getDb(), 'cronogramas', id));
+  if (!snapshot.exists()) throw new Error('Este Project foi excluído. O rascunho local foi preservado.');
+  const record = normalizeFirestoreRecord(snapshot);
+  return { ...record, updatedAt: normalizeCronogramaRevision(record.updatedAt) } as T;
 }

@@ -1,12 +1,31 @@
 import assert from 'node:assert/strict';
+import { Timestamp } from 'firebase/firestore';
 import { nextCronogramaTimestamp } from '../src/lib/cronoRevision';
 const old = '2026-11-06T00:00:00.000Z';
-const next = nextCronogramaTimestamp(old, old);
+const next = nextCronogramaTimestamp(old, old, false, true);
 assert.ok(next > old);
-assert.throws(() => nextCronogramaTimestamp(old, next), /rascunho foi preservado/);
-assert.throws(() => nextCronogramaTimestamp(old, undefined), /excluído/);
-assert.ok(nextCronogramaTimestamp('2999-01-01T00:00:00.000Z', '2999-01-01T00:00:00.000Z') > '2999-01-01T00:00:00.000Z');
-console.log('PASS: stale/deleted documents refused; timestamps monotonic; no format/version field added');
+assert.throws(() => nextCronogramaTimestamp(old, next, false, true), /rascunho foi preservado/);
+assert.throws(() => nextCronogramaTimestamp(old, undefined, false, false), /excluído/);
+assert.ok(nextCronogramaTimestamp('2999-01-01T00:00:00.000Z', '2999-01-01T00:00:00.000Z', false, true) > '2999-01-01T00:00:00.000Z');
+assert.ok(nextCronogramaTimestamp(old, undefined, true, false) > old);
+assert.throws(() => nextCronogramaTimestamp(old, old, true, true), /rascunho foi preservado/);
+// D3: existence is separate from the optional legacy revision.
+assert.ok(nextCronogramaTimestamp(undefined, undefined, false, true));
+assert.ok(nextCronogramaTimestamp(null, undefined, false, true));
+assert.throws(() => nextCronogramaTimestamp(undefined, undefined, false, false), /excluído/);
+assert.throws(() => nextCronogramaTimestamp(undefined, old, false, true), /rascunho foi preservado/);
+assert.throws(() => nextCronogramaTimestamp(old, undefined, false, true), /rascunho foi preservado/);
+assert.ok(nextCronogramaTimestamp(Timestamp.fromDate(new Date(old)), Timestamp.fromDate(new Date(old)), false, true) > old);
+assert.ok(nextCronogramaTimestamp(old, Timestamp.fromDate(new Date(old)), false, true) > old);
+assert.ok(nextCronogramaTimestamp(Timestamp.fromDate(new Date(old)), old, false, true) > old);
+assert.ok(nextCronogramaTimestamp({ seconds: Date.parse(old) / 1000, nanoseconds: 0 }, old, false, true) > old);
+assert.throws(() => nextCronogramaTimestamp(old, Timestamp.fromDate(new Date(next)), false, true), /rascunho foi preservado/);
 
-assert.ok(nextCronogramaTimestamp(old, undefined, true) > old);
-assert.throws(() => nextCronogramaTimestamp(old, old, true), /rascunho foi preservado/);
+const seconds = Date.parse(old) / 1000;
+assert.throws(() => nextCronogramaTimestamp(new Timestamp(seconds, 1), new Timestamp(seconds, 2), false, true), /rascunho foi preservado/);
+assert.ok(nextCronogramaTimestamp(new Timestamp(seconds, 123456789), '2026-11-06T00:00:00.123456789Z', false, true));
+assert.ok(nextCronogramaTimestamp(new Date(old), old, false, true));
+assert.ok(nextCronogramaTimestamp(Date.parse(old), old, false, true));
+assert.ok(nextCronogramaTimestamp(true, true, false, true));
+assert.throws(() => nextCronogramaTimestamp(true, false, false, true), /rascunho foi preservado/);
+console.log('PASS D3: legacy missing revisions, Timestamp normalization, deleted docs, creation, conflicts and monotonic timestamps');

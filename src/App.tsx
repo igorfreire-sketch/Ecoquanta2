@@ -1,4 +1,4 @@
-import { saveCronogramaChecked } from './lib/firebaseDb';
+import { saveCronogramaChecked, fetchCronogramaDocument, subscribeFirebaseCollection } from './lib/firebaseDb';
 import React, { useState, useEffect, useCallback } from 'react';
 import SearchableSelect from './components/SearchableSelect';
 import {
@@ -1875,12 +1875,12 @@ export default function App() {
   // editor/migracao e faz a leitura propria sem acoplar seu fluxo a este estado.
   const [noteProjects, setNoteProjects] = useState<CronogramaDoc[]>([]);
   const [noteProjectsLoadError, setNoteProjectsLoadError] = useState('');
+  const noteProjectCacheVersion = React.useRef(0);
   const noteIdsComCronograma = React.useMemo(() => {
     const ids = new Set<string>();
     noteProjects.forEach((project) => (project.rows || []).forEach((row) => { if (row.noteId) ids.add(row.noteId); }));
     return ids;
   }, [noteProjects]);
-  const cronogramasLoadAttemptRef = React.useRef(false);
 
   // Aba do usuario: pedido de outras disciplinas, aprovado/negado pelo admin.
   const [disciplinaRequests, setDisciplinaRequests] = useState<DisciplinaRequest[]>([]);
@@ -2936,22 +2936,39 @@ export default function App() {
     };
   }, [currentUser?.email]);
 
+  const receiveSavedProject = useCallback((project: CronogramaDoc) => {
+    noteProjectCacheVersion.current += 1;
+    setNoteProjects((previous) => [project, ...previous.filter((item) => item.id !== project.id)]);
+  }, []);
+
+  const loadNoteProject = useCallback(async (id: string): Promise<CronogramaDoc> => {
+    const project = await fetchCronogramaDocument<CronogramaDoc>(id);
+    receiveSavedProject(project);
+    return project;
+  }, [receiveSavedProject]);
+
   useEffect(() => {
-    // Documentos completos alimentam o seletor Note -> Project; esta leitura nunca migra nem grava.
     if (!currentUser) return;
-    if (cronogramasLoadAttemptRef.current) return;
-    cronogramasLoadAttemptRef.current = true;
-    (async () => {
+    let active = true;
+    let request = 0;
+    const load = async () => {
+      const ownRequest = ++request;
+      const cacheVersion = noteProjectCacheVersion.current;
       try {
         const cronogramas = await fetchFirebaseCollection<CronogramaDoc>(CRONOGRAMAS_COLLECTION);
+        if (!active || ownRequest !== request || cacheVersion !== noteProjectCacheVersion.current) return;
         setNoteProjects(cronogramas);
         setNoteProjectsLoadError('');
       } catch (error) {
+        if (!active || ownRequest !== request || cacheVersion !== noteProjectCacheVersion.current) return;
         console.error('Erro ao carregar Projects para as notas:', error);
-        setNoteProjectsLoadError('Nao foi possivel carregar os Projects. Tente novamente mais tarde.');
+        setNoteProjectsLoadError('Nao foi possivel carregar os Projects. A copia local anterior foi preservada.');
       }
-    })();
-  }, [currentUser]);
+    };
+    void load();
+    const unsubscribe = subscribeFirebaseCollection(CRONOGRAMAS_COLLECTION, () => void load());
+    return () => { active = false; unsubscribe(); };
+  }, [currentUser?.email]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -3053,9 +3070,9 @@ export default function App() {
   const saveNoteProject = useCallback(async (project: CronogramaDoc): Promise<CronogramaDoc> => {
     if (!isFirebaseConfigured()) throw new Error('Firebase indisponivel. O Project nao foi salvo.');
     const atualizado = await saveCronogramaChecked(project);
-    setNoteProjects((previous) => previous.map((item) => (item.id === atualizado.id ? atualizado : item)));
+    receiveSavedProject(atualizado);
     return atualizado;
-  }, []);
+  }, [receiveSavedProject]);
 
   const handleLogin = async (email: string, password: string, rememberMe: boolean) => {
     if (!isFirebaseConfigured()) {
@@ -3280,7 +3297,6 @@ export default function App() {
     setAdminHasPendingChanges(false);
     setIsSavingAdminChanges(false);
     adminDraftRef.current = null;
-    cronogramasLoadAttemptRef.current = false;
     setNotes([]);
     setNoteProjects([]);
     setNotesLoadError('');
@@ -3707,8 +3723,9 @@ export default function App() {
     projects: noteProjects,
     onCreateProject: createNoteProject,
     onSaveProject: saveNoteProject,
+    onLoadProject: loadNoteProject,
     loadError: notesLoadError || noteProjectsLoadError,
-  }), [createNoteProject, noteProjects, noteProjectsLoadError, notesLoadError, saveNoteProject]);
+  }), [createNoteProject, noteProjects, noteProjectsLoadError, notesLoadError, saveNoteProject, loadNoteProject]);
 
   // P.Cronograma grava no mesmo snapshot global lido pelas telas relacionadas.
   const aplicarCronogramaSalvo = useCallback((payload: { eap?: any; cronograma?: any[] }) => {
@@ -3755,7 +3772,7 @@ export default function App() {
   ) : null;
   // Pagina Project: uma unica instancia reusada por todas as areas, igual a de Notas.
   const projectsPage = currentUser && userHasTabAccess(currentUser, 'solucoes', roleTabPermissions) ? (
-    <Cronogramas currentUser={currentUser} usuarios={usuarios} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} preloadedData={effectiveGlobalData} onAbrirNotas={abrirNotasDaArea} />
+    <Cronogramas onProjectSaved={receiveSavedProject} currentUser={currentUser} usuarios={usuarios} notes={notes} onSaveNote={saveAnnotationSheet} onDeleteNote={deleteAnnotationSheet} preloadedData={effectiveGlobalData} onAbrirNotas={abrirNotasDaArea} />
   ) : null;
   const contractNotesScopeCode = String(lockedContractCode || filtrosAtivos.contrato || '').trim();
   const contractNotesPage = currentUser ? (

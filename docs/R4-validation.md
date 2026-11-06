@@ -68,3 +68,26 @@ A matriz usa duas abas e verifica que o aviso aparece, o texto local permanece n
 - A lógica de predecessoras foi preservada: sugere o início se vazio e bloqueia autorreferência e ciclo direto de duas linhas. Não adiciona propagação automática de toda a cadeia nem altera a semântica existente.
 - Builds mantêm os avisos existentes de chunks grandes e imports estáticos/dinâmicos misturados.
 - Sem coleção nova, alteração de regras, escrita em Firestore de produção, deploy ou merge.
+
+## Correções da auditoria independente de PR #10
+
+- D1: o Project tem estado dirty explícito e indicador visível. Fechar a nota, abrir outra nota, trocar, criar ou desvincular Project pede confirmação de descarte. Cancelar preserva o rascunho; confirmar limpa o draft e a revisão anterior. O fechamento também cancela a leitura pendente; refresh/fechamento da página usa beforeunload.
+- D2: Salvar da nota primeiro salva o Project dirty pelo mesmo checked save do botão Salvar Project. Conflito interrompe o salvamento da nota, mostra o erro nos dois pontos e mantém o Project dirty. Só há confirmação de sucesso após as operações necessárias.
+- D3: a existência do documento é independente do campo opcional updatedAt. Documentos existentes sem revisão em ambos os lados podem salvar; documentos excluídos continuam recusados salvo criação explícita. Timestamp, Date, representações serializadas e ISO são normalizados antes da comparação, preservando nanossegundos de Timestamp.
+- D4: App observa a coleção e atualiza a lista compartilhada imediatamente após salvar no Cronograma. Ao abrir uma nota/vínculo, faz uma leitura nova do documento no servidor, sem fallback silencioso de cache. Respostas atrasadas e snapshots ao vivo não substituem rascunhos dirty.
+
+Regressões reproduzidas antes das correções: `scripts/projectAudit.ui.check.mjs` com `R4_AUDIT_CASE=D1`, `D2` e `D4` falhou nos sintomas da auditoria; `scripts/cronoRevision.check.ts` falhou no documento legado sem updatedAt. Depois, todos esses casos e a matriz original passaram. A fixture agora mantém a instância de Anotacoes entre aberturas, usa duas notas e testa a tela real de Cronogramas com um adaptador local de persistência exclusivo do build de fixture.
+
+Com o preview das fixtures na porta 2514:
+
+```powershell
+node scripts/projectAudit.ui.check.mjs
+node scripts/projectGrid.ui.check.mjs
+```
+
+Verificação completa: 29/31 checks de arquivo passaram. As duas falhas já existentes são ENOENT em recursos locais não versionados ausentes:
+
+- `scripts/importBim360Gs.check.mjs`: `nãocommit/Appscript/ImportBIM360.gs`.
+- `src/lib/bim360Import.check.ts`: `nãocommit/exemplos/Resumo do problema-202607271730.xlsx`.
+
+Os dois checks e seus módulos não foram alterados. Não foram criados arquivos fictícios nem ignoradas as falhas. TypeScript, os checks da auditoria, os dois testes de navegador e os builds da aplicação e de fixture passaram. Nenhuma escrita em produção, deploy ou merge foi executado.

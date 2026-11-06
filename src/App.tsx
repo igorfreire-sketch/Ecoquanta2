@@ -256,7 +256,7 @@ type ContratoSubTab = 'os' | 'interferencias' | 'prioridades' | 'atividades' | '
 type AdminSubTab = 'usuarios' | 'terceirizadas' | 'gerenciamento' | 'pre-cadastro' | 'firebase';
 const ADMIN_APP_TABS: Array<{ key: AppTabKey; label: string }> = [
   { key: 'registro', label: 'Área Técnica' },
-  { key: 'nc2', label: 'Conformidade' },
+  { key: 'nc2', label: 'Qualidade' },
   { key: 'compatibilizacao', label: 'Compatibilização' },
   { key: 'controle', label: 'Coordenação de Engenharia' },
   { key: 'planejamento', label: 'Planejamento' },
@@ -3845,7 +3845,7 @@ export default function App() {
         { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} />, active: nc2SubTab === 'dashboard', onClick: () => setNc2SubTab('dashboard') },
         { key: 'preenchimento', label: 'Preenchimento', icon: <Clipboard size={16} />, active: nc2SubTab === 'preenchimento', onClick: () => setNc2SubTab('preenchimento') },
         { key: 'revisoes', label: 'Revisoes', icon: <CheckSquare size={16} />, active: nc2SubTab === 'revisoes', onClick: () => setNc2SubTab('revisoes') },
-        { key: 'terceirizadas', label: 'Terceirizadas', icon: <Users size={16} />, active: nc2SubTab === 'terceirizadas', onClick: () => setNc2SubTab('terceirizadas') },
+        { key: 'terceirizadas', label: 'Terceirizados', icon: <Users size={16} />, active: nc2SubTab === 'terceirizadas', onClick: () => setNc2SubTab('terceirizadas') },
         { key: 'disciplinas', label: 'Notas', icon: <Layers size={16} />, active: nc2SubTab === 'disciplinas', onClick: () => setNc2SubTab('disciplinas') },
         ...projectSubTab(nc2SubTab, () => setNc2SubTab('project')),
       ];
@@ -3883,7 +3883,7 @@ export default function App() {
 
       return [
         { key: 'usuarios', label: 'Usuários', icon: <Users size={16} />, active: adminSubTab === 'usuarios', onClick: () => setAdminSubTab('usuarios') },
-        { key: 'terceirizadas', label: 'Terceirizadas', icon: <ShieldCheck size={16} />, active: adminSubTab === 'terceirizadas', onClick: () => setAdminSubTab('terceirizadas') },
+        { key: 'terceirizadas', label: 'Terceirizados', icon: <ShieldCheck size={16} />, active: adminSubTab === 'terceirizadas', onClick: () => setAdminSubTab('terceirizadas') },
         { key: 'pre-cadastro', label: 'Pré-cadastro', icon: <UserCheck size={16} />, active: adminSubTab === 'pre-cadastro', onClick: () => setAdminSubTab('pre-cadastro') },
         { key: 'gerenciamento', label: 'Gerenciamento', icon: <Settings size={16} />, active: adminSubTab === 'gerenciamento', onClick: () => setAdminSubTab('gerenciamento') },
         { key: 'firebase', label: 'Firebase', icon: <Database size={16} />, active: adminSubTab === 'firebase', onClick: () => setAdminSubTab('firebase') },
@@ -4030,7 +4030,7 @@ export default function App() {
               )}
               {currentUser && userHasTabAccess(currentUser, 'nc2', roleTabPermissions) && (
                 <>
-                  <NavItem icon={<AlertTriangle size={20} />} label="Conformidade" active={activeTab === 'nc2'} onClick={() => setActiveTab('nc2')} />
+                  <NavItem icon={<AlertTriangle size={20} />} label="Qualidade" active={activeTab === 'nc2'} onClick={() => setActiveTab('nc2')} />
                   {activeTab === 'nc2' && subNav}
                 </>
               )}

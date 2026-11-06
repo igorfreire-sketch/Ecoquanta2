@@ -47,7 +47,7 @@ import LoginScreen, { AuthUser } from './components/LoginScreen';
 import CampoDialog from './components/CampoDialog';
 import {
   getSheetDisciplinas,
-  isConcluidaAntiga,
+  getSheetStatus,
   NoteProjectsContext,
   type AnnotationBanco,
   type AnnotationSheet,
@@ -1868,14 +1868,14 @@ export default function App() {
   // Cards do kanban de Demandas Digitais derivados dos bancos "+ Demanda Digital" das notas
   // (a nota e a dona do dado, este e so leitura - mesmo padrao do "+ Project"/CronogramaDoc).
   const noteDemands = React.useMemo(() => mapNotesToDemandas(notes), [notes]);
-  // Notas que aparecem no Kanban da Principal, sem as concluidas ha 10+ dias (essas vivem na aba
+  // Notas abertas no Kanban da Principal: citado ou setor (concluidas vivem na aba
   // "Notas Concluidas" de Anotacoes.tsx). As do seu setor so pra lider/coordenador (isNc2Leader,
   // mesmo gate dos cards de conformidade); as que te marcaram, ou privadas suas, aparecem pra
   // qualquer usuario (dono ve a propria nota privada, mas ela nao vaza pro setor).
   const notasKanbanPrincipal = React.useMemo(() => {
     if (!currentUser) return [];
     return notes.filter((sheet) => (
-      !isConcluidaAntiga(sheet)
+      getSheetStatus(sheet) !== 'concluido'
       && (
         // Dono precisa ver o card para aprovar a acao pendente.
         (sheet.pendingProposal && sheet.autorEmail === currentUser.email)

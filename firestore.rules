@@ -164,6 +164,39 @@ service cloud.firestore {
     // App operacional (cronograma/atividades/admin) -- collections antigas do
     // painel interno, perdidas no rewrite de 2026-08-08 que trouxe isAdmin()/
     // siteUsers. Restauradas com a mesma isSignedIn() de antes.
+    // ACC: imported snapshots are written only by the service account.
+    match /accOs/{document} {
+      allow read: if isSignedIn();
+      allow write: if false;
+      match /chunks/{chunk} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
+    }
+    match /accResumo/{document} {
+      allow read: if isSignedIn();
+      allow write: if false;
+      match /chunks/{chunk} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
+    }
+    match /accTerceirizadas/{document} {
+      allow read, delete: if isSignedIn();
+      allow create, update: if isSignedIn() &&
+        request.resource.data.keys().hasOnly(['nome', 'terceirizada', 'manual']) &&
+        request.resource.data.nome is string && request.resource.data.nome.size() > 0 &&
+        request.resource.data.nome.size() <= 300 &&
+        request.resource.data.terceirizada is bool && request.resource.data.manual is bool;
+    }
+    match /accEdicoes/{document} {
+      allow read, write: if isSignedIn();
+    }
+    match /qualidadeManual/{document} {
+      allow read, delete: if isSignedIn();
+      allow create, update: if isSignedIn() && request.resource.data.origem == 'manual';
+    }
+
     match /appData/{document} {
       allow read, write, delete: if isSignedIn();
     }
